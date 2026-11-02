@@ -6,8 +6,7 @@ pakketrapporten en assets uit een eigen legale installatie.
 
 Eerlijk voordeel, geen cheats. Snellere opstart, meer FPS, lagere
 input-latency — maar geen informatie of invoer die de vanilla client niet heeft.
-Zie `docs/PRODUCT.md` voor de positionering en `docs/ARCHITECTUUR.md` voor hoe het
-in elkaar zit.
+Zie `docs/ARCHITECTUUR.md` voor hoe het in elkaar zit en waarom.
 
 Ondersteund: **774 (1.21.11)** en **776 (26.2)**. Beide nummers komen uit
 `version.json` in de officiële jars.

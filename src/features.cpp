@@ -42,6 +42,42 @@ Registry& Registry::instance() {
 
 std::span<const Feature> Registry::all() const { return {kFeatures.data(), kFeatures.size()}; }
 
+void Registry::lock(Id id, std::string reason) {
+    const auto at = static_cast<size_t>(id);
+    if (at >= std::size(locked_)) return;
+    locked_[at] = true;
+    lock_reason_[at] = std::move(reason);
+}
+
+void Registry::unlock_all() {
+    for (size_t at = 0; at < std::size(locked_); ++at) {
+        locked_[at] = false;
+        lock_reason_[at].clear();
+    }
+}
+
+bool Registry::locked(Id id) const {
+    const auto at = static_cast<size_t>(id);
+    return at < std::size(locked_) && locked_[at];
+}
+
+std::string_view Registry::lock_reason(Id id) const {
+    const auto at = static_cast<size_t>(id);
+    return at < std::size(lock_reason_) ? lock_reason_[at] : std::string_view{};
+}
+
+const Feature* Registry::find(std::string_view key) {
+    for (const auto& feature : kFeatures) {
+        if (feature.key == key) return &feature;
+    }
+    return nullptr;
+}
+
+bool Registry::wanted(Id id) const {
+    const auto at = static_cast<size_t>(id);
+    return at < std::size(enabled_) && enabled_[at];
+}
+
 bool Registry::enabled(Id id) const {
     const auto index = static_cast<size_t>(id);
     return index < kFeatures.size() && enabled_[index];

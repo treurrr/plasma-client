@@ -87,7 +87,7 @@ lezen we chat in beide vormen (`system_chat` en `player_chat`).
 ## Wat er nog niet is
 
 - **Online-mode.** Een server in online-mode vraagt versleuteling; dat heeft een
-  Microsoft-sessie nodig. Zie `docs/PRODUCT.md` voor de strategie daarvoor. De
+  Microsoft-sessie nodig. De
   client zegt dit nu met zoveel woorden in plaats van te crashen.
 - **Beweging.** We sturen geen positie. De vanilla server eist `client_tick_end`
   vóór een positiepakket, dus dat gaat samen met de spelerssimulatie.

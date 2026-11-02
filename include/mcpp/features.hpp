@@ -44,14 +44,35 @@ struct Feature {
     bool server_may_object;
 };
 
+// Feature keys as the server sees them, and the plugin channel they travel on.
+// A server that wants to allow this client has to be able to switch features
+// off, so the channel is part of the product rather than an extra.
+constexpr std::string_view kPluginChannel = "plodder:features";
+
 class Registry {
 public:
     static Registry& instance();
 
     std::span<const Feature> all() const;
+
+    // False when the player turned it off, and false when the server forbade
+    // it. Callers never have to remember to ask twice: if a server says no,
+    // the feature is off everywhere, not only greyed out in the menu.
     bool enabled(Id id) const;
     void set(Id id, bool on);
     bool toggle(Id id);
+
+    // What the player chose, ignoring any server lock. Only the menu needs it,
+    // to show the switch in the position it will return to.
+    bool wanted(Id id) const;
+
+    // Locks last for one session; leaving a server clears them.
+    void lock(Id id, std::string reason);
+    void unlock_all();
+    bool locked(Id id) const;
+    std::string_view lock_reason(Id id) const;
+
+    static const Feature* find(std::string_view key);
 
     void load(const std::filesystem::path& path);
     void save(const std::filesystem::path& path) const;
@@ -61,6 +82,8 @@ private:
     Registry();
 
     bool enabled_[static_cast<size_t>(Id::Count)] = {};
+    bool locked_[static_cast<size_t>(Id::Count)] = {};
+    std::string lock_reason_[static_cast<size_t>(Id::Count)];
 };
 
 std::string_view category_name(Category category);

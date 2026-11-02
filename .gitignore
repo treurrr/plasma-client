@@ -1,3 +1,10 @@
 build/
 build-rel/
 compile_commands.json
+
+# strategie, planning en marktonderzoek staan buiten deze repository
+docs/PRODUCT.md
+docs/PLANNING.md
+docs/money_model.py
+docs/PVP-CLIENTS.md
+docs/HORIZON-*.md
