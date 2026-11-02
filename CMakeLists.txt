@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Vulkan REQUIRED)
+find_package(CURL REQUIRED)
 
 # Off by default on purpose: a build that nobody configured must be the one
 # that checks ownership. Turning this on only removes the gate for local
@@ -68,6 +69,7 @@ add_library(mcpp_net STATIC
     src/nbt.cpp
     src/session.cpp
     src/translations.cpp
+    src/auth.cpp
     src/world/chunk.cpp
     src/world/block_table.cpp
     src/world/mesher.cpp
@@ -80,7 +82,7 @@ add_library(mcpp_net STATIC
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)
-target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan)
+target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl)
 mcpp_defaults(mcpp_net)
 
 add_executable(plodder-client src/tools/client_main.cpp src/features.cpp)
