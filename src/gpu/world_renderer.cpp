@@ -590,8 +590,20 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
     destroy_mesh();
     sections_.clear();
 
+    // Growing a 54 MB vector by insertion reallocates it a dozen times over.
+    size_t vertex_total = 0;
+    size_t index_total = 0;
+    for (const auto& section : sections) {
+        if (section.indices.empty()) continue;
+        vertex_total += section.vertices.size();
+        index_total += section.indices.size();
+    }
+
     std::vector<world::Vertex> vertices;
     std::vector<uint32_t> indices;
+    vertices.reserve(vertex_total);
+    indices.reserve(index_total);
+    sections_.reserve(sections.size());
     for (const auto& section : sections) {
         if (section.indices.empty()) continue;
 
