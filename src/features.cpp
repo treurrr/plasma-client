@@ -98,7 +98,7 @@ bool Registry::toggle(Id id) {
 std::filesystem::path Registry::default_config_path() {
     const char* home = std::getenv("HOME");
     std::filesystem::path base = home != nullptr ? home : ".";
-    return base / ".config" / "plodder-client" / "features.txt";
+    return base / ".config" / "crit-client" / "features.txt";
 }
 
 void Registry::load(const std::filesystem::path& path) {
@@ -127,7 +127,7 @@ void Registry::save(const std::filesystem::path& path) const {
     std::ofstream file(path, std::ios::trunc);
     if (!file) return;
 
-    file << "# Plodder Client\n";
+    file << "# Crit Client\n";
     for (size_t i = 0; i < kFeatures.size(); ++i) {
         file << kFeatures[i].key << '=' << (enabled_[i] ? 1 : 0) << '\n';
     }

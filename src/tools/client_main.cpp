@@ -31,7 +31,7 @@
 namespace {
 
 void print_banner() {
-    std::cout << std::format("Plodder Client 0.1.0  ·  doelversie {} (protocol {})\n",
+    std::cout << std::format("Crit Client 0.1.0  ·  doelversie {} (protocol {})\n",
                              mcpp::protocol::kTargetVersionName,
                              mcpp::protocol::kTargetProtocol);
 }
@@ -114,7 +114,7 @@ std::vector<mcpp::world::Chunk> load_chunks(const Address& address, size_t limit
     mcpp::SessionOptions options;
     options.host = address.host;
     options.port = address.port;
-    options.username = "PlodderShot";
+    options.username = "CritShot";
 
     mcpp::SessionEvents events;
     if (!quiet) {
@@ -311,7 +311,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     mcpp::SessionOptions options;
     options.host = address.host;
     options.port = address.port;
-    options.username = "PlodderShot";
+    options.username = "CritShot";
 
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
@@ -802,8 +802,8 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
     options.port = address.port;
     options.username = username;
     options.protocol = protocol;
-    options.debug_packets = std::getenv("PLODDER_DEBUG") != nullptr;
-    if (const char* dump = std::getenv("PLODDER_CHUNK_DUMP")) options.chunk_dump = dump;
+    options.debug_packets = std::getenv("CRIT_DEBUG") != nullptr;
+    if (const char* dump = std::getenv("CRIT_CHUNK_DUMP")) options.chunk_dump = dump;
     mcpp::world::BlockTable block_table;
     const bool meshing = block_table.open(mcpp::world::BlockTable::default_path(protocol));
 
@@ -1016,7 +1016,7 @@ int main(int argc, char** argv) {
             return do_blocks(argc > 2 ? argv[2] : "");
         }
         if (command == "join" && argc > 2) {
-            const std::string username = argc > 3 ? argv[3] : "PlodderDev";
+            const std::string username = argc > 3 ? argv[3] : "CritDev";
             const int32_t protocol = argc > 4 ? std::stoi(argv[4])
                                               : mcpp::protocol::kTargetProtocol;
             return do_join(argv[2], username, protocol);

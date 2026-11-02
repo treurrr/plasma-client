@@ -13,7 +13,7 @@
 namespace mcpp::world {
 namespace {
 
-constexpr char kMagic[4] = {'P', 'L', 'B', 'K'};
+constexpr char kMagic[4] = {'C', 'R', 'B', 'K'};
 constexpr uint32_t kVersion = 1;
 constexpr size_t kHeaderBytes = 32;
 
@@ -135,7 +135,7 @@ std::filesystem::path BlockTable::default_path(int32_t protocol) {
     } else if (const char* home = std::getenv("HOME")) {
         base = std::filesystem::path(home) / ".local" / "share";
     }
-    return base / "plodder-client" / "data" / std::format("blocks-{}.plbk", protocol);
+    return base / "crit-client" / "data" / std::format("blocks-{}.crbk", protocol);
 }
 
 } // namespace mcpp::world

@@ -1,38 +1,38 @@
-Plodder Client — mijlpaal 2, opgenomen 2 november 2026
+Crit Client — mijlpaal 2, opgenomen 2 november 2026
 ======================================================
 
 Twee clients tegelijk op een vanilla 1.21.11-server (protocol 774), offline-mode.
 
-  $ plodder-client join localhost:25599 PlodderA
-  $ plodder-client join localhost:25599 PlodderB
+  $ crit-client join localhost:25599 CritA
+  $ crit-client join localhost:25599 CritB
 
 [A] - verbonden met localhost:25599 als protocol 774
 [A] - compressie vanaf 256 bytes
-[A] - ingelogd als PlodderA (6965ced2-18af-39e1-8f94-d6d8bfcf7136)
+[A] - ingelogd als CritA (6965ced2-18af-39e1-8f94-d6d8bfcf7136)
 [A] - geen bekende packs gemeld; server stuurt de volledige registers
 [A] - in de play-state
 [A] - wereld betreden, entiteit 323
 [B] - verbonden met localhost:25599 als protocol 774
-[B] - ingelogd als PlodderB (f3aaf0cf-3c69-33a9-b1d4-258e50b954a6)
+[B] - ingelogd als CritB (f3aaf0cf-3c69-33a9-b1d4-258e50b954a6)
 [B] - in de play-state
-[A] | PlodderB joined the game
-[A] | There are 1 of a max of 5 players online: PlodderA
-[A] | <PlodderA> hoor je dit
-[B] | <PlodderA> hoor je dit
-[A] | PlodderB left the game
+[A] | CritB joined the game
+[A] | There are 1 of a max of 5 players online: CritA
+[A] | <CritA> hoor je dit
+[B] | <CritA> hoor je dit
+[A] | CritB left the game
 
 Dezelfde binary op een vanilla 26.2-server (protocol 776):
 
-  $ plodder-client join localhost:25600 Plodder262 776
+  $ crit-client join localhost:25600 Crit262 776
 
 - verbonden met localhost:25600 als protocol 776
-- ingelogd als Plodder262 (e60929e9-29ab-3c01-a7c1-e90029b73213)
+- ingelogd als Crit262 (e60929e9-29ab-3c01-a7c1-e90029b73213)
 - in de play-state
-| <Plodder262> 776 werkt ook
+| <Crit262> 776 werkt ook
 
 En met de verkeerde pakkettabel, om te laten zien dat het geen toeval is:
 
-  $ plodder-client join localhost:25600 PlodderFout 774
+  $ crit-client join localhost:25600 CritWrong 774
 
 - verbonden met localhost:25600 als protocol 774
 x server weigerde de login: multiplayer.disconnect.incompatible
@@ -46,7 +46,7 @@ taalbestand gehaald, inclusief ingevulde argumenten. Twee protocolversies uit
 een gegenereerde ID-tabel, en de verkeerde versie wordt netjes geweigerd.
 
 Server-kant, ter controle:
-  [15:32:13] PlodderDev[/[0:0:0:0:0:0:0:1]:54348] logged in with entity id 1
-  [15:32:13] PlodderDev joined the game
-  [15:32:18] [Not Secure] <PlodderDev> hallo vanuit c++
-  [15:32:42] PlodderDev lost connection: Disconnected
+  [15:32:13] CritDev[/[0:0:0:0:0:0:0:1]:54348] logged in with entity id 1
+  [15:32:13] CritDev joined the game
+  [15:32:18] [Not Secure] <CritDev> hallo vanuit c++
+  [15:32:42] CritDev lost connection: Disconnected

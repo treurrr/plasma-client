@@ -86,9 +86,9 @@ AdapterInfo describe(VkPhysicalDevice device) {
 VkInstance create_instance(bool validation) {
     VkApplicationInfo application{};
     application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    application.pApplicationName = "Plodder Client";
+    application.pApplicationName = "Crit Client";
     application.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-    application.pEngineName = "Plodder";
+    application.pEngineName = "Crit";
     application.apiVersion = kApiVersion;
 
     VkInstanceCreateInfo create{};
@@ -149,7 +149,7 @@ std::filesystem::path Device::default_pipeline_cache() {
     } else if (const char* home = std::getenv("HOME")) {
         base = std::filesystem::path(home) / ".cache";
     }
-    return base / "plodder-client" / "pipelines.bin";
+    return base / "crit-client" / "pipelines.bin";
 }
 
 std::vector<AdapterInfo> Device::list_adapters() {

@@ -126,7 +126,7 @@ std::filesystem::path state_directory() {
     } else if (const char* home = std::getenv("HOME")) {
         base = std::filesystem::path(home) / ".local" / "state";
     }
-    return base / "plodder-client";
+    return base / "crit-client";
 }
 
 } // namespace
@@ -148,11 +148,11 @@ std::string_view describe(Failure failure) {
 }
 
 std::string Session::client_id() {
-    if (const char* from_environment = std::getenv("PLODDER_MSA_CLIENT_ID")) {
+    if (const char* from_environment = std::getenv("CRIT_MSA_CLIENT_ID")) {
         return from_environment;
     }
-#ifdef PLODDER_MSA_CLIENT_ID
-    return PLODDER_MSA_CLIENT_ID;
+#ifdef CRIT_MSA_CLIENT_ID
+    return CRIT_MSA_CLIENT_ID;
 #else
     return {};
 #endif

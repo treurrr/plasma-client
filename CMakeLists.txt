@@ -85,9 +85,9 @@ add_dependencies(mcpp_net mcpp_shaders)
 target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl)
 mcpp_defaults(mcpp_net)
 
-add_executable(plodder-client src/tools/client_main.cpp src/features.cpp)
-target_link_libraries(plodder-client PRIVATE mcpp_net)
-mcpp_defaults(plodder-client)
+add_executable(crit-client src/tools/client_main.cpp src/features.cpp)
+target_link_libraries(crit-client PRIVATE mcpp_net)
+mcpp_defaults(crit-client)
 
 add_executable(mc-ping src/tools/mc_ping.cpp)
 target_link_libraries(mc-ping PRIVATE mcpp_net)

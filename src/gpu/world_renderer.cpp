@@ -226,7 +226,7 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
 
     // Reading this once rather than per section per frame: a getenv in the
     // draw loop is itself a measurable cost.
-    culling_ = std::getenv("PLODDER_NOCULL") == nullptr;
+    culling_ = std::getenv("CRIT_NOCULL") == nullptr;
 
     create_targets();
     create_atlas(atlas);

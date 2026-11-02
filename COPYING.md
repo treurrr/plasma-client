@@ -17,7 +17,7 @@ work of the client.
 
 ## Branding
 
-The Plodder Client name, the chevron mark and the other identity assets in
+The Crit Client name, the chevron mark and the other identity assets in
 [`brand/`](brand/) are **not** covered by the licence above. Using them without
 written permission is not allowed, and that includes variations close enough to
 be mistaken for them.

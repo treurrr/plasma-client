@@ -277,7 +277,7 @@ void test_block_table() {
         append(std::data(values), values.size() * sizeof(uint32_t));
     };
 
-    const char magic[4] = {'P', 'L', 'B', 'K'};
+    const char magic[4] = {'C', 'R', 'B', 'K'};
     file.insert(file.end(), magic, magic + 4);
     append_u32s({1, 774, 2, 1, 1, 1, static_cast<uint32_t>(strings.size())});
 
@@ -301,7 +301,7 @@ void test_block_table() {
     append(flags, sizeof(flags));
     append(strings.data(), strings.size());
 
-    const auto path = std::filesystem::temp_directory_path() / "plodder-test-blocks.plbk";
+    const auto path = std::filesystem::temp_directory_path() / "crit-test-blocks.crbk";
     {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(file.data()),
@@ -341,7 +341,7 @@ void test_mesher_culls_interiors() {
     std::vector<char> strings(name.begin(), name.end());
     strings.push_back('\0');
 
-    const char magic[4] = {'P', 'L', 'B', 'K'};
+    const char magic[4] = {'C', 'R', 'B', 'K'};
     file.insert(file.end(), magic, magic + 4);
     append_u32s({1, 774, 2, 6, 1, 1, static_cast<uint32_t>(strings.size())});
     append_u32s({0, 0, 6});                       // state 0 empty, state 1 holds six quads
@@ -366,7 +366,7 @@ void test_mesher_culls_interiors() {
     append(flags, sizeof(flags));
     append(strings.data(), strings.size());
 
-    const auto path = std::filesystem::temp_directory_path() / "plodder-test-mesher.plbk";
+    const auto path = std::filesystem::temp_directory_path() / "crit-test-mesher.crbk";
     {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(file.data()),
