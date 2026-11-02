@@ -20,6 +20,7 @@
 #include <numbers>
 #include <algorithm>
 #include <cmath>
+#include <csignal>
 #include <cstdlib>
 #include <format>
 #include <iostream>
@@ -364,6 +365,12 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
 
 
 #ifdef MCPP_HAVE_WINDOW
+// A clean exit matters: it is what writes the pipeline cache to disk, which is
+// most of the next start-up.
+std::atomic<bool> g_stop{false};
+
+void stop_on_signal(int) { g_stop.store(true); }
+
 // The feature menu, drawn with the same pipeline as the hud. Colours and
 // shapes follow brand/menu.html so the client and the mockups cannot drift.
 void draw_feature_menu(mcpp::gpu::TextRenderer& ui, float width, float height) {
@@ -603,10 +610,15 @@ int do_play(const std::string& target, size_t chunk_limit) {
     size_t frames = 0;
     size_t ticks_sent = 0;
     size_t streamed = 0;
+    std::vector<double> frame_times;
+    frame_times.reserve(20000);
     float tick_accumulator = 0.0f;
     double gpu_total = 0.0;
 
-    while (window.open()) {
+    std::signal(SIGINT, stop_on_signal);
+    std::signal(SIGTERM, stop_on_signal);
+
+    while (window.open() && !g_stop.load()) {
         const auto input = window.poll();
         if (input.quit) break;
         if (input.toggle_menu) menu_open = !menu_open;
@@ -717,6 +729,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
         window.present(renderer, camera, &hud);
         gpu_total += renderer.last_gpu_ms();
+        if (frames > 30) frame_times.push_back(window.last_frame_ms());
         ++frames;
     }
 
@@ -728,6 +741,18 @@ int do_play(const std::string& target, size_t chunk_limit) {
                                  "{} chunks streamed in\n",
                                  frames, gpu_total / static_cast<double>(frames), ticks_sent,
                                  streamed);
+        if (frame_times.size() > 50) {
+            // The mean hides hitches, so report what the worst frames cost.
+            std::ranges::sort(frame_times);
+            const auto at = [&](double fraction) {
+                return frame_times[static_cast<size_t>(
+                    static_cast<double>(frame_times.size() - 1) * fraction)];
+            };
+            std::cout << std::format(
+                "- frame time: median {:.2f} ms, 1% low {:.2f} ms, 0.1% low {:.2f} ms, "
+                "worst {:.2f} ms\n",
+                at(0.5), at(0.99), at(0.999), frame_times.back());
+        }
     }
     device.save_pipeline_cache();
     return 0;
