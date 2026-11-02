@@ -423,3 +423,37 @@ Tussen twee lagen zat dus een spleet van 2/16 waar je doorheen keek.
 Alleen het bovenste blok van een waterkolom heeft een verlaagd oppervlak. Dat is
 geen eigenschap van de blokstaat maar van zijn buur, dus het hoort in de mesher,
 die de buren wel kent: ligt er water boven, dan vult het blok zijn hele hoogte.
+
+## De bug die alle bovenvlakken wegnam
+
+Elk bovenvlak in de hele renderer ontbrak. In een landschap valt dat niet op -
+je ziet zijkanten, planten en water en het *lijkt* terrein - maar een losse
+blokkentoets maakte het meteen duidelijk: recht van boven keek je door het blok
+heen naar de vloer, met alleen een randje van de zijvlakken.
+
+De oorzaak zat in `frontFace`. De winding van de zes vlakken is consistent, en
+dat is precies wat me op het verkeerde been zette: een narekening in
+schermruimte gaf keurig per camera exact één zichtbaar vlak. Maar **Vulkan
+bepaalt de windingrichting in framebuffer-coordinaten, waar Y omlaag wijst**.
+Wat in gewone wiskundige orientatie tegen de klok in loopt, loopt daar dus met
+de klok mee. Met `VK_FRONT_FACE_COUNTER_CLOCKWISE` werden de vlakken die naar de
+camera wijzen weggesneden en de afgewende getekend.
+
+### Hoe dit boven water kwam
+
+Niet door naar landschappen te kijken. `plodder-client showcase` bouwt een
+sectie met opgegeven blokstaten zonder server en rendert die van voren, van
+opzij, van boven of schuin. Op blokken waarvan je de textuurrichting kent -
+een boomstam, een grasblok, een oven - zie je in een oogopslag wat er mis is.
+
+Dat gereedschap corrigeerde ook een verkeerde diagnose van mij. De stam leek
+twee fouten te hebben, bast in de verkeerde richting en ringen op een zijvlak,
+tot bleek dat staat 136 `axis=x` is: een liggende stam, waar dat precies klopt.
+
+## Volle kubussen met extra vlakken
+
+`is_full_cube` eiste precies zes quads. Een grasblok heeft er tien - zes zijden
+plus vier getinte overlays - en viel daardoor buiten de boot, terwijl het net zo
+massief is als steen. Gewoon gras sneed dus nergens iets weg. De test kijkt nu
+per richting of er een quad is die het hele blok bedekt, in plaats van quads te
+tellen.

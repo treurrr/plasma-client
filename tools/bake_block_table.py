@@ -16,7 +16,8 @@ from pathlib import Path
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
-from resolve_block_models import Assets, FLUIDS, MODEL_LESS, quads_for_state  # noqa: E402
+from resolve_block_models import (Assets, FACES, FLUIDS, MODEL_LESS,  # noqa: E402
+                                   quads_for_state)
 
 MAGIC = b"PLBK"
 VERSION = 1
@@ -65,17 +66,26 @@ def texture_is_opaque(archive, name):
     return opaque
 
 
-def is_full_cube(quads):
-    if len(quads) != 6:
-        return False
-    if any(q["cullface"] is None for q in quads):
-        return False
-    for q in quads:
-        if [float(v) for v in q["from"]] != [0.0, 0.0, 0.0]:
-            return False
-        if [float(v) for v in q["to"]] != [16.0, 16.0, 16.0]:
-            return False
-    return True
+def covers_whole_block(quad):
+    return ([float(v) for v in quad["from"]] == [0.0, 0.0, 0.0]
+            and [float(v) for v in quad["to"]] == [16.0, 16.0, 16.0]
+            and quad["cullface"] is not None)
+
+
+def full_faces(quads):
+    """The directions covered edge to edge.
+
+    Counting quads is wrong: grass has ten, six sides plus four tinted
+    overlays, and is every bit as solid as stone."""
+    return {q["face"] for q in quads if covers_whole_block(q)}
+
+
+def opaque_faces(archive, quads):
+    covered = set()
+    for quad in quads:
+        if covers_whole_block(quad) and texture_is_opaque(archive, quad["texture"]):
+            covered.add(quad["face"])
+    return covered
 
 
 def pad(blob, alignment=8):
@@ -161,9 +171,9 @@ def main(args):
             flags |= FLAG_FLUID
         if quads:
             flags |= FLAG_HAS_GEOMETRY
-            if is_full_cube(quads):
+            if len(full_faces(quads)) == len(FACES):
                 flags |= FLAG_FULL_CUBE
-                if all(texture_is_opaque(assets.zip, q["texture"]) for q in quads):
+                if len(opaque_faces(assets.zip, quads)) == len(FACES):
                     flags |= FLAG_OCCLUDES
         state_flags.append(flags)
 

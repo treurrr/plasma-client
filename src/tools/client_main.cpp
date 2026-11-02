@@ -407,6 +407,124 @@ int do_gpu() {
 
 // Builds one uniform section of a given state and reports what the mesher does
 // with it, so a culling rule can be checked against a number.
+// A section built from an explicit list of states, so a scene can be set up
+// without a server. Direct palette: the ids go into the data array as-is.
+mcpp::world::ChunkSection section_from_states(const std::vector<int32_t>& states) {
+    constexpr uint8_t kBits = 15;
+    constexpr size_t kPerLong = 64 / kBits;
+
+    mcpp::ByteBuffer buffer;
+    buffer.write_u8(kBits);
+    const size_t longs = (states.size() + kPerLong - 1) / kPerLong;
+    for (size_t index = 0; index < longs; ++index) {
+        uint64_t packed = 0;
+        for (size_t slot = 0; slot < kPerLong; ++slot) {
+            const size_t at = index * kPerLong + slot;
+            if (at >= states.size()) break;
+            packed |= static_cast<uint64_t>(states[at]) << (slot * kBits);
+        }
+        buffer.write_i64(static_cast<int64_t>(packed));
+    }
+
+    mcpp::ByteBuffer biomes;
+    biomes.write_u8(0);
+    biomes.write_varint(0);
+
+    mcpp::world::ChunkSection section;
+    section.non_air_count = 4096;
+    section.blocks = mcpp::world::PalettedContainer::read(buffer, 4096, 8);
+    section.biomes = mcpp::world::PalettedContainer::read(biomes, 64, 3);
+    return section;
+}
+
+int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples,
+                const std::string& view) {
+    mcpp::world::BlockTable table;
+    mcpp::world::Atlas atlas;
+    const auto protocol = mcpp::protocol::kTargetProtocol;
+    if (!table.open(mcpp::world::BlockTable::default_path(protocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(protocol))) {
+        std::cerr << "blokkentabel of atlas ontbreekt\n";
+        return 1;
+    }
+
+    constexpr int32_t kStone = 1;
+    std::vector<int32_t> states(4096, 0);
+    const auto at = [](int32_t x, int32_t y, int32_t z) {
+        return static_cast<size_t>(y) * 256 + static_cast<size_t>(z) * 16 +
+               static_cast<size_t>(x);
+    };
+
+    for (int32_t z = 0; z < 16; ++z) {
+        for (int32_t x = 0; x < 16; ++x) states[at(x, 0, z)] = kStone;
+    }
+    for (size_t i = 0; i < samples.size() && i < 12; ++i) {
+        const auto x = static_cast<int32_t>(2 + (i % 6) * 2);
+        const auto z = static_cast<int32_t>(4 + (i / 6) * 3);
+        states[at(x, 1, z)] = samples[i];
+        states[at(x, 2, z)] = samples[i];
+    }
+
+    mcpp::world::Chunk chunk;
+    chunk.sections.push_back(section_from_states(states));
+    const auto mesh = mcpp::world::mesh_chunk(chunk, table, {}, 0);
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options options;
+    options.validation = true;
+    device.create(options);
+
+    mcpp::gpu::WorldRenderer renderer(device, 1920, 1080, atlas);
+    renderer.upload(mesh);
+
+    mcpp::gpu::Camera camera{};
+    if (view == "front") {
+        // Straight at the south face of the first sample, nothing else in frame.
+        camera.eye[0] = 2.5f;
+        camera.eye[1] = 2.5f;
+        camera.eye[2] = 11.0f;
+        camera.target[0] = 2.5f;
+        camera.target[1] = 2.5f;
+        camera.target[2] = 4.0f;
+        camera.fov_degrees = 30.0f;
+    } else if (view == "east") {
+        camera.eye[0] = 10.0f;
+        camera.eye[1] = 2.5f;
+        camera.eye[2] = 4.5f;
+        camera.target[0] = 3.0f;
+        camera.target[1] = 2.5f;
+        camera.target[2] = 4.5f;
+        camera.fov_degrees = 30.0f;
+    } else if (view == "top") {
+        camera.eye[0] = 2.5f;
+        camera.eye[1] = 11.0f;
+        camera.eye[2] = 4.6f;
+        camera.target[0] = 2.5f;
+        camera.target[1] = 3.0f;
+        camera.target[2] = 4.5f;
+        camera.fov_degrees = 30.0f;
+    } else {
+        camera.eye[0] = 8.0f;
+        camera.eye[1] = 6.5f;
+        camera.eye[2] = 19.0f;
+        camera.target[0] = 8.0f;
+        camera.target[1] = 2.0f;
+        camera.target[2] = 7.0f;
+        camera.fov_degrees = 45.0f;
+    }
+
+    auto pixels = renderer.render(camera);
+    mcpp::write_png(out_path, 1920, 1080, pixels);
+    device.save_pipeline_cache();
+
+    std::cout << std::format("{}\n  {} blokken getoond, {} driehoeken\n", out_path,
+                             samples.size(), mesh.triangles());
+    for (int32_t state : samples) {
+        std::cout << std::format("  {:>6}  {}\n", state, table.block_name(state));
+    }
+    return 0;
+}
+
 int do_meshtest(int32_t state) {
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
@@ -703,6 +821,20 @@ int main(int argc, char** argv) {
         if (command == "gpu") {
             return do_gpu();
         }
+        if (command == "showcase" && argc > 2) {
+            std::vector<int32_t> samples;
+            std::string view = "angled";
+            for (int i = 3; i < argc; ++i) {
+                const std::string argument = argv[i];
+                if (argument == "front" || argument == "top" || argument == "angled" ||
+                    argument == "east") {
+                    view = argument;
+                } else {
+                    samples.push_back(std::stoi(argument));
+                }
+            }
+            return do_showcase(argv[2], samples, view);
+        }
         if (command == "meshtest" && argc > 2) {
             return do_meshtest(std::stoi(argv[2]));
         }
@@ -723,6 +855,7 @@ int main(int argc, char** argv) {
             "  versions            ondersteunde protocolversies\n"
             "  ping <host:poort>   serverinfo opvragen\n"
             "  blocks [naam]       de voorgebakken blokkentabel\n"
+            "  showcase <uit.png> <staat...>  blokken los renderen om te keuren\n"
             "  gpu                 welke gpu en welke features\n"
             "  render <uit.png> [b] [h]   een frame renderen en wegschrijven\n"
             "  worldshot <host:poort> [uit.png] [chunks]\n"
