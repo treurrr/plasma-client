@@ -239,7 +239,9 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
     renderer.upload(mesh);
 
     std::vector<double> gpu_times;
+    std::vector<double> cpu_times;
     gpu_times.reserve(frames);
+    cpu_times.reserve(frames);
 
     // A turning camera, so the measurement is not one lucky viewpoint.
     for (size_t frame = 0; frame < frames; ++frame) {
@@ -252,10 +254,25 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
         camera.target[1] = ground;
         camera.target[2] = centre_z;
 
+        const auto started = std::chrono::steady_clock::now();
         const double gpu_ms = renderer.draw(camera);
-        if (frame >= 10) gpu_times.push_back(gpu_ms);   // let the driver settle first
+        const double wall_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+                .count();
+        if (frame >= 10) {   // let the driver settle first
+            gpu_times.push_back(gpu_ms);
+            cpu_times.push_back(wall_ms - gpu_ms);
+        }
     }
 
+    {
+        auto sorted = cpu_times;
+        std::ranges::sort(sorted);
+        const double total = std::accumulate(sorted.begin(), sorted.end(), 0.0);
+        std::cout << std::format("  cpu beside the gpu: mean {:.3f} ms, median {:.3f} ms\n",
+                                 total / static_cast<double>(sorted.size()),
+                                 sorted[sorted.size() / 2]);
+    }
     std::ranges::sort(gpu_times);
     const auto count = gpu_times.size();
     const auto mean_of_slowest = [&](double fraction) {
@@ -319,8 +336,22 @@ int do_play(const std::string& target, size_t chunk_limit) {
     options.port = address.port;
     options.username = "PlasmaDev";
 
+    double spawn[3] = {0.0, 0.0, 0.0};
+    float spawn_yaw = 0.0f;
+    float spawn_pitch = 0.0f;
+    bool placed = false;
+
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.on_position = [&](double x, double y, double z, float yaw, float pitch) {
+        spawn[0] = x;
+        spawn[1] = y;
+        spawn[2] = z;
+        spawn_yaw = yaw;
+        spawn_pitch = pitch;
+        placed = true;
+        std::cout << std::format("- the server put us at {:.2f} {:.2f} {:.2f}\n", x, y, z);
+    };
     events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         std::lock_guard lock(guard);
         if (chunks.size() < chunk_limit) chunks.push_back(chunk);
@@ -336,9 +367,11 @@ int do_play(const std::string& target, size_t chunk_limit) {
             break;
         }
     }
-    session.close();
     std::cout << std::format("- {} chunks fetched\n", chunks.size());
-    if (chunks.empty()) return 1;
+    if (chunks.empty()) {
+        session.close();
+        return 1;
+    }
 
     double mesh_ms = 0.0;
     const auto combined = mesh_world(chunks, table, &mesh_ms);
@@ -368,16 +401,25 @@ int do_play(const std::string& target, size_t chunk_limit) {
     centre_x /= static_cast<float>(chunks.size());
     centre_z /= static_cast<float>(chunks.size());
 
-    float eye[3] = {centre_x, ground_near_centre(chunks, table, centre_x, centre_z) + 4.0f,
-                    centre_z};
-    float yaw = -90.0f;
-    float pitch = -8.0f;
+    // Stand where the server put us, not where the chunks happen to be centred.
+    float eye[3] = {static_cast<float>(spawn[0]), static_cast<float>(spawn[1]) + 1.62f,
+                    static_cast<float>(spawn[2])};
+    if (!placed) {
+        eye[0] = centre_x;
+        eye[1] = ground_near_centre(chunks, table, centre_x, centre_z) + 4.0f;
+        eye[2] = centre_z;
+        std::cout << "- no teleport from the server; standing at the centre of the chunks\n";
+    }
+    float yaw = placed ? spawn_yaw - 90.0f : -90.0f;
+    float pitch = placed ? -spawn_pitch : -8.0f;
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
                  "  left control to sprint, escape to leave\n";
 
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
+    size_t ticks_sent = 0;
+    float tick_accumulator = 0.0f;
     double gpu_total = 0.0;
 
     while (window.open()) {
@@ -410,14 +452,36 @@ int do_play(const std::string& target, size_t chunk_limit) {
         }
         camera.fov_degrees = 70.0f;
 
+        // Drain whatever the server sent, then report where we are. Standing
+        // still in the socket is how a client gets timed out.
+        while (session.has_data()) {
+            try {
+                if (!session.pump()) break;
+            } catch (const std::exception&) {
+                break;
+            }
+        }
+        tick_accumulator += dt;
+        if (tick_accumulator >= 0.05f) {
+            tick_accumulator = 0.0f;
+            try {
+                session.send_position(eye[0], eye[1] - 1.62, eye[2], yaw + 90.0f, -pitch, false);
+                ++ticks_sent;
+            } catch (const std::exception& error) {
+                std::cerr << std::format("movement stopped: {}\n", error.what());
+                break;
+            }
+        }
+
         window.present(renderer, camera);
         gpu_total += renderer.last_gpu_ms();
         ++frames;
     }
 
+    session.close();
     if (frames > 0) {
-        std::cout << std::format("- {} frames, {:.3f} ms gpu on average\n", frames,
-                                 gpu_total / static_cast<double>(frames));
+        std::cout << std::format("- {} frames, {:.3f} ms gpu on average, {} positions sent\n",
+                                 frames, gpu_total / static_cast<double>(frames), ticks_sent);
     }
     device.save_pipeline_cache();
     return 0;

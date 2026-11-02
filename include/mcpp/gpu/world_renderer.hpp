@@ -93,6 +93,10 @@ private:
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
+    // Allocated once. A command buffer and a fence per frame were costing more
+    // CPU than the whole draw cost GPU.
+    VkCommandBuffer frame_command_ = VK_NULL_HANDLE;
+    VkFence frame_fence_ = VK_NULL_HANDLE;
     VkQueryPool timestamps_ = VK_NULL_HANDLE;
 
     // One entry per section: where its geometry sits and where it is in the

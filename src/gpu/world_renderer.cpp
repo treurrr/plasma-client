@@ -218,6 +218,18 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
     pool.queueFamilyIndex = device_.graphics_family();
     check(vkCreateCommandPool(device_.handle(), &pool, nullptr, &pool_), "vkCreateCommandPool");
 
+    VkCommandBufferAllocateInfo reusable{};
+    reusable.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    reusable.commandPool = pool_;
+    reusable.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    reusable.commandBufferCount = 1;
+    check(vkAllocateCommandBuffers(device_.handle(), &reusable, &frame_command_),
+          "vkAllocateCommandBuffers");
+
+    VkFenceCreateInfo fence_create{};
+    fence_create.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    check(vkCreateFence(device_.handle(), &fence_create, nullptr, &frame_fence_), "vkCreateFence");
+
     VkQueryPoolCreateInfo query{};
     query.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
     query.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -825,25 +837,29 @@ double WorldRenderer::submit(VkCommandBuffer command) {
 }
 
 double WorldRenderer::draw(const Camera& camera) {
-    VkCommandBufferAllocateInfo allocate{};
-    allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocate.commandPool = pool_;
-    allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocate.commandBufferCount = 1;
-    VkCommandBuffer command = VK_NULL_HANDLE;
-    check(vkAllocateCommandBuffers(device_.handle(), &allocate, &command),
-          "vkAllocateCommandBuffers");
+    check(vkResetCommandBuffer(frame_command_, 0), "vkResetCommandBuffer");
 
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer");
-    record_frame(command, camera, false);
-    check(vkEndCommandBuffer(command), "vkEndCommandBuffer");
+    check(vkBeginCommandBuffer(frame_command_, &begin), "vkBeginCommandBuffer");
+    record_frame(frame_command_, camera, false);
+    check(vkEndCommandBuffer(frame_command_), "vkEndCommandBuffer");
 
-    const double gpu_ms = submit(command);
-    vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
-    return gpu_ms;
+    VkCommandBufferSubmitInfo command_submit{};
+    command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    command_submit.commandBuffer = frame_command_;
+    VkSubmitInfo2 submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &command_submit;
+
+    check(vkResetFences(device_.handle(), 1, &frame_fence_), "vkResetFences");
+    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, frame_fence_), "vkQueueSubmit2");
+    check(vkWaitForFences(device_.handle(), 1, &frame_fence_, VK_TRUE, UINT64_MAX),
+          "vkWaitForFences");
+    read_timestamps();
+    return last_gpu_ms_;
 }
 
 std::vector<uint8_t> WorldRenderer::render(const Camera& camera) {
@@ -1027,6 +1043,7 @@ WorldRenderer::~WorldRenderer() {
     vkDestroyImage(device_.handle(), color_, nullptr);
     vkFreeMemory(device_.handle(), color_memory_, nullptr);
     vkDestroyQueryPool(device_.handle(), timestamps_, nullptr);
+    vkDestroyFence(device_.handle(), frame_fence_, nullptr);
     vkDestroyCommandPool(device_.handle(), pool_, nullptr);
 }
 

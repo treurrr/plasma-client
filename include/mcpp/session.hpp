@@ -43,6 +43,9 @@ struct SessionEvents {
     std::function<void(std::string_view)> on_chat;
     std::function<void(std::string_view)> on_disconnect;
     std::function<void(const world::Chunk&)> on_chunk;
+    // Where the server says we are. It decides, not us: starting anywhere else
+    // makes the first movement packet look like a teleport.
+    std::function<void(double, double, double, float, float)> on_position;
 };
 
 // Offline mode only: a server in online-mode sends an encryption request, which
@@ -53,7 +56,13 @@ public:
 
     void connect();
     bool pump();
+    // Lets a render loop drain whatever arrived without blocking on an idle socket.
+    bool has_data() const;
     void close();
+    // One tick of being a player rather than a viewer. Vanilla wants the tick
+    // marker before the position, or it ignores the movement entirely.
+    void send_position(double x, double y, double z, float yaw, float pitch, bool on_ground);
+
     void send_chat(std::string_view message);
     void send_command(std::string_view command);
 

@@ -277,7 +277,7 @@ void test_block_table() {
         append(std::data(values), values.size() * sizeof(uint32_t));
     };
 
-    const char magic[4] = {'C', 'R', 'B', 'K'};
+    const char magic[4] = {'P', 'L', 'B', 'K'};
     file.insert(file.end(), magic, magic + 4);
     append_u32s({1, 774, 2, 1, 1, 1, static_cast<uint32_t>(strings.size())});
 
@@ -341,7 +341,7 @@ void test_mesher_culls_interiors() {
     std::vector<char> strings(name.begin(), name.end());
     strings.push_back('\0');
 
-    const char magic[4] = {'C', 'R', 'B', 'K'};
+    const char magic[4] = {'P', 'L', 'B', 'K'};
     file.insert(file.end(), magic, magic + 4);
     append_u32s({1, 774, 2, 6, 1, 1, static_cast<uint32_t>(strings.size())});
     append_u32s({0, 0, 6});                       // state 0 empty, state 1 holds six quads

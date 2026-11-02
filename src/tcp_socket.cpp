@@ -1,3 +1,4 @@
+#include <poll.h>
 #include "mcpp/tcp_socket.hpp"
 
 #include "mcpp/byte_buffer.hpp"
@@ -103,6 +104,12 @@ void TcpSocket::recv_exact(uint8_t* dst, size_t n) {
         }
         got += static_cast<size_t>(r);
     }
+}
+
+bool TcpSocket::readable() const {
+    if (fd_ < 0) return false;
+    pollfd entry{fd_, POLLIN, 0};
+    return ::poll(&entry, 1, 0) > 0 && (entry.revents & POLLIN) != 0;
 }
 
 void TcpSocket::close() {

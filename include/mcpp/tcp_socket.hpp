@@ -19,6 +19,9 @@ public:
     void set_receive_timeout(int timeout_ms);
     void send_all(std::span<const uint8_t> data);
     void recv_exact(uint8_t* dst, size_t n);
+    // True when a read would not block, so a render loop can drain the
+    // socket without paying a timeout for an empty one.
+    bool readable() const;
     void close();
     bool valid() const { return fd_ >= 0; }
 

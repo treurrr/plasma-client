@@ -283,8 +283,20 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         return true;
     }
     if (packet.id == cb.player_position) {
+        const int32_t teleport = in.read_varint();
+        if (events_.on_position) {
+            const double x = in.read_f64();
+            const double y = in.read_f64();
+            const double z = in.read_f64();
+            in.read_f64();
+            in.read_f64();
+            in.read_f64();
+            const float yaw = in.read_f32();
+            const float pitch = in.read_f32();
+            events_.on_position(x, y, z, yaw, pitch);
+        }
         ByteBuffer out;
-        out.write_varint(in.read_varint());
+        out.write_varint(teleport);
         send(ids_->play_sb.accept_teleportation, out);
         return true;
     }
@@ -344,6 +356,8 @@ void Session::connect() {
     begin_configuration();
 }
 
+bool Session::has_data() const { return connection_.socket().readable(); }
+
 bool Session::pump() {
     if (state_ == SessionState::Closed) return false;
     auto packet = connection_.receive();
@@ -356,6 +370,23 @@ bool Session::pump() {
 void Session::close() {
     state_ = SessionState::Closed;
     connection_.socket().close();
+}
+
+void Session::send_position(double x, double y, double z, float yaw, float pitch,
+                            bool on_ground) {
+    if (state_ != SessionState::Play) return;
+
+    send(ids_->play_sb.client_tick_end, ByteBuffer{});
+
+    ByteBuffer out;
+    out.write_f64(x);
+    out.write_f64(y);
+    out.write_f64(z);
+    out.write_f32(yaw);
+    out.write_f32(pitch);
+    // One flags byte since 1.21.4: bit 0 on ground, bit 1 horizontal collision.
+    out.write_u8(on_ground ? 1 : 0);
+    send(ids_->play_sb.move_player_pos_rot, out);
 }
 
 void Session::send_chat(std::string_view message) {

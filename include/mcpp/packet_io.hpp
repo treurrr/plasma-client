@@ -25,6 +25,7 @@ public:
     int32_t compression_threshold() const { return compression_threshold_; }
 
     TcpSocket& socket() { return socket_; }
+    const TcpSocket& socket() const { return socket_; }
 
 private:
     int32_t read_wire_varint();
