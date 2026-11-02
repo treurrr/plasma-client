@@ -9,3 +9,5 @@ docs/money_model.py
 docs/PVP-CLIENTS.md
 docs/HORIZON-*.md
 build-strict/
+__pycache__/
+*.pyc
