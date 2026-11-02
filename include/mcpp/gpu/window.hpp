@@ -1,5 +1,6 @@
 #pragma once
 #include "mcpp/gpu/device.hpp"
+#include "mcpp/gpu/text.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 
 #include <cstdint>
@@ -39,7 +40,11 @@ public:
 
     bool open() const;
     FrameInput poll();
-    void present(WorldRenderer& renderer, const Camera& camera);
+    // `overlay`, when given, is drawn on the swapchain image after the world,
+    // at screen resolution rather than scaled up from the render target.
+    void present(WorldRenderer& renderer, const Camera& camera,
+                 TextRenderer* overlay = nullptr);
+    VkFormat colour_format() const { return format_; }
 
     uint32_t width() const { return extent_.width; }
     uint32_t height() const { return extent_.height; }
@@ -63,10 +68,12 @@ private:
     VkFormat format_ = VK_FORMAT_UNDEFINED;
     VkExtent2D extent_{};
     std::vector<VkImage> images_;
+    std::vector<VkImageView> views_;
     std::vector<VkSemaphore> release_;
     VkCommandPool pool_ = VK_NULL_HANDLE;
     std::vector<Frame> frames_;
     size_t frame_index_ = 0;
+    bool presented_once_ = false;
 
     double last_x_ = 0.0;
     double last_y_ = 0.0;

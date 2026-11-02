@@ -7,6 +7,7 @@
 #include "mcpp/gpu/offscreen.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 #ifdef MCPP_HAVE_WINDOW
+#include "mcpp/gpu/text.hpp"
 #include "mcpp/gpu/window.hpp"
 #endif
 #include "mcpp/image_png.hpp"
@@ -516,6 +517,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
         }
     });
 
+    mcpp::gpu::TextRenderer hud(device, mcpp::gpu::TextRenderer::default_font_path(),
+                                window.colour_format());
+    double fps = 0.0;
+
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
                  "  left control to sprint, escape to leave\n";
 
@@ -607,7 +612,30 @@ int do_play(const std::string& target, size_t chunk_limit) {
             }
         }
 
-        window.present(renderer, camera);
+        // The numbers are measured here, not estimated: fps from the wall clock,
+        // gpu from the timestamps the frame itself wrote.
+        fps = fps == 0.0 ? 1.0 / dt : fps * 0.92 + (1.0 / dt) * 0.08;
+        constexpr uint32_t kText = 0xECEDEFFFu;
+        constexpr uint32_t kAccent = 0xB48CFFFFu;
+        constexpr uint32_t kShadow = 0x0A0A0BC0u;
+        hud.begin();
+        // A hud sits over whatever the world happens to be. Without a shadow it
+        // is unreadable against a bright sky, which is most of the time.
+        const auto line = [&](std::string_view text, float x, float y, float scale,
+                              uint32_t colour) {
+            hud.draw(text, x + 1.6f, y + 1.6f, scale, kShadow);
+            hud.draw(text, x, y, scale, colour);
+        };
+        line(std::format("{:.0f} fps", fps), 18.0f, 16.0f, 0.62f, kAccent);
+        line(std::format("{:.2f} ms gpu", renderer.last_gpu_ms()), 18.0f, 44.0f, 0.46f, kText);
+        line(std::format("{:.1f} {:.1f} {:.1f}", eye[0], eye[1] - 1.62f, eye[2]), 18.0f, 64.0f,
+             0.46f, kText);
+        line(std::format("{} sections  {} entities", renderer.drawn_sections(),
+                         session.entity_count()),
+             18.0f, 84.0f, 0.46f, kText);
+        line("PLASMA", 18.0f, static_cast<float>(window.height()) - 34.0f, 0.46f, kAccent);
+
+        window.present(renderer, camera, &hud);
         gpu_total += renderer.last_gpu_ms();
         ++frames;
     }

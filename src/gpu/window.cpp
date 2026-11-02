@@ -173,7 +173,7 @@ void Window::create_swapchain() {
     create.imageColorSpace = chosen.colorSpace;
     create.imageExtent = extent_;
     create.imageArrayLayers = 1;
-    create.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    create.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     create.preTransform = caps.currentTransform;
     create.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -189,6 +189,18 @@ void Window::create_swapchain() {
     images_.resize(image_count);
     vkGetSwapchainImagesKHR(device_.handle(), swapchain_, &image_count, images_.data());
 
+    views_.resize(image_count);
+    for (uint32_t i = 0; i < image_count; ++i) {
+        VkImageViewCreateInfo view{};
+        view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view.image = images_[i];
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = format_;
+        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        check(vkCreateImageView(device_.handle(), &view, nullptr, &views_[i]),
+              "vkCreateImageView");
+    }
+
     // One per image, not per frame in flight: a semaphore signalled by a present
     // may not be reused until that image comes back.
     release_.resize(image_count);
@@ -201,6 +213,10 @@ void Window::create_swapchain() {
 }
 
 void Window::destroy_swapchain() {
+    for (auto& view : views_) {
+        if (view != VK_NULL_HANDLE) vkDestroyImageView(device_.handle(), view, nullptr);
+    }
+    views_.clear();
     for (auto& signal : release_) {
         if (signal != VK_NULL_HANDLE) vkDestroySemaphore(device_.handle(), signal, nullptr);
     }
@@ -242,12 +258,19 @@ FrameInput Window::poll() {
     return input;
 }
 
-void Window::present(WorldRenderer& renderer, const Camera& camera) {
+void Window::present(WorldRenderer& renderer, const Camera& camera,
+                     TextRenderer* overlay) {
     const auto started = std::chrono::steady_clock::now();
     Frame& frame = frames_[frame_index_];
 
     check(vkWaitForFences(device_.handle(), 1, &frame.in_flight, VK_TRUE, UINT64_MAX),
           "vkWaitForFences");
+    // That fence belonged to a frame two back, so its timestamps are ready.
+    // Reading them here is the only honest moment: right after submitting, the
+    // gpu has not run yet and the query still holds the previous value. The
+    // guard matters: the fences start signalled, so without it the first frame
+    // waits on a query nothing has written.
+    if (presented_once_) renderer.read_timestamps();
 
     uint32_t index = 0;
     VkResult acquired = vkAcquireNextImageKHR(device_.handle(), swapchain_, UINT64_MAX,
@@ -298,9 +321,41 @@ void Window::present(WorldRenderer& renderer, const Camera& camera) {
     blit_info.filter = VK_FILTER_NEAREST;
     vkCmdBlitImage2(frame.command, &blit_info);
 
-    transition(frame.command, images_[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-               VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_BLIT_BIT,
-               VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+    if (overlay != nullptr) {
+        transition(frame.command, images_[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        VkRenderingAttachmentInfo colour{};
+        colour.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        colour.imageView = views_[index];
+        colour.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colour.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        colour.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        VkRenderingInfo rendering{};
+        rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        rendering.renderArea = {{0, 0}, extent_};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &colour;
+
+        vkCmdBeginRendering(frame.command, &rendering);
+        overlay->record(frame.command, extent_.width, extent_.height);
+        vkCmdEndRendering(frame.command);
+
+        transition(frame.command, images_[index], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                   VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                   VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+    } else {
+        transition(frame.command, images_[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+    }
 
     check(vkEndCommandBuffer(frame.command), "vkEndCommandBuffer");
 
@@ -344,6 +399,7 @@ void Window::present(WorldRenderer& renderer, const Camera& camera) {
         check(presented, "vkQueuePresentKHR");
     }
 
+    presented_once_ = true;
     frame_index_ = (frame_index_ + 1) % frames_.size();
     last_frame_ms_ = std::chrono::duration<double, std::milli>(
                          std::chrono::steady_clock::now() - started)
