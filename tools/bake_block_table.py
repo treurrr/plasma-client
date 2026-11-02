@@ -7,13 +7,16 @@ The client mmaps the result and reads it as-is: no JSON, no allocation, no
 parsing at startup. Minecraft's own assets stay out of it - only geometry
 derived from the installation the player already owns ends up in the file.
 """
+import io
 import json
 import struct
 import sys
 from pathlib import Path
 
+from PIL import Image
+
 sys.path.insert(0, str(Path(__file__).parent))
-from resolve_block_models import Assets, MODEL_LESS, quads_for_state  # noqa: E402
+from resolve_block_models import Assets, FLUIDS, MODEL_LESS, quads_for_state  # noqa: E402
 
 MAGIC = b"PLBK"
 VERSION = 1
@@ -23,6 +26,8 @@ FACE_INDEX = {"down": 0, "up": 1, "north": 2, "south": 3, "west": 4, "east": 5}
 FLAG_NO_MODEL = 1 << 0
 FLAG_HAS_GEOMETRY = 1 << 1
 FLAG_FULL_CUBE = 1 << 2
+FLAG_OCCLUDES = 1 << 3
+FLAG_FLUID = 1 << 4
 
 QUAD = struct.Struct("<3h3h4hHBbbBBB")
 assert QUAD.size == 28, QUAD.size
@@ -33,6 +38,31 @@ def fixed(value):
     if not -32768 <= scaled <= 32767:
         raise ValueError(f"model coordinate {value} out of range")
     return scaled
+
+
+_opacity = {}
+
+
+def texture_is_opaque(archive, name):
+    """Leaves, glass and ice fill their whole block but you can see through
+    them, so geometry alone does not decide whether a block may cull its
+    neighbours."""
+    if name in _opacity:
+        return _opacity[name]
+    path = f"assets/minecraft/textures/{name.split(':')[-1]}.png"
+    try:
+        raw = archive.read(path)
+    except KeyError:
+        _opacity[name] = False
+        return False
+    with Image.open(io.BytesIO(raw)) as image:
+        if image.mode in ("RGB", "L"):
+            opaque = True
+        else:
+            alpha = image.convert("RGBA").getchannel("A")
+            opaque = alpha.getextrema()[0] == 255
+    _opacity[name] = opaque
+    return opaque
 
 
 def is_full_cube(quads):
@@ -107,6 +137,7 @@ def main(args):
 
         for q in quads:
             uv = q["uv"] or [0, 0, 16, 16]
+            tint = q["tintindex"]
             quad_blob.extend(QUAD.pack(
                 fixed(q["from"][0]), fixed(q["from"][1]), fixed(q["from"][2]),
                 fixed(q["to"][0]), fixed(q["to"][1]), fixed(q["to"][2]),
@@ -114,7 +145,7 @@ def main(args):
                 texture_id(q["texture"]),
                 FACE_INDEX[q["face"]],
                 FACE_INDEX[q["cullface"]] if q["cullface"] in FACE_INDEX else -1,
-                -1 if q["tintindex"] is None else min(127, int(q["tintindex"])),
+                -1 if tint is None else min(127, int(tint)),
                 1 if q["uvlock"] else 0,
                 (q["rotation"][0] // 90) % 4,
                 (q["rotation"][1] // 90) % 4,
@@ -126,10 +157,14 @@ def main(args):
         flags = 0
         if name in MODEL_LESS:
             flags |= FLAG_NO_MODEL
+        if name in FLUIDS:
+            flags |= FLAG_FLUID
         if quads:
             flags |= FLAG_HAS_GEOMETRY
             if is_full_cube(quads):
                 flags |= FLAG_FULL_CUBE
+                if all(texture_is_opaque(assets.zip, q["texture"]) for q in quads):
+                    flags |= FLAG_OCCLUDES
         state_flags.append(flags)
 
     if problems:
@@ -150,10 +185,12 @@ def main(args):
     out_path.write_bytes(pad(header) + body)
 
     full = sum(1 for f in state_flags if f & FLAG_FULL_CUBE)
+    occluding = sum(1 for f in state_flags if f & FLAG_OCCLUDES)
     print(f"{out_path}: {len(pad(header) + body) / 1e6:.2f} MB")
     print(f"  {len(states)} staten, {len(quad_blob) // QUAD.size} quads, "
           f"{len(texture_name_offsets)} texturen, {len(block_names)} blokken")
-    print(f"  {full} staten zijn een volle kubus (die kunnen hun buren wegsnijden)")
+    print(f"  {full} staten zijn een volle kubus, waarvan {occluding} ondoorzichtig "
+          f"(alleen die mogen buren wegsnijden)")
 
 
 if __name__ == "__main__":

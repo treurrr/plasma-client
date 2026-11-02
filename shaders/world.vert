@@ -26,8 +26,10 @@ void main() {
     uint face = in_face & 0xFFu;
     out_shade = kFaceShade[min(face, 5u)];
 
-    // Grass, foliage and stems ship as greyscale and are multiplied by a biome
-    // colour. Biomes are parsed but not yet resolved, so this is the plains
-    // value for every tinted face.
-    out_tint = (in_face & 0x100u) != 0u ? vec3(0.569, 0.741, 0.349) : vec3(1.0);
+    // Grass, foliage and water ship as greyscale and are multiplied by a biome
+    // colour. Biomes are parsed but not yet resolved, so these are the plains
+    // values.
+    out_tint = vec3(1.0);
+    if ((in_face & 0x100u) != 0u) out_tint = vec3(0.569, 0.741, 0.349);
+    if ((in_face & 0x200u) != 0u) out_tint = vec3(0.247, 0.463, 0.894);
 }

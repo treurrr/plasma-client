@@ -361,7 +361,8 @@ void test_mesher_culls_interiors() {
     append_u32s({0});
     append_u32s({0, 0});
     const uint8_t flags[2] = {0, static_cast<uint8_t>(mcpp::world::BlockTable::kHasGeometry |
-                                                      mcpp::world::BlockTable::kFullCube)};
+                                                      mcpp::world::BlockTable::kFullCube |
+                                                      mcpp::world::BlockTable::kOccludes)};
     append(flags, sizeof(flags));
     append(strings.data(), strings.size());
 
@@ -374,7 +375,7 @@ void test_mesher_culls_interiors() {
 
     mcpp::world::BlockTable table;
     check(table.open(path), "the mesher's table opens");
-    check(table.full_cube(1), "state 1 is a full cube");
+    check(table.full_cube(1) && table.occludes(1), "state 1 is an opaque full cube");
 
     mcpp::ByteBuffer uniform;
     uniform.write_u8(0);

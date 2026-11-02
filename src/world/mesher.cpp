@@ -107,11 +107,16 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                     if (quads.empty()) continue;
                     ++mesh.blocks_visited;
 
-                    bool opaque_neighbour[6];
+                    // A fluid also hides against its own kind, or an ocean
+                    // would be full of faces between neighbouring water blocks.
+                    const bool self_fluid = table.fluid(state);
+                    bool hidden[6];
                     for (int side = 0; side < 6; ++side) {
                         const Offset offset = kFaceOffset[side];
                         const int32_t neighbour = state_at(x + offset.x, y + offset.y, z + offset.z);
-                        opaque_neighbour[side] = neighbour >= 0 && table.full_cube(neighbour);
+                        hidden[side] = neighbour >= 0 &&
+                                       (table.occludes(neighbour) ||
+                                        (self_fluid && table.fluid(neighbour)));
                     }
 
                     const float world_y = static_cast<float>(y + min_section_y * kSection);
@@ -120,7 +125,7 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                         if (quad.cullface >= 0) {
                             const int culling_face =
                                 rotate_face(quad.cullface, quad.rotation_x, quad.rotation_y);
-                            if (opaque_neighbour[culling_face]) {
+                            if (hidden[culling_face]) {
                                 ++mesh.quads_culled;
                                 continue;
                             }
@@ -149,8 +154,9 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                                                              kCornerUv[corner][1]) /
                                            (16.0f * kUnitsPerModelUnit);
                             vertex.texture = quad.texture;
-                            vertex.face = static_cast<uint32_t>(face) |
-                                         (quad.tintindex >= 0 ? 0x100u : 0u);
+                            vertex.face = static_cast<uint32_t>(face);
+                            if (quad.tintindex == 0) vertex.face |= 0x100u;   // grass, foliage
+                            if (quad.tintindex == 1) vertex.face |= 0x200u;   // water
                             mesh.vertices.push_back(vertex);
                         }
 

@@ -13,12 +13,48 @@ from pathlib import Path
 
 FACES = ("down", "up", "north", "south", "west", "east")
 
-# Fluids and air carry no block model; they are drawn by dedicated paths.
+# Air and a few markers carry no geometry at all.
 MODEL_LESS = {"minecraft:air", "minecraft:cave_air", "minecraft:void_air",
-              "minecraft:water", "minecraft:flowing_water",
-              "minecraft:lava", "minecraft:flowing_lava",
-              "minecraft:bubble_column", "minecraft:barrier", "minecraft:light",
+              "minecraft:barrier", "minecraft:light",
               "minecraft:moving_piston", "minecraft:structure_void"}
+
+# Fluids have no block model either, but they are drawn, so the quads are
+# synthesised here instead of read from an asset.
+FLUIDS = {
+    "minecraft:water": ("block/water_still", 1),
+    "minecraft:flowing_water": ("block/water_still", 1),
+    "minecraft:bubble_column": ("block/water_still", 1),
+    "minecraft:lava": ("block/lava_still", -1),
+    "minecraft:flowing_lava": ("block/lava_still", -1),
+}
+
+FLUID_SURFACE = 14.0   # a source block's surface sits just below the top
+
+
+def fluid_quads(name, properties):
+    texture, tint = FLUIDS[name]
+    level = int(properties.get("level", "0"))
+    # Levels 1..7 are flowing and shallower; 8 and up are falling, so full.
+    if level == 0 or level >= 8:
+        height = FLUID_SURFACE
+    else:
+        height = FLUID_SURFACE * (8 - level) / 8.0
+
+    quads = []
+    for face in FACES:
+        # Only the top is lowered, so the sides still meet their neighbours.
+        quads.append({
+            "face": face,
+            "from": [0, 0, 0],
+            "to": [16, height if face != "down" else 16, 16],
+            "texture": texture,
+            "cullface": face,
+            "uv": None,
+            "tintindex": tint if tint >= 0 else None,
+            "rotation": (0, 0),
+            "uvlock": False,
+        })
+    return quads
 
 
 class Assets:
@@ -121,6 +157,8 @@ def pick_entries(blockstate, properties):
 def quads_for_state(assets, block_name, properties):
     if block_name in MODEL_LESS:
         return [], None
+    if block_name in FLUIDS:
+        return fluid_quads(block_name, properties), None
 
     blockstate = assets.blockstate(block_name)
     if blockstate is None:

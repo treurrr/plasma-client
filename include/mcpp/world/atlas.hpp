@@ -24,9 +24,11 @@ public:
     uint32_t tile_size() const { return tile_size_; }
     uint32_t columns() const { return tile_size_ ? width_ / tile_size_ : 0; }
     uint32_t texture_count() const { return texture_count_; }
+    uint32_t mip_levels() const { return mip_levels_; }
     int32_t protocol() const { return protocol_; }
 
     std::span<const uint8_t> pixels() const { return {pixels_, pixel_bytes_}; }
+    std::span<const uint8_t> level(uint32_t mip) const;
 
     static std::filesystem::path default_path(int32_t protocol);
 
@@ -38,6 +40,7 @@ private:
     uint32_t height_ = 0;
     uint32_t tile_size_ = 0;
     uint32_t texture_count_ = 0;
+    uint32_t mip_levels_ = 1;
     const uint8_t* pixels_ = nullptr;
     size_t pixel_bytes_ = 0;
 };

@@ -14,7 +14,7 @@ namespace mcpp::world {
 namespace {
 
 constexpr char kMagic[4] = {'P', 'L', 'A', 'T'};
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 constexpr size_t kHeaderBytes = 32;
 
 size_t align8(size_t value) { return (value + 7) & ~size_t{7}; }
@@ -67,7 +67,8 @@ bool Atlas::open(const std::filesystem::path& path) {
     height_ = header[3];
     tile_size_ = header[4];
     texture_count_ = header[5];
-    pixel_bytes_ = header[6];
+    mip_levels_ = header[6];
+    pixel_bytes_ = header[7];
 
     const size_t rects = align8(static_cast<size_t>(texture_count_) * 4 * sizeof(uint16_t));
     pixels_ = base_ + kHeaderBytes + rects;
@@ -76,11 +77,25 @@ bool Atlas::open(const std::filesystem::path& path) {
         close();
         throw ProtocolError("atlas is korter dan de header beschrijft");
     }
-    if (pixel_bytes_ != static_cast<size_t>(width_) * height_ * 4) {
+    size_t expected = 0;
+    for (uint32_t mip = 0; mip < mip_levels_; ++mip) {
+        expected += static_cast<size_t>(width_ >> mip) * (height_ >> mip) * 4;
+    }
+    if (pixel_bytes_ != expected) {
         close();
         throw ProtocolError("atlas-pixels passen niet bij de afmetingen");
     }
     return true;
+}
+
+std::span<const uint8_t> Atlas::level(uint32_t mip) const {
+    if (mip >= mip_levels_) return {};
+    size_t offset = 0;
+    for (uint32_t i = 0; i < mip; ++i) {
+        offset += static_cast<size_t>(width_ >> i) * (height_ >> i) * 4;
+    }
+    const size_t bytes = static_cast<size_t>(width_ >> mip) * (height_ >> mip) * 4;
+    return {pixels_ + offset, bytes};
 }
 
 std::filesystem::path Atlas::default_path(int32_t protocol) {

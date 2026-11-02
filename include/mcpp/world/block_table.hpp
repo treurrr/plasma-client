@@ -33,6 +33,8 @@ public:
     static constexpr uint8_t kNoModel = 1 << 0;
     static constexpr uint8_t kHasGeometry = 1 << 1;
     static constexpr uint8_t kFullCube = 1 << 2;
+    static constexpr uint8_t kOccludes = 1 << 3;
+    static constexpr uint8_t kFluid = 1 << 4;
 
     BlockTable() = default;
     ~BlockTable();
@@ -57,6 +59,8 @@ public:
     std::string_view texture_name(uint16_t texture) const;
     uint8_t flags(int32_t state) const;
     bool full_cube(int32_t state) const { return (flags(state) & kFullCube) != 0; }
+    bool occludes(int32_t state) const { return (flags(state) & kOccludes) != 0; }
+    bool fluid(int32_t state) const { return (flags(state) & kFluid) != 0; }
 
     static std::filesystem::path default_path(int32_t protocol);
 

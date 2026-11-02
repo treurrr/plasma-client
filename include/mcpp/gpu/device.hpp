@@ -17,6 +17,8 @@ struct DeviceCapabilities {
     bool timeline_semaphore = false;
     bool host_query_reset = false;
     bool demote_to_helper = false;
+    bool sampler_anisotropy = false;
+    float max_anisotropy = 1.0f;
 };
 
 struct AdapterInfo {

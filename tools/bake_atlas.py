@@ -17,7 +17,10 @@ from pathlib import Path
 from PIL import Image
 
 MAGIC = b"PLAT"
-VERSION = 1
+VERSION = 2
+# Four levels takes a 32px tile down to 4px; below that neighbouring tiles
+# start to matter even though a box filter stays inside tile boundaries.
+MIP_LEVELS = 4
 PLBK_MAGIC = b"PLBK"
 HEADER_BYTES = 32
 
@@ -114,15 +117,23 @@ def main(args):
         atlas.paste(tile, (x, y))
         rects.append((x, y, tile_size, tile_size))
 
-    pixels = atlas.tobytes()
-    header = MAGIC + struct.pack("<7I", VERSION, protocol, atlas.width, atlas.height, tile_size,
-                                 len(names), len(pixels))
+    # Tiles are aligned to a power of two, so halving the whole atlas is the
+    # same as halving every tile: a box filter never crosses a tile boundary.
+    levels = [atlas]
+    while len(levels) < MIP_LEVELS and min(levels[-1].size) > 1:
+        previous = levels[-1]
+        levels.append(previous.resize((previous.width // 2, previous.height // 2), Image.BOX))
+
+    pixels = b"".join(level.tobytes() for level in levels)
+    header = MAGIC + struct.pack("<8I", VERSION, protocol, atlas.width, atlas.height, tile_size,
+                                 len(names), len(levels), len(pixels))
     body = b"".join(struct.pack("<4H", *rect) for rect in rects)
     body += b"\0" * (align8(len(body)) - len(body))
 
     Path(out_path).write_bytes(header + body + pixels)
     print(f"{out_path}: {(len(header) + len(body) + len(pixels)) / 1e6:.2f} MB")
-    print(f"  {atlas.width}x{atlas.height}, tegels van {tile_size}px, {len(names)} texturen")
+    print(f"  {atlas.width}x{atlas.height}, tegels van {tile_size}px, {len(names)} texturen, "
+          f"{len(levels)} mipniveaus")
     if missing:
         print(f"  {missing} texturen niet gevonden; die kregen het ontbrekend-blokje")
 

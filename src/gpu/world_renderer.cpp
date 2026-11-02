@@ -2,6 +2,7 @@
 
 #include "mcpp/byte_buffer.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -65,7 +66,7 @@ Allocated make_buffer(Device& device, VkDeviceSize size, VkBufferUsageFlags usag
 void transition(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspect,
                 VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage,
                 VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
-                VkAccessFlags2 dst_access) {
+                VkAccessFlags2 dst_access, uint32_t levels = 1) {
     VkImageMemoryBarrier2 barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
     barrier.srcStageMask = src_stage;
@@ -75,7 +76,7 @@ void transition(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspec
     barrier.oldLayout = from;
     barrier.newLayout = to;
     barrier.image = image;
-    barrier.subresourceRange = {aspect, 0, 1, 0, 1};
+    barrier.subresourceRange = {aspect, 0, levels, 0, 1};
 
     VkDependencyInfo dependency{};
     dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
@@ -202,7 +203,7 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     create.imageType = VK_IMAGE_TYPE_2D;
     create.format = VK_FORMAT_R8G8B8A8_SRGB;
     create.extent = {atlas_width_, atlas_height_, 1};
-    create.mipLevels = 1;
+    create.mipLevels = atlas.mip_levels();
     create.arrayLayers = 1;
     create.samples = VK_SAMPLE_COUNT_1_BIT;
     create.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -245,20 +246,28 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer atlas");
 
+    const uint32_t mips = atlas.mip_levels();
     transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, mips);
 
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {atlas_width_, atlas_height_, 1};
+    std::vector<VkBufferImageCopy> regions(mips);
+    VkDeviceSize offset = 0;
+    for (uint32_t mip = 0; mip < mips; ++mip) {
+        regions[mip] = {};
+        regions[mip].bufferOffset = offset;
+        regions[mip].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
+        regions[mip].imageExtent = {atlas_width_ >> mip, atlas_height_ >> mip, 1};
+        offset += atlas.level(mip).size();
+    }
     vkCmdCopyBufferToImage(command, staging.buffer, atlas_image_,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           static_cast<uint32_t>(regions.size()), regions.data());
 
     transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT,
                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, mips);
 
     check(vkEndCommandBuffer(command), "vkEndCommandBuffer atlas");
 
@@ -282,17 +291,22 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     view.image = atlas_image_;
     view.viewType = VK_IMAGE_VIEW_TYPE_2D;
     view.format = VK_FORMAT_R8G8B8A8_SRGB;
-    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
     check(vkCreateImageView(device_.handle(), &view, nullptr, &atlas_view_),
           "vkCreateImageView atlas");
 
-    // Nearest filtering is the look; clamping keeps a tile from bleeding into
-    // its neighbour in the atlas.
+    // Nearest magnification keeps the blocky look up close; minification needs
+    // mips and anisotropy or distant surfaces crawl with aliasing.
     VkSamplerCreateInfo sampler{};
     sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     sampler.magFilter = VK_FILTER_NEAREST;
-    sampler.minFilter = VK_FILTER_NEAREST;
-    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler.minFilter = VK_FILTER_LINEAR;
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler.maxLod = static_cast<float>(mips);
+    if (device_.adapter().capabilities.sampler_anisotropy) {
+        sampler.anisotropyEnable = VK_TRUE;
+        sampler.maxAnisotropy = std::min(16.0f, device_.adapter().capabilities.max_anisotropy);
+    }
     sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;

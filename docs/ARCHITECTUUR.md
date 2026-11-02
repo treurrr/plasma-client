@@ -369,3 +369,35 @@ ook sRGB, zodat de conversie bij het schrijven gebeurt.
   niet omgezet naar kleuren.
 - **Geen mipmaps en geen ambient occlusion.** Het eerste geeft flikkering in de
   verte, het tweede maakt het beeld vlakker dan vanilla.
+
+## Gaten in de grond
+
+Het eerste getextureerde beeld had gaten. Twee oorzaken, allebei echt.
+
+**Bladeren, glas en ijs sneden hun buren weg.** De `full cube`-vlag betekende
+"zes vlakken die het hele blok vullen", en dat is waar voor die drie - maar je
+kijkt er doorheen, dus achter een boom bleef niets over. Geometrie zegt niets
+over ondoorzichtigheid. Er is nu een aparte vlag: een staat mag pas wegsnijden
+als al zijn zes texturen volledig ondoorzichtig zijn, gecontroleerd op het
+alfakanaal tijdens het bakken. Van de 2457 volle kubussen blijven er **2134**
+over die dat mogen.
+
+**Water werd helemaal niet getekend.** Vloeistoffen hebben geen blokmodel, dus
+stonden ze bij lucht in de lijst "geen geometrie". Ze krijgen nu gemaakte quads:
+een kubus waarvan alleen het bovenvlak lager ligt, met de hoogte uit de
+`level`-eigenschap. Een vloeistof verbergt zich ook tegen zijn eigen soort,
+anders zit een oceaan vol vlakken tussen aangrenzende waterblokken.
+
+Dat laatste is nog niet vanilla-exact: echte vloeistofhoogtes interpoleren
+tussen buren, en water hoort doorzichtig te zijn in plaats van dekkend.
+
+## Mipmaps
+
+Zonder mipmaps korrelde alles op afstand. De atlas bevat nu **vier niveaus**,
+gebakken met een box-filter. Dat mag hier over de hele atlas tegelijk: tegels
+liggen op een macht van twee uitgelijnd, dus halveren blijft binnen de
+tegelgrenzen en er lekt niets van de ene tegel in de andere. Vier niveaus brengt
+een tegel van 32px terug tot 4px; daaronder begint dat wel mis te gaan.
+
+De sampler vergroot met nearest - dat is de blokkenlook - en verkleint met
+lineair plus anisotropie. Atlas: 6,28 MB met mipmaps tegen 4,73 MB zonder.

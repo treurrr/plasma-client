@@ -78,6 +78,8 @@ AdapterInfo describe(VkPhysicalDevice device) {
     info.capabilities.synchronization2 = vulkan13.synchronization2 == VK_TRUE;
     info.capabilities.demote_to_helper =
         vulkan13.shaderDemoteToHelperInvocation == VK_TRUE;
+    info.capabilities.sampler_anisotropy = features.features.samplerAnisotropy == VK_TRUE;
+    info.capabilities.max_anisotropy = properties.properties.limits.maxSamplerAnisotropy;
     return info;
 }
 
@@ -232,6 +234,7 @@ void Device::create(const Options& options) {
     VkPhysicalDeviceFeatures2 features{};
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features.pNext = &vulkan13;
+    features.features.samplerAnisotropy = adapter_.capabilities.sampler_anisotropy;
 
     VkDeviceCreateInfo create{};
     create.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
