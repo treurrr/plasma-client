@@ -30,6 +30,17 @@ constexpr int kCorner[6][4][3] = {
 
 constexpr float kCornerUv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
 
+// The two axes that vary across each face; the third is the face's own normal.
+constexpr int kFaceAxes[6][2] = {{0, 2}, {0, 2}, {0, 1}, {0, 1}, {1, 2}, {1, 2}};
+
+// Minecraft's smooth lighting: a corner is darkest when both edge neighbours
+// are solid, and then the diagonal no longer matters because it cannot be seen.
+int corner_shadow(bool side_a, bool side_b, bool diagonal) {
+    if (side_a && side_b) return 0;
+    return 3 - (static_cast<int>(side_a) + static_cast<int>(side_b) +
+                static_cast<int>(diagonal));
+}
+
 // A quarter turn about the block centre, in the same order the assets use.
 void rotate_quarter_turns(float& a, float& b, int turns) {
     for (int i = 0; i < turns; ++i) {
@@ -87,10 +98,21 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
     };
 
     const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
-        if (x < 0) return neighbours.west ? state_in(*neighbours.west, x + 16, y, z) : -1;
-        if (x > 15) return neighbours.east ? state_in(*neighbours.east, x - 16, y, z) : -1;
-        if (z < 0) return neighbours.north ? state_in(*neighbours.north, x, y, z + 16) : -1;
-        if (z > 15) return neighbours.south ? state_in(*neighbours.south, x, y, z - 16) : -1;
+        const bool past_x = x < 0 || x > 15;
+        const bool past_z = z < 0 || z > 15;
+
+        // Ambient occlusion also samples diagonals, which can leave the chunk on
+        // two axes at once; that chunk is not among the four we are given.
+        if (past_x && past_z) return -1;
+
+        if (past_x) {
+            const Chunk* side = x < 0 ? neighbours.west : neighbours.east;
+            return side ? state_in(*side, x & 15, y, z) : -1;
+        }
+        if (past_z) {
+            const Chunk* side = z < 0 ? neighbours.north : neighbours.south;
+            return side ? state_in(*side, x, y, z & 15) : -1;
+        }
         return state_in(chunk, x, y, z);
     };
 
@@ -109,6 +131,19 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
 
                     // A fluid also hides against its own kind, or an ocean
                     // would be full of faces between neighbouring water blocks.
+                    // One 3x3x3 read per block instead of a lookup per face and
+                    // per corner; occlusion and ambient occlusion both use it.
+                    bool solid[3][3][3];
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        for (int dy = -1; dy <= 1; ++dy) {
+                            for (int dz = -1; dz <= 1; ++dz) {
+                                const int32_t around = state_at(x + dx, y + dy, z + dz);
+                                solid[dx + 1][dy + 1][dz + 1] =
+                                    around >= 0 && table.occludes(around);
+                            }
+                        }
+                    }
+
                     const bool self_fluid = table.fluid(state);
                     // Only the top block of a fluid column has a lowered
                     // surface; a submerged one fills its block, or the column
@@ -118,10 +153,16 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                     bool hidden[6];
                     for (int side = 0; side < 6; ++side) {
                         const Offset offset = kFaceOffset[side];
+                        if (solid[offset.x + 1][offset.y + 1][offset.z + 1]) {
+                            hidden[side] = true;
+                            continue;
+                        }
+                        if (!self_fluid) {
+                            hidden[side] = false;
+                            continue;
+                        }
                         const int32_t neighbour = state_at(x + offset.x, y + offset.y, z + offset.z);
-                        hidden[side] = neighbour >= 0 &&
-                                       (table.occludes(neighbour) ||
-                                        (self_fluid && table.fluid(neighbour)));
+                        hidden[side] = neighbour >= 0 && table.fluid(neighbour);
                     }
 
                     const float world_y = static_cast<float>(y + min_section_y * kSection);
@@ -138,6 +179,9 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
 
                         const auto base = static_cast<uint32_t>(mesh.vertices.size());
                         const int face = rotate_face(quad.face, quad.rotation_x, quad.rotation_y);
+                        const Offset normal = kFaceOffset[face];
+                        const int axis_a = kFaceAxes[face][0];
+                        const int axis_b = kFaceAxes[face][1];
 
                         for (int corner = 0; corner < 4; ++corner) {
                             const int* pick = kCorner[quad.face][corner];
@@ -148,6 +192,24 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                                 (pick[2] ? quad.to[2] : quad.from[2]) / kBlock,
                             };
                             apply_rotation(local, quad.rotation_x, quad.rotation_y);
+
+                            int away[3] = {normal.x, normal.y, normal.z};
+                            const int sign_a = pick[axis_a] ? 1 : -1;
+                            const int sign_b = pick[axis_b] ? 1 : -1;
+
+                            int probe[3] = {away[0], away[1], away[2]};
+                            probe[axis_a] += sign_a;
+                            const bool side_a = solid[probe[0] + 1][probe[1] + 1][probe[2] + 1];
+
+                            probe[0] = away[0]; probe[1] = away[1]; probe[2] = away[2];
+                            probe[axis_b] += sign_b;
+                            const bool side_b = solid[probe[0] + 1][probe[1] + 1][probe[2] + 1];
+
+                            probe[axis_a] += sign_a;
+                            const bool diagonal = solid[probe[0] + 1][probe[1] + 1][probe[2] + 1];
+
+                            const auto shadow =
+                                static_cast<uint32_t>(corner_shadow(side_a, side_b, diagonal));
 
                             Vertex vertex{};
                             vertex.position[0] = static_cast<float>(x) + local[0];
@@ -163,6 +225,7 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                             vertex.face = static_cast<uint32_t>(face);
                             if (quad.tintindex == 0) vertex.face |= 0x100u;   // grass, foliage
                             if (quad.tintindex == 1) vertex.face |= 0x200u;   // water
+                            vertex.face |= shadow << 16;
                             mesh.vertices.push_back(vertex);
                         }
 

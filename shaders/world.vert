@@ -21,7 +21,10 @@ void main() {
 
     out_uv = vec3(in_uv, float(in_texture));
     uint face = in_face & 0xFFu;
-    out_shade = kFaceShade[min(face, 5u)];
+
+    // Smooth lighting: 0 is a fully enclosed corner, 3 is open.
+    const float kCornerLight[4] = float[](0.52, 0.68, 0.84, 1.0);
+    out_shade = kFaceShade[min(face, 5u)] * kCornerLight[(in_face >> 16) & 3u];
 
     // Grass, foliage and water ship as greyscale and are multiplied by a biome
     // colour. Biomes are parsed but not yet resolved, so these are the plains
