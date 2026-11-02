@@ -40,6 +40,10 @@ public:
     struct Options {
         bool validation = false;
         bool prefer_discrete = true;
+        // Presenting needs extensions chosen before the instance exists, so the
+        // window layer hands them in rather than this file knowing about GLFW.
+        std::vector<const char*> instance_extensions;
+        bool swapchain = false;
         std::filesystem::path pipeline_cache = default_pipeline_cache();
     };
 
@@ -58,6 +62,7 @@ public:
     static std::filesystem::path default_pipeline_cache();
 
     const AdapterInfo& adapter() const { return adapter_; }
+    VkInstance instance() const { return instance_; }
     VkDevice handle() const { return device_; }
     VkPhysicalDevice physical() const { return physical_; }
     VkQueue graphics_queue() const { return graphics_queue_; }

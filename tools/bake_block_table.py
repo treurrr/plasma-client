@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bake every block state's geometry into one memory-mappable table.
 
-Usage: bake_block_table.py <client.jar> <reports/blocks.json> <protocol> <out.crbk>
+Usage: bake_block_table.py <client.jar> <reports/blocks.json> <protocol> <out.plbk>
 
 The client mmaps the result and reads it as-is: no JSON, no allocation, no
 parsing at startup. Minecraft's own assets stay out of it - only geometry
@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from resolve_block_models import (Assets, FACES, FLUIDS, MODEL_LESS,  # noqa: E402
                                    quads_for_state)
 
-MAGIC = b"CRBK"
+MAGIC = b"PLBK"
 VERSION = 1
 UNITS = 256  # model coordinates are 0..16; store sixteenths of a sixteenth
 FACE_INDEX = {"down": 0, "up": 1, "north": 2, "south": 3, "west": 4, "east": 5}

@@ -47,7 +47,7 @@ struct Feature {
 // Feature keys as the server sees them, and the plugin channel they travel on.
 // A server that wants to allow this client has to be able to switch features
 // off, so the channel is part of the product rather than an extra.
-constexpr std::string_view kPluginChannel = "crit:features";
+constexpr std::string_view kPluginChannel = "plasma:features";
 
 class Registry {
 public:

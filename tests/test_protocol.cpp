@@ -301,7 +301,7 @@ void test_block_table() {
     append(flags, sizeof(flags));
     append(strings.data(), strings.size());
 
-    const auto path = std::filesystem::temp_directory_path() / "crit-test-blocks.crbk";
+    const auto path = std::filesystem::temp_directory_path() / "plasma-test-blocks.plbk";
     {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(file.data()),
@@ -366,7 +366,7 @@ void test_mesher_culls_interiors() {
     append(flags, sizeof(flags));
     append(strings.data(), strings.size());
 
-    const auto path = std::filesystem::temp_directory_path() / "crit-test-mesher.crbk";
+    const auto path = std::filesystem::temp_directory_path() / "plasma-test-mesher.plbk";
     {
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(file.data()),

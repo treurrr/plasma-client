@@ -226,7 +226,7 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
 
     // Reading this once rather than per section per frame: a getenv in the
     // draw loop is itself a measurable cost.
-    culling_ = std::getenv("CRIT_NOCULL") == nullptr;
+    culling_ = std::getenv("PLASMA_NOCULL") == nullptr;
 
     create_targets();
     create_atlas(atlas);
@@ -678,6 +678,11 @@ void WorldRenderer::upload_merged(const world::Mesh& mesh) {
 }
 
 void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback) {
+    record_frame(command, camera, readback, false);
+}
+
+void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback,
+                                 bool leave_transfer_src) {
     vkCmdResetQueryPool(command, timestamps_, 0, 2);
     vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestamps_, 0);
 
@@ -761,21 +766,36 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     }
     vkCmdEndRendering(command);
 
-    if (readback) {
+    if (readback || leave_transfer_src) {
         transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT,
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
                    VK_ACCESS_2_TRANSFER_READ_BIT);
 
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {width_, height_, 1};
-        vkCmdCopyImageToBuffer(command, color_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_, 1,
-                               &region);
+        if (readback) {
+            VkBufferImageCopy region{};
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            region.imageExtent = {width_, height_, 1};
+            vkCmdCopyImageToBuffer(command, color_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_,
+                                   1, &region);
+        }
     }
 
     vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestamps_, 1);
+}
+
+void WorldRenderer::record_present(VkCommandBuffer command, const Camera& camera) {
+    record_frame(command, camera, false, true);
+}
+
+void WorldRenderer::read_timestamps() {
+    uint64_t marks[2] = {0, 0};
+    if (vkGetQueryPoolResults(device_.handle(), timestamps_, 0, 2, sizeof(marks), marks,
+                              sizeof(uint64_t),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS) {
+        last_gpu_ms_ = static_cast<double>(marks[1] - marks[0]) * timestamp_period_ / 1e6;
+    }
 }
 
 double WorldRenderer::submit(VkCommandBuffer command) {

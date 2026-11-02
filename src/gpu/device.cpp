@@ -83,12 +83,12 @@ AdapterInfo describe(VkPhysicalDevice device) {
     return info;
 }
 
-VkInstance create_instance(bool validation) {
+VkInstance create_instance(bool validation, const std::vector<const char*>& extensions) {
     VkApplicationInfo application{};
     application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    application.pApplicationName = "Crit Client";
+    application.pApplicationName = "Plasma Client";
     application.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-    application.pEngineName = "Crit";
+    application.pEngineName = "Plasma";
     application.apiVersion = kApiVersion;
 
     VkInstanceCreateInfo create{};
@@ -98,6 +98,8 @@ VkInstance create_instance(bool validation) {
         create.enabledLayerCount = 1;
         create.ppEnabledLayerNames = &kValidationLayer;
     }
+    create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    create.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
 
     VkInstance instance = VK_NULL_HANDLE;
     check(vkCreateInstance(&create, nullptr, &instance), "vkCreateInstance");
@@ -149,11 +151,11 @@ std::filesystem::path Device::default_pipeline_cache() {
     } else if (const char* home = std::getenv("HOME")) {
         base = std::filesystem::path(home) / ".cache";
     }
-    return base / "crit-client" / "pipelines.bin";
+    return base / "plasma-client" / "pipelines.bin";
 }
 
 std::vector<AdapterInfo> Device::list_adapters() {
-    VkInstance instance = create_instance(false);
+    VkInstance instance = create_instance(false, {});
 
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(instance, &count, nullptr);
@@ -172,7 +174,8 @@ void Device::create(const Options& options) {
     destroy();
     cache_path_ = options.pipeline_cache;
 
-    instance_ = create_instance(options.validation && validation_available());
+    instance_ = create_instance(options.validation && validation_available(),
+                                options.instance_extensions);
 
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(instance_, &count, nullptr);
@@ -236,11 +239,16 @@ void Device::create(const Options& options) {
     features.pNext = &vulkan13;
     features.features.samplerAnisotropy = adapter_.capabilities.sampler_anisotropy;
 
+    std::vector<const char*> wanted;
+    if (options.swapchain) wanted.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
     VkDeviceCreateInfo create{};
     create.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     create.pNext = &features;
     create.queueCreateInfoCount = 1;
     create.pQueueCreateInfos = &queue;
+    create.enabledExtensionCount = static_cast<uint32_t>(wanted.size());
+    create.ppEnabledExtensionNames = wanted.empty() ? nullptr : wanted.data();
 
     check(vkCreateDevice(physical_, &create, nullptr, &device_), "vkCreateDevice");
     vkGetDeviceQueue(device_, graphics_family_, 0, &graphics_queue_);

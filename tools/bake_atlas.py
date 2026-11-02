@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bake every texture the block table references into a layered array texture.
 
-Usage: bake_atlas.py <client.jar> <blocks.crbk> <out.crat>
+Usage: bake_atlas.py <client.jar> <blocks.plbk> <out.plat>
 
 Texture ids come from the block table and become array layers, so the two files
 stay aligned by construction and a lookup needs no arithmetic at all. A layer
@@ -17,12 +17,12 @@ from pathlib import Path
 
 from PIL import Image
 
-MAGIC = b"CRAT"
+MAGIC = b"PLAT"
 VERSION = 3
 # Four levels takes a 32px tile down to 4px; below that neighbouring tiles
 # start to matter even though a box filter stays inside tile boundaries.
 MIP_LEVELS = 4
-CRBK_MAGIC = b"CRBK"
+PLBK_MAGIC = b"PLBK"
 HEADER_BYTES = 32
 
 
@@ -32,7 +32,7 @@ def align8(value):
 
 def read_texture_names(path):
     data = Path(path).read_bytes()
-    if data[:4] != CRBK_MAGIC:
+    if data[:4] != PLBK_MAGIC:
         sys.exit(f"{path} is not a block table")
     version, protocol, states, quads, textures, blocks, strings = struct.unpack_from(
         "<7I", data, 4)

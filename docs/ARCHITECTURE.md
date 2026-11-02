@@ -300,7 +300,7 @@ Two things, both deliberately left open:
 
 ## Rendering the world, and the bug that nearly got through
 
-`crit-client worldshot <server> <out.png> [chunks] [view]` logs in, collects
+`plasma-client worldshot <server> <out.png> [chunks] [view]` logs in, collects
 chunks, meshes them with their neighbours, uploads everything to the gpu and
 writes out a frame. On 200 chunks: 1.9 million triangles in **1.14 ms** of gpu
 time.
@@ -449,7 +449,7 @@ were culled and the ones facing away were drawn.
 
 ### How this surfaced
 
-Not by looking at landscapes. `crit-client showcase` builds a section from
+Not by looking at landscapes. `plasma-client showcase` builds a section from
 given block states without a server and renders it from the front, from the side,
 from above or at an angle. On blocks whose texture orientation you know - a log,
 a grass block, a furnace - you see at a glance what is wrong.

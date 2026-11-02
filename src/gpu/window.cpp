@@ -1,0 +1,353 @@
+#include "mcpp/gpu/window.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <format>
+#include <stdexcept>
+
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+
+namespace mcpp::gpu {
+
+namespace {
+
+constexpr size_t kFramesInFlight = 2;
+
+void check(VkResult result, const char* what) {
+    if (result != VK_SUCCESS) {
+        throw std::runtime_error(std::format("{} failed: {}", what, static_cast<int>(result)));
+    }
+}
+
+void transition(VkCommandBuffer command, VkImage image, VkImageLayout from, VkImageLayout to,
+                VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
+                VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+    VkImageMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barrier.srcStageMask = src_stage;
+    barrier.srcAccessMask = src_access;
+    barrier.dstStageMask = dst_stage;
+    barrier.dstAccessMask = dst_access;
+    barrier.oldLayout = from;
+    barrier.newLayout = to;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    VkDependencyInfo dependency{};
+    dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.imageMemoryBarrierCount = 1;
+    dependency.pImageMemoryBarriers = &barrier;
+    vkCmdPipelineBarrier2(command, &dependency);
+}
+
+bool glfw_ready = false;
+
+void ensure_glfw() {
+    if (glfw_ready) return;
+    if (glfwInit() != GLFW_TRUE) throw std::runtime_error("glfwInit failed");
+    glfw_ready = true;
+}
+
+} // namespace
+
+std::vector<const char*> Window::required_instance_extensions() {
+    ensure_glfw();
+    if (glfwVulkanSupported() != GLFW_TRUE) {
+        throw std::runtime_error("no Vulkan loader for the window system");
+    }
+    uint32_t count = 0;
+    const char** names = glfwGetRequiredInstanceExtensions(&count);
+    if (names == nullptr) throw std::runtime_error("no surface extensions for this platform");
+    return std::vector<const char*>(names, names + count);
+}
+
+Window::Window(Device& device, uint32_t width, uint32_t height, const std::string& title)
+    : device_(device) {
+    ensure_glfw();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    window_ = glfwCreateWindow(static_cast<int>(width), static_cast<int>(height), title.c_str(),
+                               nullptr, nullptr);
+    if (window_ == nullptr) throw std::runtime_error("could not create a window");
+
+    check(glfwCreateWindowSurface(device_.instance(), window_, nullptr, &surface_),
+          "glfwCreateWindowSurface");
+
+    VkBool32 supported = VK_FALSE;
+    vkGetPhysicalDeviceSurfaceSupportKHR(device_.physical(), device_.graphics_family(), surface_,
+                                         &supported);
+    if (supported != VK_TRUE) {
+        throw std::runtime_error("the graphics queue cannot present to this surface");
+    }
+
+    VkCommandPoolCreateInfo pool_create{};
+    pool_create.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool_create.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pool_create.queueFamilyIndex = device_.graphics_family();
+    check(vkCreateCommandPool(device_.handle(), &pool_create, nullptr, &pool_), "vkCreateCommandPool");
+
+    frames_.resize(kFramesInFlight);
+    for (auto& frame : frames_) {
+        VkCommandBufferAllocateInfo allocate{};
+        allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocate.commandPool = pool_;
+        allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocate.commandBufferCount = 1;
+        check(vkAllocateCommandBuffers(device_.handle(), &allocate, &frame.command),
+              "vkAllocateCommandBuffers");
+
+        VkSemaphoreCreateInfo semaphore{};
+        semaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        check(vkCreateSemaphore(device_.handle(), &semaphore, nullptr, &frame.acquired),
+              "vkCreateSemaphore");
+        check(vkCreateSemaphore(device_.handle(), &semaphore, nullptr, &frame.rendered),
+              "vkCreateSemaphore");
+
+        VkFenceCreateInfo fence{};
+        fence.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        check(vkCreateFence(device_.handle(), &fence, nullptr, &frame.in_flight), "vkCreateFence");
+    }
+
+    create_swapchain();
+
+    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    if (glfwRawMouseMotionSupported() == GLFW_TRUE) {
+        glfwSetInputMode(window_, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    }
+}
+
+Window::~Window() {
+    if (device_.handle() != VK_NULL_HANDLE) vkDeviceWaitIdle(device_.handle());
+    destroy_swapchain();
+    for (auto& frame : frames_) {
+        if (frame.acquired != VK_NULL_HANDLE) vkDestroySemaphore(device_.handle(), frame.acquired, nullptr);
+        if (frame.rendered != VK_NULL_HANDLE) vkDestroySemaphore(device_.handle(), frame.rendered, nullptr);
+        if (frame.in_flight != VK_NULL_HANDLE) vkDestroyFence(device_.handle(), frame.in_flight, nullptr);
+    }
+    if (pool_ != VK_NULL_HANDLE) vkDestroyCommandPool(device_.handle(), pool_, nullptr);
+    if (surface_ != VK_NULL_HANDLE) vkDestroySurfaceKHR(device_.instance(), surface_, nullptr);
+    if (window_ != nullptr) glfwDestroyWindow(window_);
+}
+
+void Window::create_swapchain() {
+    VkSurfaceCapabilitiesKHR caps{};
+    check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device_.physical(), surface_, &caps),
+          "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+
+    uint32_t format_count = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device_.physical(), surface_, &format_count, nullptr);
+    std::vector<VkSurfaceFormatKHR> formats(format_count);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device_.physical(), surface_, &format_count, formats.data());
+
+    VkSurfaceFormatKHR chosen = formats.front();
+    for (const auto& candidate : formats) {
+        if (candidate.format == VK_FORMAT_B8G8R8A8_UNORM &&
+            candidate.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            chosen = candidate;
+            break;
+        }
+    }
+    format_ = chosen.format;
+
+    extent_ = caps.currentExtent;
+    if (extent_.width == UINT32_MAX) {
+        int w = 0, h = 0;
+        glfwGetFramebufferSize(window_, &w, &h);
+        extent_.width = std::clamp(static_cast<uint32_t>(w), caps.minImageExtent.width,
+                                   caps.maxImageExtent.width);
+        extent_.height = std::clamp(static_cast<uint32_t>(h), caps.minImageExtent.height,
+                                    caps.maxImageExtent.height);
+    }
+
+    uint32_t count = caps.minImageCount + 1;
+    if (caps.maxImageCount != 0) count = std::min(count, caps.maxImageCount);
+
+    VkSwapchainCreateInfoKHR create{};
+    create.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    create.surface = surface_;
+    create.minImageCount = count;
+    create.imageFormat = format_;
+    create.imageColorSpace = chosen.colorSpace;
+    create.imageExtent = extent_;
+    create.imageArrayLayers = 1;
+    create.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    create.preTransform = caps.currentTransform;
+    create.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    // FIFO is the only mode every driver must offer, and it is also the honest
+    // default: tearing would flatter the frame counter without helping anyone.
+    create.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    create.clipped = VK_TRUE;
+    check(vkCreateSwapchainKHR(device_.handle(), &create, nullptr, &swapchain_),
+          "vkCreateSwapchainKHR");
+
+    uint32_t image_count = 0;
+    vkGetSwapchainImagesKHR(device_.handle(), swapchain_, &image_count, nullptr);
+    images_.resize(image_count);
+    vkGetSwapchainImagesKHR(device_.handle(), swapchain_, &image_count, images_.data());
+
+    // One per image, not per frame in flight: a semaphore signalled by a present
+    // may not be reused until that image comes back.
+    release_.resize(image_count);
+    VkSemaphoreCreateInfo semaphore{};
+    semaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    for (auto& signal : release_) {
+        check(vkCreateSemaphore(device_.handle(), &semaphore, nullptr, &signal),
+              "vkCreateSemaphore");
+    }
+}
+
+void Window::destroy_swapchain() {
+    for (auto& signal : release_) {
+        if (signal != VK_NULL_HANDLE) vkDestroySemaphore(device_.handle(), signal, nullptr);
+    }
+    release_.clear();
+    if (swapchain_ != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device_.handle(), swapchain_, nullptr);
+        swapchain_ = VK_NULL_HANDLE;
+    }
+    images_.clear();
+}
+
+bool Window::open() const {
+    return window_ != nullptr && glfwWindowShouldClose(window_) == GLFW_FALSE;
+}
+
+FrameInput Window::poll() {
+    glfwPollEvents();
+    FrameInput input;
+
+    const auto down = [&](int key) { return glfwGetKey(window_, key) == GLFW_PRESS; };
+    if (down(GLFW_KEY_W)) input.forward += 1.0f;
+    if (down(GLFW_KEY_S)) input.forward -= 1.0f;
+    if (down(GLFW_KEY_D)) input.right += 1.0f;
+    if (down(GLFW_KEY_A)) input.right -= 1.0f;
+    if (down(GLFW_KEY_SPACE)) input.up += 1.0f;
+    if (down(GLFW_KEY_LEFT_SHIFT)) input.up -= 1.0f;
+    input.sprint = down(GLFW_KEY_LEFT_CONTROL);
+    input.quit = down(GLFW_KEY_ESCAPE);
+
+    double x = 0.0, y = 0.0;
+    glfwGetCursorPos(window_, &x, &y);
+    if (have_cursor_) {
+        input.yaw_delta = static_cast<float>(x - last_x_);
+        input.pitch_delta = static_cast<float>(y - last_y_);
+    }
+    last_x_ = x;
+    last_y_ = y;
+    have_cursor_ = true;
+    return input;
+}
+
+void Window::present(WorldRenderer& renderer, const Camera& camera) {
+    const auto started = std::chrono::steady_clock::now();
+    Frame& frame = frames_[frame_index_];
+
+    check(vkWaitForFences(device_.handle(), 1, &frame.in_flight, VK_TRUE, UINT64_MAX),
+          "vkWaitForFences");
+
+    uint32_t index = 0;
+    VkResult acquired = vkAcquireNextImageKHR(device_.handle(), swapchain_, UINT64_MAX,
+                                              frame.acquired, VK_NULL_HANDLE, &index);
+    if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
+        vkDeviceWaitIdle(device_.handle());
+        destroy_swapchain();
+        create_swapchain();
+        return;
+    }
+    if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) {
+        check(acquired, "vkAcquireNextImageKHR");
+    }
+
+    check(vkResetFences(device_.handle(), 1, &frame.in_flight), "vkResetFences");
+    check(vkResetCommandBuffer(frame.command, 0), "vkResetCommandBuffer");
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check(vkBeginCommandBuffer(frame.command, &begin), "vkBeginCommandBuffer");
+
+    renderer.record_present(frame.command, camera);
+
+    transition(frame.command, images_[index], VK_IMAGE_LAYOUT_UNDEFINED,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+               VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+    VkImageBlit2 blit{};
+    blit.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2;
+    blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1].x = static_cast<int32_t>(renderer.width());
+    blit.srcOffsets[1].y = static_cast<int32_t>(renderer.height());
+    blit.srcOffsets[1].z = 1;
+    blit.dstOffsets[1].x = static_cast<int32_t>(extent_.width);
+    blit.dstOffsets[1].y = static_cast<int32_t>(extent_.height);
+    blit.dstOffsets[1].z = 1;
+
+    VkBlitImageInfo2 blit_info{};
+    blit_info.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2;
+    blit_info.srcImage = renderer.color_image();
+    blit_info.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    blit_info.dstImage = images_[index];
+    blit_info.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    blit_info.regionCount = 1;
+    blit_info.pRegions = &blit;
+    blit_info.filter = VK_FILTER_NEAREST;
+    vkCmdBlitImage2(frame.command, &blit_info);
+
+    transition(frame.command, images_[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_BLIT_BIT,
+               VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
+
+    check(vkEndCommandBuffer(frame.command), "vkEndCommandBuffer");
+
+    VkSemaphoreSubmitInfo wait{};
+    wait.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    wait.semaphore = frame.acquired;
+    wait.stageMask = VK_PIPELINE_STAGE_2_BLIT_BIT;
+
+    VkSemaphoreSubmitInfo signal{};
+    signal.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    signal.semaphore = release_[index];
+    signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+    VkCommandBufferSubmitInfo command_submit{};
+    command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    command_submit.commandBuffer = frame.command;
+
+    VkSubmitInfo2 submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.waitSemaphoreInfoCount = 1;
+    submit.pWaitSemaphoreInfos = &wait;
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &command_submit;
+    submit.signalSemaphoreInfoCount = 1;
+    submit.pSignalSemaphoreInfos = &signal;
+    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, frame.in_flight), "vkQueueSubmit2");
+
+    VkPresentInfoKHR present{};
+    present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present.waitSemaphoreCount = 1;
+    present.pWaitSemaphores = &release_[index];
+    present.swapchainCount = 1;
+    present.pSwapchains = &swapchain_;
+    present.pImageIndices = &index;
+    const VkResult presented = vkQueuePresentKHR(device_.graphics_queue(), &present);
+    if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR) {
+        vkDeviceWaitIdle(device_.handle());
+        destroy_swapchain();
+        create_swapchain();
+    } else {
+        check(presented, "vkQueuePresentKHR");
+    }
+
+    frame_index_ = (frame_index_ + 1) % frames_.size();
+    last_frame_ms_ = std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - started)
+                         .count();
+}
+
+} // namespace mcpp::gpu

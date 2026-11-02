@@ -13,7 +13,7 @@
 namespace mcpp::world {
 namespace {
 
-constexpr char kMagic[4] = {'C', 'R', 'A', 'T'};
+constexpr char kMagic[4] = {'P', 'L', 'A', 'T'};
 constexpr uint32_t kVersion = 3;
 constexpr size_t kHeaderBytes = 32;
 
@@ -95,7 +95,7 @@ std::filesystem::path Atlas::default_path(int32_t protocol) {
     } else if (const char* home = std::getenv("HOME")) {
         base = std::filesystem::path(home) / ".local" / "share";
     }
-    return base / "crit-client" / "data" / std::format("atlas-{}.crat", protocol);
+    return base / "plasma-client" / "data" / std::format("atlas-{}.plat", protocol);
 }
 
 } // namespace mcpp::world

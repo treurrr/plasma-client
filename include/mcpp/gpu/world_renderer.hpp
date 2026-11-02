@@ -35,6 +35,14 @@ public:
     // in a running client; the readback alone is several milliseconds.
     double draw(const Camera& camera);
 
+    // Records a frame and leaves the colour image in TRANSFER_SRC_OPTIMAL, so a
+    // window can blit it into a swapchain image in the same submission.
+    void record_present(VkCommandBuffer command, const Camera& camera);
+    VkImage color_image() const { return color_; }
+    uint32_t width() const { return width_; }
+    uint32_t height() const { return height_; }
+    void read_timestamps();
+
     double last_gpu_ms() const { return last_gpu_ms_; }
     size_t section_count() const { return sections_.size(); }
     size_t drawn_sections() const { return drawn_sections_; }
@@ -45,6 +53,8 @@ public:
 
 private:
     void record_frame(VkCommandBuffer command, const Camera& camera, bool readback);
+    void record_frame(VkCommandBuffer command, const Camera& camera, bool readback,
+                      bool leave_transfer_src);
     double submit(VkCommandBuffer command);
     void upload_merged(const world::Mesh& mesh);
     void create_targets();

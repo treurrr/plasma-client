@@ -126,7 +126,7 @@ std::filesystem::path state_directory() {
     } else if (const char* home = std::getenv("HOME")) {
         base = std::filesystem::path(home) / ".local" / "state";
     }
-    return base / "crit-client";
+    return base / "plasma-client";
 }
 
 } // namespace
@@ -148,11 +148,11 @@ std::string_view describe(Failure failure) {
 }
 
 std::string Session::client_id() {
-    if (const char* from_environment = std::getenv("CRIT_MSA_CLIENT_ID")) {
+    if (const char* from_environment = std::getenv("PLASMA_MSA_CLIENT_ID")) {
         return from_environment;
     }
-#ifdef CRIT_MSA_CLIENT_ID
-    return CRIT_MSA_CLIENT_ID;
+#ifdef PLASMA_MSA_CLIENT_ID
+    return PLASMA_MSA_CLIENT_ID;
 #else
     return {};
 #endif

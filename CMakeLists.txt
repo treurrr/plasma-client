@@ -14,6 +14,8 @@ find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(CURL REQUIRED)
+# Optional: without it the client still renders to PNG, it just has no window.
+find_package(glfw3 QUIET)
 
 # Off by default on purpose: a build that nobody configured must be the one
 # that checks ownership. Turning this on only removes the gate for local
@@ -61,6 +63,10 @@ mcpp_shader(world.vert WorldVert)
 mcpp_shader(world.frag WorldFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
+if(glfw3_FOUND)
+    set(MCPP_WINDOW_SOURCES src/gpu/window.cpp)
+endif()
+
 add_library(mcpp_net STATIC
     src/byte_buffer.cpp
     src/tcp_socket.cpp
@@ -77,17 +83,24 @@ add_library(mcpp_net STATIC
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
+    ${MCPP_WINDOW_SOURCES}
     src/image_png.cpp
     src/proto/packet_ids_gen.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)
 target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl)
+if(glfw3_FOUND)
+    target_link_libraries(mcpp_net PUBLIC glfw)
+    target_compile_definitions(mcpp_net PUBLIC MCPP_HAVE_WINDOW)
+else()
+    message(STATUS "glfw3 not found: building without the window path")
+endif()
 mcpp_defaults(mcpp_net)
 
-add_executable(crit-client src/tools/client_main.cpp src/features.cpp)
-target_link_libraries(crit-client PRIVATE mcpp_net)
-mcpp_defaults(crit-client)
+add_executable(plasma-client src/tools/client_main.cpp src/features.cpp)
+target_link_libraries(plasma-client PRIVATE mcpp_net)
+mcpp_defaults(plasma-client)
 
 add_executable(mc-ping src/tools/mc_ping.cpp)
 target_link_libraries(mc-ping PRIVATE mcpp_net)

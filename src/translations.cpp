@@ -9,7 +9,7 @@
 namespace mcpp {
 
 std::filesystem::path Translations::default_path() {
-    if (const char* override_path = std::getenv("CRIT_LANG")) return override_path;
+    if (const char* override_path = std::getenv("PLASMA_LANG")) return override_path;
 
     std::filesystem::path base;
     if (const char* data_home = std::getenv("XDG_DATA_HOME")) {
@@ -17,7 +17,7 @@ std::filesystem::path Translations::default_path() {
     } else if (const char* home = std::getenv("HOME")) {
         base = std::filesystem::path(home) / ".local" / "share";
     }
-    return base / "crit-client" / "lang" / "en_us.json";
+    return base / "plasma-client" / "lang" / "en_us.json";
 }
 
 bool Translations::load(const std::filesystem::path& path) {

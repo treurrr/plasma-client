@@ -1,4 +1,4 @@
-# Crit Client
+# Plasma Client
 
 A Minecraft: Java Edition client written from scratch in C++23 and Vulkan.
 
@@ -51,18 +51,18 @@ than from a directory name.
 
 ```sh
 jar=$(python3 tools/find_minecraft.py 1.21.11)
-python3 tools/bake_block_table.py "$jar" reports/blocks.json 774 blocks-774.crbk
-python3 tools/bake_atlas.py "$jar" blocks-774.crbk atlas-774.crat
+python3 tools/bake_block_table.py "$jar" reports/blocks.json 774 blocks-774.plbk
+python3 tools/bake_atlas.py "$jar" blocks-774.plbk atlas-774.plat
 ```
 
 ## Running
 
 ```sh
-crit-client join <host>[:port] [name]        # join and stay in the play state
-crit-client bench <host>[:port]              # frame time and fps
-crit-client worldshot <host>[:port] out.png  # render the world to a file
-crit-client showcase out.png <state>...      # render given blocks on their own
-crit-client gpu                              # adapters and features
+plasma-client join <host>[:port] [name]        # join and stay in the play state
+plasma-client bench <host>[:port]              # frame time and fps
+plasma-client worldshot <host>[:port] out.png  # render the world to a file
+plasma-client showcase out.png <state>...      # render given blocks on their own
+plasma-client gpu                              # adapters and features
 ```
 
 `showcase` is how rendering bugs get found here. Blocks whose texture
@@ -110,5 +110,5 @@ atlas that bled between tiles, a face winding that hid every top face.
 
 ## Licence
 
-GPL-3.0; see [COPYING.md](COPYING.md). The Crit Client name and the marks in
+GPL-3.0; see [COPYING.md](COPYING.md). The Plasma Client name and the marks in
 `brand/` are excluded - fork the code, not the identity.

@@ -10,7 +10,7 @@ if [[ -z $jar ]]; then
     exit 2
 fi
 
-dest=${XDG_DATA_HOME:-$HOME/.local/share}/crit-client/lang
+dest=${XDG_DATA_HOME:-$HOME/.local/share}/plasma-client/lang
 mkdir -p "$dest"
 unzip -o -j "$jar" 'assets/minecraft/lang/en_us.json' -d "$dest"
 echo "placed in $dest/en_us.json"
