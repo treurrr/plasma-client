@@ -395,10 +395,19 @@ int do_play(const std::string& target, size_t chunk_limit) {
         placed = true;
         std::cout << std::format("- the server put us at {:.2f} {:.2f} {:.2f}\n", x, y, z);
     };
+    std::vector<mcpp::world::Chunk> pending;
+    std::set<std::pair<int32_t, int32_t>> seen;
     events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         std::lock_guard lock(guard);
-        if (chunks.size() < chunk_limit) chunks.push_back(chunk);
-        if (chunks.size() >= chunk_limit) enough.store(true);
+        // A server re-sends a chunk whenever it changes. Without this the same
+        // geometry is appended again and again until the buffer is full.
+        if (!seen.insert({chunk.x, chunk.z}).second) return;
+        if (!enough.load()) {
+            chunks.push_back(chunk);
+            if (chunks.size() >= chunk_limit) enough.store(true);
+        } else {
+            pending.push_back(chunk);
+        }
     };
 
     mcpp::Session session(options, events);
@@ -433,7 +442,21 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
     mcpp::gpu::Window window(device, 1600, 900, "Plasma Client");
     mcpp::gpu::WorldRenderer renderer(device, window.width(), window.height(), atlas);
-    renderer.upload(combined);
+
+    // Room for roughly four times what we start with, so chunks arriving while
+    // you walk are appended instead of forcing the whole world to be rebuilt.
+    size_t vertex_bytes = 0;
+    size_t index_bytes = 0;
+    for (const auto& section : combined) {
+        vertex_bytes += section.vertices.size() * sizeof(mcpp::world::Vertex);
+        index_bytes += section.indices.size() * sizeof(uint32_t);
+    }
+    // A server with view distance 10 sends 441 chunks. Budget for well past
+    // that: 384 MB is a rounding error on any card that can run this.
+    renderer.reserve(384u << 20, 96u << 20);
+    renderer.append(combined);
+    std::cout << std::format("- {:.0f} MB reserved on the gpu, {:.1f} MB used by the first {} chunks\n",
+                             renderer.vertex_capacity() / 1e6, vertex_bytes / 1e6, chunks.size());
 
     float centre_x = 0.0f;
     float centre_z = 0.0f;
@@ -462,6 +485,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
     size_t ticks_sent = 0;
+    size_t streamed = 0;
     float tick_accumulator = 0.0f;
     double gpu_total = 0.0;
 
@@ -504,6 +528,36 @@ int do_play(const std::string& target, size_t chunk_limit) {
                 break;
             }
         }
+        // Mesh and append whatever arrived, in batches, so one chunk does not
+        // cost a submit of its own.
+        // At most a handful per frame. Meshing 257 at once cost 47 ms, which is
+        // exactly the hitch this client is supposed not to have.
+        constexpr size_t kChunksPerFrame = 12;
+        std::vector<mcpp::world::Chunk> arrived;
+        {
+            std::lock_guard lock(guard);
+            const size_t take = std::min(pending.size(), kChunksPerFrame);
+            if (take > 0) {
+                arrived.assign(std::make_move_iterator(pending.begin()),
+                               std::make_move_iterator(pending.begin() + take));
+                pending.erase(pending.begin(), pending.begin() + take);
+            }
+        }
+        if (!arrived.empty()) {
+            double batch_ms = 0.0;
+            const auto pieces = mesh_world(arrived, table, &batch_ms);
+            if (!renderer.append(pieces)) {
+                std::cout << "- the streaming buffer is full; not adding more chunks\n";
+                std::lock_guard lock(guard);
+                pending.clear();
+            } else {
+                streamed += arrived.size();
+                std::cout << std::format(
+                    "- streamed in {} chunks in {:.1f} ms, {} sections drawn in total\n",
+                    arrived.size(), batch_ms, renderer.appended_sections());
+            }
+        }
+
         tick_accumulator += dt;
         if (tick_accumulator >= 0.05f) {
             tick_accumulator = 0.0f;
@@ -523,8 +577,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
     session.close();
     if (frames > 0) {
-        std::cout << std::format("- {} frames, {:.3f} ms gpu on average, {} positions sent\n",
-                                 frames, gpu_total / static_cast<double>(frames), ticks_sent);
+        std::cout << std::format("- {} frames, {:.3f} ms gpu on average, {} positions sent, "
+                                 "{} chunks streamed in\n",
+                                 frames, gpu_total / static_cast<double>(frames), ticks_sent,
+                                 streamed);
     }
     device.save_pipeline_cache();
     return 0;

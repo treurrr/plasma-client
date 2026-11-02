@@ -29,6 +29,14 @@ public:
 
     void upload(const world::Mesh& mesh);
     void upload(const std::vector<world::SectionMesh>& sections);
+
+    // Streaming: reserve once, then append chunks as the server sends them.
+    // Appending never reallocates, so a chunk arriving mid-game cannot stall
+    // the frame the way a full re-upload would.
+    void reserve(size_t vertex_capacity, size_t index_capacity);
+    bool append(const std::vector<world::SectionMesh>& sections);
+    size_t vertex_capacity() const { return vertex_capacity_; }
+    size_t appended_sections() const { return sections_.size(); }
     std::vector<uint8_t> render(const Camera& camera);
 
     // Draws a frame without reading it back, which is what a frame costs
@@ -120,6 +128,12 @@ private:
     size_t drawn_triangles_ = 0;
 
     uint32_t index_count_ = 0;
+    size_t vertex_capacity_ = 0;
+    size_t index_capacity_ = 0;
+    VkBuffer append_staging_ = VK_NULL_HANDLE;
+    VkDeviceMemory append_staging_memory_ = VK_NULL_HANDLE;
+    void* append_mapped_ = nullptr;
+    size_t append_staging_bytes_ = 0;
     size_t vertex_bytes_ = 0;
     size_t index_bytes_ = 0;
     double last_gpu_ms_ = 0.0;

@@ -656,6 +656,130 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
                      std::chrono::steady_clock::now() - start).count();
 }
 
+void WorldRenderer::reserve(size_t vertex_capacity, size_t index_capacity) {
+    destroy_mesh();
+    sections_.clear();
+    vertex_bytes_ = 0;
+    index_bytes_ = 0;
+    index_count_ = 0;
+    vertex_capacity_ = vertex_capacity;
+    index_capacity_ = index_capacity;
+
+    auto vertex = make_buffer(device_, vertex_capacity_,
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    auto index = make_buffer(device_, index_capacity_,
+                             VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vertex_buffer_ = vertex.buffer;
+    vertex_memory_ = vertex.memory;
+    index_buffer_ = index.buffer;
+    index_memory_ = index.memory;
+}
+
+bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
+    if (vertex_capacity_ == 0) return false;
+
+    const size_t first_section = sections_.size();
+    const size_t vertex_start = vertex_bytes_;
+    const size_t index_start = index_bytes_;
+
+    std::vector<size_t> source;
+    source.reserve(sections.size());
+    size_t vertex_added = 0;
+    size_t index_added = 0;
+    for (size_t i = 0; i < sections.size(); ++i) {
+        const auto& section = sections[i];
+        if (section.indices.empty()) continue;
+
+        const size_t vertex_offset = (vertex_start + vertex_added) / sizeof(world::Vertex);
+        const size_t index_offset = (index_start + index_added) / sizeof(uint32_t);
+
+        Section entry{};
+        for (int axis = 0; axis < 3; ++axis) {
+            entry.origin[axis] = static_cast<float>(section.origin[axis]);
+            entry.bounds_min[axis] = entry.origin[axis] + section.bounds_min[axis];
+            entry.bounds_max[axis] = entry.origin[axis] + section.bounds_max[axis];
+        }
+        entry.first_index = static_cast<uint32_t>(index_offset);
+        entry.index_count = static_cast<uint32_t>(section.indices.size());
+        entry.vertex_offset = static_cast<int32_t>(vertex_offset);
+        sections_.push_back(entry);
+        source.push_back(i);
+
+        vertex_added += section.vertices.size() * sizeof(world::Vertex);
+        index_added += section.indices.size() * sizeof(uint32_t);
+    }
+
+    if (source.empty()) return true;
+    if (vertex_start + vertex_added > vertex_capacity_ ||
+        index_start + index_added > index_capacity_) {
+        sections_.resize(first_section);   // out of room; the caller decides what to drop
+        return false;
+    }
+
+    const size_t needed = vertex_added + index_added;
+    if (needed > append_staging_bytes_) {
+        if (append_staging_ != VK_NULL_HANDLE) {
+            vkUnmapMemory(device_.handle(), append_staging_memory_);
+            vkDestroyBuffer(device_.handle(), append_staging_, nullptr);
+            vkFreeMemory(device_.handle(), append_staging_memory_, nullptr);
+        }
+        append_staging_bytes_ = std::max<size_t>(needed, 8u << 20);
+        auto staging = make_buffer(device_, append_staging_bytes_,
+                                   VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        append_staging_ = staging.buffer;
+        append_staging_memory_ = staging.memory;
+        check(vkMapMemory(device_.handle(), append_staging_memory_, 0, VK_WHOLE_SIZE, 0,
+                          &append_mapped_),
+              "vkMapMemory");
+    }
+
+    auto* base = static_cast<uint8_t*>(append_mapped_);
+    parallel_for(source.size(), [&](size_t slot) {
+        const auto& section = sections[source[slot]];
+        const auto& entry = sections_[first_section + slot];
+        const size_t vertex_offset =
+            static_cast<size_t>(entry.vertex_offset) * sizeof(world::Vertex) - vertex_start;
+        const size_t index_offset =
+            static_cast<size_t>(entry.first_index) * sizeof(uint32_t) - index_start;
+        std::memcpy(base + vertex_offset, section.vertices.data(),
+                    section.vertices.size() * sizeof(world::Vertex));
+        std::memcpy(base + vertex_added + index_offset, section.indices.data(),
+                    section.indices.size() * sizeof(uint32_t));
+    });
+
+    check(vkResetCommandBuffer(frame_command_, 0), "vkResetCommandBuffer");
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check(vkBeginCommandBuffer(frame_command_, &begin), "vkBeginCommandBuffer");
+    VkBufferCopy vertex_copy{0, vertex_start, vertex_added};
+    vkCmdCopyBuffer(frame_command_, append_staging_, vertex_buffer_, 1, &vertex_copy);
+    VkBufferCopy index_copy{vertex_added, index_start, index_added};
+    vkCmdCopyBuffer(frame_command_, append_staging_, index_buffer_, 1, &index_copy);
+    check(vkEndCommandBuffer(frame_command_), "vkEndCommandBuffer");
+
+    VkCommandBufferSubmitInfo command_submit{};
+    command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    command_submit.commandBuffer = frame_command_;
+    VkSubmitInfo2 submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &command_submit;
+    check(vkResetFences(device_.handle(), 1, &frame_fence_), "vkResetFences");
+    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, frame_fence_), "vkQueueSubmit2");
+    check(vkWaitForFences(device_.handle(), 1, &frame_fence_, VK_TRUE, UINT64_MAX),
+          "vkWaitForFences");
+
+    vertex_bytes_ += vertex_added;
+    index_bytes_ += index_added;
+    index_count_ = static_cast<uint32_t>(index_bytes_ / sizeof(uint32_t));
+    return true;
+}
+
 void WorldRenderer::upload(const world::Mesh& mesh) {
     sections_.clear();
     const auto start = std::chrono::steady_clock::now();
