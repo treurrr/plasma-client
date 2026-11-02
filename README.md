@@ -12,23 +12,31 @@ with the client.
 
 ## State
 
-It joins a real server, stays in the play state, and renders the world it is
-sent. Chat works both ways. There is no window yet, no movement, and no
-singleplayer; frames are written to PNG.
+It joins a real server, opens a window, and lets you walk through the world it
+streams. Chat works both ways, movement is reported to the server, and chunks
+arriving while you play are meshed on a worker and appended to the gpu rather
+than rebuilding everything. There is no singleplayer, no entities and no
+interface yet.
 
-Measured on an RTX 4070 Laptop, 1920x1080, 200 chunks of overworld, 2.04 million
-triangles:
+Measured on an RTX 4070 Laptop with 16 threads, 1920x1080, 200 chunks of
+overworld, 2.06 million triangles, 862k of them drawn after culling:
 
 | | |
 |---|---|
-| frame | 0.247 ms, 4050 fps |
-| 1% low | 0.320 ms, 3126 fps |
-| meshing | 1.35 ms per chunk |
+| frame, gpu | 0.257 ms |
+| frame, cpu beside it | 0.275 ms mean, 0.116 ms median |
+| 1% low, gpu | 0.335 ms |
+| meshing | 0.17 ms per chunk, across 16 threads |
 | vertex | 16 bytes |
 
-That measures the draw path and nothing else - no game logic, no entities, no
-interface, and the world sits in one static buffer - so it is not what a
-finished client will show.
+Both halves are given on purpose. The gpu figure alone was published here for
+a while, and it was the one part that was never the problem: a command buffer
+and a fence were being allocated every frame, costing 0.854 ms of cpu against
+0.164 ms of gpu. Quoting the gpu number by itself overstates the framerate by
+about three times.
+
+This still measures the draw path and nothing else - no game logic, no
+entities, no interface - so it is not what a finished client will show.
 
 Protocols 774 (1.21.11) and 776 (26.2) are supported, meaning a generated packet
 table exists and a join against a real server of that version has been tested.
@@ -58,6 +66,7 @@ python3 tools/bake_atlas.py "$jar" blocks-774.plbk atlas-774.plat
 ## Running
 
 ```sh
+plasma-client play <host>[:port]               # open a window and walk around
 plasma-client join <host>[:port] [name]        # join and stay in the play state
 plasma-client bench <host>[:port]              # frame time and fps
 plasma-client worldshot <host>[:port] out.png  # render the world to a file
