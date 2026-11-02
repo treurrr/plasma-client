@@ -60,7 +60,13 @@ def main(args):
         row_height = max(row_height, image.height)
     atlas_height = y + row_height
 
+    # A solid patch, so the same pipeline can fill rectangles for panels and
+    # buttons without a second atlas or a second pipeline.
+    atlas_height += 4
     atlas = Image.new("L", (atlas_width, atlas_height), 0)
+    for sx in range(4):
+        for sy in range(4):
+            atlas.putpixel((atlas_width - 4 + sx, atlas_height - 4 + sy), 255)
     records = bytearray()
     for (code, image, box, advance), (px, py) in zip(rendered, places):
         atlas.paste(image, (px, py))
@@ -73,7 +79,7 @@ def main(args):
     out_path.write_bytes(header + bytes(records) + atlas.tobytes())
 
     print(f"{out_path}: {(len(header) + len(records) + atlas_width * atlas_height) / 1024:.0f} KB")
-    print(f"  {len(rendered)} glyphs, atlas {atlas_width}x{atlas_height}, "
+    print(f"  {len(rendered)} glyphs plus a solid patch, atlas {atlas_width}x{atlas_height}, "
           f"line height {line_height}, ascent {ascent}")
 
 

@@ -362,6 +362,80 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
 }
 
 
+
+#ifdef MCPP_HAVE_WINDOW
+// The feature menu, drawn with the same pipeline as the hud. Colours and
+// shapes follow brand/menu.html so the client and the mockups cannot drift.
+void draw_feature_menu(mcpp::gpu::TextRenderer& ui, float width, float height) {
+    constexpr uint32_t kScrim = 0x0A0A0BCCu;
+    constexpr uint32_t kPanel = 0x121315FFu;
+    constexpr uint32_t kRule = 0x212226FFu;
+    constexpr uint32_t kText = 0xECEDEFFFu;
+    constexpr uint32_t kDim = 0x9BA0A6FFu;
+    constexpr uint32_t kMute = 0x6B7076FFu;
+    constexpr uint32_t kAccent = 0x4A32F0FFu;
+    constexpr uint32_t kOn = 0x1E3A2AFFu;
+    constexpr uint32_t kOnText = 0x6EE7A0FFu;
+
+    const auto& registry = mcpp::features::Registry::instance();
+    const auto all = registry.all();
+
+    ui.fill(0.0f, 0.0f, width, height, kScrim);
+
+    const float margin = 56.0f;
+    const float gap = 14.0f;
+    const float card_h = 86.0f;
+    const float rows = static_cast<float>((all.size() + 4) / 5);
+    const float panel_x = margin;
+    const float panel_w = width - margin * 2.0f;
+    // Height follows the content instead of the screen, so the panel is not
+    // mostly empty space below the last row.
+    const float panel_h = 92.0f + rows * (card_h + gap) + 46.0f;
+    const float panel_y = (height - panel_h) * 0.5f;
+    ui.fill(panel_x, panel_y, panel_w, panel_h, kPanel);
+
+    ui.draw("PLASMA", panel_x + 26.0f, panel_y + 22.0f, 0.62f, kText);
+    ui.draw("FEATURES", panel_x + 150.0f, panel_y + 28.0f, 0.34f, kMute);
+    ui.draw("M to close", panel_x + panel_w - 150.0f, panel_y + 28.0f, 0.34f, kMute);
+    ui.fill(panel_x, panel_y + 68.0f, panel_w, 1.0f, kRule);
+
+    // Cards, five across, in the order the registry lists them.
+    const float card_w = (panel_w - 52.0f - gap * 4.0f) / 5.0f;
+    float x = panel_x + 26.0f;
+    float y = panel_y + 92.0f;
+
+    for (size_t i = 0; i < all.size(); ++i) {
+        const auto& feature = all[i];
+        const bool on = registry.enabled(static_cast<mcpp::features::Id>(i));
+
+        // A border drawn as four hairlines; the pipeline only fills rectangles.
+        ui.fill(x, y, card_w, card_h, kRule);
+        ui.fill(x + 1.0f, y + 1.0f, card_w - 2.0f, card_h - 2.0f, 0x0A0A0BFFu);
+        ui.draw(feature.label, x + 12.0f, y + 12.0f, 0.40f, kText);
+        if (feature.server_may_object) {
+            ui.draw("some servers forbid this", x + 12.0f, y + 32.0f, 0.26f, kMute);
+        }
+
+        const float button_h = 24.0f;
+        const float button_y = y + card_h - button_h - 10.0f;
+        ui.fill(x + 10.0f, button_y, card_w - 20.0f, button_h, on ? kOn : kRule);
+        ui.draw(on ? "Enabled" : "Disabled", x + 20.0f, button_y + 5.0f, 0.32f,
+                on ? kOnText : kDim);
+
+        x += card_w + gap;
+        if ((i + 1) % 5 == 0) {
+            x = panel_x + 26.0f;
+            y += card_h + gap;
+        }
+    }
+
+    ui.fill(panel_x, panel_y + panel_h - 46.0f, panel_w, 1.0f, kRule);
+    ui.draw("No reach, aim assist, auto-clicker or ESP. That stays that way.",
+            panel_x + 26.0f, panel_y + panel_h - 32.0f, 0.30f, kMute);
+    ui.fill(panel_x + panel_w - 120.0f, panel_y + panel_h - 36.0f, 96.0f, 3.0f, kAccent);
+}
+#endif
+
 #ifdef MCPP_HAVE_WINDOW
 int do_play(const std::string& target, size_t chunk_limit) {
     const auto address = parse_address(target);
@@ -520,9 +594,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
     mcpp::gpu::TextRenderer hud(device, mcpp::gpu::TextRenderer::default_font_path(),
                                 window.colour_format());
     double fps = 0.0;
+    bool menu_open = false;
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
-                 "  left control to sprint, escape to leave\n";
+                 "  left control to sprint, m for the feature menu, escape to leave\n";
 
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
@@ -534,6 +609,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
     while (window.open()) {
         const auto input = window.poll();
         if (input.quit) break;
+        if (input.toggle_menu) menu_open = !menu_open;
 
         const auto now = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(now - previous).count();
@@ -634,6 +710,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
                          session.entity_count()),
              18.0f, 84.0f, 0.46f, kText);
         line("PLASMA", 18.0f, static_cast<float>(window.height()) - 34.0f, 0.46f, kAccent);
+        if (menu_open) {
+            draw_feature_menu(hud, static_cast<float>(window.width()),
+                              static_cast<float>(window.height()));
+        }
 
         window.present(renderer, camera, &hud);
         gpu_total += renderer.last_gpu_ms();

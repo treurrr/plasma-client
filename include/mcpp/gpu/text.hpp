@@ -21,6 +21,9 @@ public:
     void begin();
     // x and y locate the line top. Glyphs beyond the fixed capacity are dropped.
     void draw(std::string_view text, float x, float y, float scale, uint32_t rgba);
+    // Panels and buttons go through the same pipeline, using a solid patch
+    // baked into the corner of the atlas.
+    void fill(float x, float y, float w, float h, uint32_t rgba);
     float width(std::string_view text, float scale) const;
     float line_height(float scale) const;
     void record(VkCommandBuffer command, uint32_t width, uint32_t height);

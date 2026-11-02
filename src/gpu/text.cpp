@@ -433,6 +433,18 @@ void TextRenderer::create_pipeline(VkFormat colour_format) {
 
 void TextRenderer::begin() { vertex_count_ = 0; }
 
+void TextRenderer::fill(float x, float y, float w, float h, uint32_t rgba) {
+    if (vertex_count_ + 6 > kVertexCapacity) return;
+    const float u = (static_cast<float>(atlas_width_) - 2.0f) / static_cast<float>(atlas_width_);
+    const float v = (static_cast<float>(atlas_height_) - 2.0f) / static_cast<float>(atlas_height_);
+    mapped_[vertex_count_++] = {{x, y}, {u, v}, rgba};
+    mapped_[vertex_count_++] = {{x + w, y}, {u, v}, rgba};
+    mapped_[vertex_count_++] = {{x + w, y + h}, {u, v}, rgba};
+    mapped_[vertex_count_++] = {{x, y}, {u, v}, rgba};
+    mapped_[vertex_count_++] = {{x + w, y + h}, {u, v}, rgba};
+    mapped_[vertex_count_++] = {{x, y + h}, {u, v}, rgba};
+}
+
 void TextRenderer::draw(std::string_view text, float x, float y, float scale, uint32_t rgba) {
     for (unsigned char code : text) {
         if (code < 32 || code > 126) continue;

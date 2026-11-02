@@ -20,6 +20,8 @@ struct FrameInput {
     float pitch_delta = 0.0f;
     bool sprint = false;
     bool quit = false;
+    // Edge-triggered: true on the frame the key goes down, not while held.
+    bool toggle_menu = false;
 };
 
 // GLFW only for the surface and the key state; everything after the surface is
@@ -78,6 +80,7 @@ private:
     double last_x_ = 0.0;
     double last_y_ = 0.0;
     bool have_cursor_ = false;
+    bool menu_key_down_ = false;
     double last_frame_ms_ = 0.0;
 };
 

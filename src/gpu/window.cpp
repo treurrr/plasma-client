@@ -246,6 +246,10 @@ FrameInput Window::poll() {
     input.sprint = down(GLFW_KEY_LEFT_CONTROL);
     input.quit = down(GLFW_KEY_ESCAPE);
 
+    const bool menu_now = down(GLFW_KEY_M);
+    input.toggle_menu = menu_now && !menu_key_down_;
+    menu_key_down_ = menu_now;
+
     double x = 0.0, y = 0.0;
     glfwGetCursorPos(window_, &x, &y);
     if (have_cursor_) {
