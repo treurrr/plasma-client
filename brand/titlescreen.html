@@ -1,0 +1,266 @@
+<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<title>Plodder Client</title><style>
+:root {
+  --bg-0: #08080A;
+  --bg-1: #101014;
+  --bg-2: #16161B;
+  --line: #22222A;
+  --line-soft: #1A1A20;
+  --txt: #F4F5F7;
+  --txt-dim: #8A9096;
+  --txt-mute: #5F656B;
+  --accent: #FF4D57;
+  --accent-dim: #C9353E;
+  --accent-glow: rgba(255, 77, 87, 0.18);
+  --good: #4ADE80;
+  --warn: #FFB347;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+}
+
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg-0); color:var(--txt); overflow:hidden;
+       font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; -webkit-font-smoothing:antialiased; }
+.screen { position:relative; width:1920px; height:1080px; }
+.bg { position:absolute; inset:0; background:
+   radial-gradient(760px 900px at 57% 52%, rgba(255,77,87,0.13), transparent 58%),
+   radial-gradient(1200px 760px at 88% 18%, rgba(120,145,200,0.07), transparent 62%),
+   linear-gradient(155deg,#0E0E13 0%,#09090C 48%,#0B0B10 100%); }
+.beams { position:absolute; inset:0; opacity:0.5;
+   background:repeating-linear-gradient(104deg, transparent 0 78px, rgba(255,255,255,0.016) 78px 79px);
+   mask-image:radial-gradient(900px 700px at 57% 50%, #000 10%, transparent 72%); }
+.vig { position:absolute; inset:0;
+   background:radial-gradient(125% 105% at 52% 48%, transparent 44%, rgba(0,0,0,0.80) 100%); }
+
+.top { position:absolute; top:0; left:0; right:0; height:62px; display:flex; align-items:center;
+   justify-content:space-between; padding:0 30px; background:linear-gradient(180deg,rgba(8,8,10,0.88),transparent); }
+.brand { display:flex; align-items:center; gap:11px; }
+.brand svg { width:25px; height:25px; display:block; }
+.brand span { font-size:15px; font-weight:700; }
+.brand em { font-style:normal; font-weight:400; color:var(--txt-dim); margin-left:5px; }
+.tele { display:flex; align-items:center; gap:8px; }
+.pill { display:flex; align-items:center; gap:7px; height:30px; padding:0 12px;
+   background:rgba(22,22,27,0.7); border:1px solid var(--line-soft); border-radius:999px;
+   font-size:12px; color:var(--txt-dim); font-variant-numeric:tabular-nums; }
+.pill b { color:var(--txt); font-weight:600; }
+.dot { width:6px; height:6px; border-radius:50%; background:var(--good); }
+.avatar { width:30px; height:30px; border-radius:9px; border:1px solid var(--line);
+   background:linear-gradient(135deg,#2A2A33,#17171C); display:grid; place-items:center;
+   font-size:11px; font-weight:700; color:var(--txt-dim); }
+
+.stage { position:absolute; left:112px; top:50%; transform:translateY(-50%); width:412px; }
+.logo-row { display:flex; align-items:center; gap:16px; }
+.logo-row svg { width:56px; height:56px; filter:drop-shadow(0 0 30px var(--accent-glow)); }
+.title { font-size:42px; font-weight:760; letter-spacing:-0.025em; line-height:1; }
+.title em { font-style:normal; font-weight:300; color:var(--txt-dim); display:block;
+   font-size:15px; letter-spacing:0.32em; margin-top:7px; }
+.tag { color:var(--txt-mute); font-size:12.5px; margin:15px 0 26px; }
+.tag b { color:var(--accent); font-weight:600; }
+.menu { display:flex; flex-direction:column; gap:8px; }
+.btn { display:flex; align-items:center; gap:13px; height:52px; padding:0 19px;
+   border-radius:var(--r-md); border:1px solid var(--line); background:rgba(18,18,22,0.72); }
+.btn .ico { width:18px; height:18px; opacity:0.7; flex:none; }
+.btn .lab { font-size:14px; font-weight:560; }
+.btn .sub { margin-left:auto; font-size:11.5px; color:var(--txt-mute); }
+.btn.primary { height:60px; border:1px solid rgba(255,77,87,0.45);
+   background:linear-gradient(180deg,rgba(255,77,87,0.19),rgba(255,77,87,0.06));
+   box-shadow:0 16px 46px -18px rgba(255,77,87,0.6); }
+.btn.primary .lab { font-size:16px; font-weight:680; letter-spacing:0.05em; }
+.btn.primary .ico { opacity:1; }
+
+/* Midden: personagevitrine */
+.vitrine { position:absolute; left:50%; top:50%; transform:translate(-46%,-53%);
+   display:flex; flex-direction:column; align-items:center; }
+.vitrine .char svg { width:286px; height:440px; display:block; }
+.cos { display:flex; gap:7px; margin-top:4px; }
+.cos .slot { width:46px; height:46px; border-radius:11px; border:1px solid var(--line);
+   background:rgba(18,18,22,0.8); display:grid; place-items:center; }
+.cos .slot.on { border-color:rgba(255,77,87,0.5); background:rgba(255,77,87,0.09); }
+.cos .slot svg { width:19px; height:19px; opacity:0.62; }
+.cos .slot.on svg { opacity:1; }
+.cos-lab { margin-top:11px; font-size:11px; color:var(--txt-mute); letter-spacing:0.09em; }
+
+.side { position:absolute; right:48px; top:50%; transform:translateY(-50%); width:306px; }
+.panel { background:rgba(15,15,19,0.8); border:1px solid var(--line);
+   border-radius:var(--r-lg); padding:18px 19px 16px; }
+.panel h3 { font-size:10px; letter-spacing:0.17em; color:var(--txt-mute); font-weight:600; margin-bottom:13px; }
+.metric { display:flex; align-items:baseline; justify-content:space-between; padding:8px 0;
+   border-bottom:1px solid var(--line-soft); }
+.metric:last-child { border-bottom:0; }
+.metric .k { font-size:12.5px; color:var(--txt-dim); }
+.metric .v { font-size:18px; font-weight:680; font-variant-numeric:tabular-nums; }
+.metric .v small { font-size:10.5px; font-weight:500; color:var(--txt-mute); margin-left:2px; }
+.metric .v.good { color:var(--good); }
+.cmp { margin-top:12px; padding-top:11px; border-top:1px solid var(--line-soft);
+   font-size:11px; color:var(--txt-mute); line-height:1.6; }
+.cmp b { color:var(--txt-dim); }
+.quick { margin-top:11px; }
+.srv { display:flex; align-items:center; gap:11px; height:46px; padding:0 14px;
+   background:rgba(15,15,19,0.8); border:1px solid var(--line); border-radius:var(--r-md);
+   margin-bottom:7px; }
+.srv .ic { width:26px; height:26px; border-radius:7px; background:linear-gradient(135deg,#FF4D57,#8E2A31);
+   display:grid; place-items:center; font-size:11px; font-weight:800; color:#0A0A0C; }
+.srv .nm { font-size:12.5px; font-weight:560; }
+.srv .pg { margin-left:auto; font-size:11px; color:var(--good); font-variant-numeric:tabular-nums; }
+.srv .pg.mid { color:var(--warn); }
+
+.bottom { position:absolute; bottom:0; left:0; right:0; height:66px; display:flex;
+   align-items:center; justify-content:space-between; padding:0 30px;
+   background:linear-gradient(0deg,rgba(8,8,10,0.92),transparent); }
+.version { display:flex; align-items:center; gap:10px; height:40px; padding:0 15px;
+   background:rgba(20,20,25,0.9); border:1px solid var(--line); border-radius:var(--r-md); }
+.version .num { font-size:14px; font-weight:650; }
+.version .meta { font-size:11px; color:var(--txt-mute); }
+.soon { font-size:11px; color:var(--txt-mute); margin-left:13px; }
+.soon b { color:var(--txt-dim); }
+.rb { display:flex; align-items:center; gap:11px; }
+.vanilla { display:flex; align-items:center; gap:9px; height:40px; padding:0 16px;
+   border:1px solid var(--line); border-radius:var(--r-md); font-size:12.5px; color:var(--txt-dim); }
+.vanilla .sw { width:26px; height:15px; border-radius:999px; background:#23232B;
+   border:1px solid var(--line); position:relative; }
+.vanilla .sw::after { content:""; position:absolute; top:2px; left:2px; width:9px; height:9px;
+   border-radius:50%; background:var(--txt-mute); }
+.build { font-size:11px; color:#45494E; }
+</style></head><body><div class="screen">
+<div class="bg"></div><div class="beams"></div><div class="vig"></div>
+
+<div class="top">
+  <div class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <path fill="#FF4D57" fill-rule="evenodd"
+        d="M13 9h25l17 14-17 14H26v18H13V9zm13 9v10h11l6-5-6-5H26z"/>
+</svg>
+<span>PLODDER<em>CLIENT</em></span></div>
+  <div class="tele">
+    <div class="pill"><span class="dot"></span>342 <b>online</b></div>
+    <div class="pill">FPS <b>486</b></div><div class="pill">Ping <b>12 ms</b></div>
+    <div class="avatar">TR</div>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="logo-row"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <path fill="#FF4D57" fill-rule="evenodd"
+        d="M13 9h25l17 14-17 14H26v18H13V9zm13 9v10h11l6-5-6-5H26z"/>
+</svg>
+<div class="title">PLODDER<em>CLIENT</em></div></div>
+  <p class="tag">Native C++ · Vulkan · opstarten in <b>0,41 s</b></p>
+  <div class="menu">
+    <div class="btn primary">
+      <svg class="ico" viewBox="0 0 24 24" fill="#FF4D57"><path d="M8 5v14l11-7z"/></svg>
+      <span class="lab">SPELEN</span><span class="sub">bradgesmp.nl</span></div>
+    <div class="btn">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#F4F5F7" stroke-width="1.7">
+        <rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>
+      <span class="lab">Servers</span><span class="sub">18 opgeslagen</span></div>
+    <div class="btn">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#F4F5F7" stroke-width="1.7">
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20v-3" stroke-linecap="round"/></svg>
+      <span class="lab">HUD &amp; Mods</span><span class="sub">11 actief</span></div>
+    <div class="btn">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#F4F5F7" stroke-width="1.7">
+        <path d="M12 3l2.4 5.3 5.6.7-4.2 4 1.1 5.6L12 15.9 7.1 18.6l1.1-5.6-4.2-4 5.6-.7z" stroke-linejoin="round"/></svg>
+      <span class="lab">Cosmetics</span><span class="sub">shop</span></div>
+    <div class="btn">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#F4F5F7" stroke-width="1.7">
+        <circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" stroke-linecap="round"/></svg>
+      <span class="lab">Instellingen</span></div>
+  </div>
+</div>
+
+<div class="vitrine">
+  <div class="char"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 460">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2E2E38"/><stop offset="0.45" stop-color="#23232B"/>
+      <stop offset="1" stop-color="#15151A"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FF4D57" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#FF4D57" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="cool" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#9FB4D8" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#9FB4D8" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="floor" cx="0.5" cy="0.5">
+      <stop offset="0" stop-color="#FF4D57" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#FF4D57" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <ellipse cx="150" cy="432" rx="104" ry="20" fill="url(#floor)"/>
+  <ellipse cx="150" cy="430" rx="62" ry="11" fill="#000" opacity="0.5"/>
+
+  <g>
+    <rect x="108" y="30"  width="84"  height="84"  rx="3" fill="url(#skin)"/>
+    <rect x="108" y="30"  width="11"  height="84"  rx="3" fill="url(#rim)"/>
+    <rect x="181" y="30"  width="11"  height="84"  rx="3" fill="url(#cool)"/>
+    <rect x="130" y="66"  width="14"  height="9"   rx="1.5" fill="#0A0A0C"/>
+    <rect x="156" y="66"  width="14"  height="9"   rx="1.5" fill="#0A0A0C"/>
+    <rect x="131" y="67"  width="5"   height="4"   fill="#FF4D57" opacity="0.75"/>
+    <rect x="157" y="67"  width="5"   height="4"   fill="#FF4D57" opacity="0.75"/>
+
+    <rect x="118" y="122" width="64"  height="104" rx="3" fill="url(#skin)"/>
+    <rect x="118" y="122" width="9"   height="104" rx="3" fill="url(#rim)"/>
+    <rect x="173" y="122" width="9"   height="104" rx="3" fill="url(#cool)"/>
+    <rect x="137" y="150" width="26"  height="26"  rx="2" fill="#FF4D57" opacity="0.16"/>
+    <path d="M143 158h8l6 5-6 5h-8z" fill="#FF4D57" opacity="0.55"/>
+
+    <rect x="86"  y="122" width="30"  height="100" rx="3" fill="url(#skin)"/>
+    <rect x="86"  y="122" width="8"   height="100" rx="3" fill="url(#rim)"/>
+    <rect x="184" y="122" width="30"  height="100" rx="3" fill="url(#skin)"/>
+    <rect x="206" y="122" width="8"   height="100" rx="3" fill="url(#cool)"/>
+
+    <rect x="118" y="230" width="30"  height="96"  rx="3" fill="url(#skin)"/>
+    <rect x="118" y="230" width="8"   height="96"  rx="3" fill="url(#rim)"/>
+    <rect x="152" y="230" width="30"  height="96"  rx="3" fill="url(#skin)"/>
+    <rect x="174" y="230" width="8"   height="96"  rx="3" fill="url(#cool)"/>
+
+    <rect x="114" y="326" width="38"  height="18"  rx="3" fill="#101015"/>
+    <rect x="148" y="326" width="38"  height="18"  rx="3" fill="#101015"/>
+  </g>
+</svg>
+</div>
+  <div class="cos">
+    <div class="slot on"><svg viewBox="0 0 24 24" fill="none" stroke="#FF4D57" stroke-width="1.8"><path d="M4 7l8-4 8 4v6c0 5-3.5 7.5-8 8-4.5-.5-8-3-8-8z" stroke-linejoin="round"/></svg></div>
+    <div class="slot"><svg viewBox="0 0 24 24" fill="none" stroke="#F4F5F7" stroke-width="1.8"><path d="M7 4h10l2 5-7 11L5 9z" stroke-linejoin="round"/></svg></div>
+    <div class="slot on"><svg viewBox="0 0 24 24" fill="none" stroke="#FF4D57" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 7v10M7 12h10" stroke-linecap="round"/></svg></div>
+    <div class="slot"><svg viewBox="0 0 24 24" fill="none" stroke="#F4F5F7" stroke-width="1.8"><path d="M5 20V9l7-5 7 5v11" stroke-linejoin="round"/></svg></div>
+    <div class="slot"><svg viewBox="0 0 24 24" fill="none" stroke="#F4F5F7" stroke-width="1.8"><path d="M12 3l9 7-9 11L3 10z" stroke-linejoin="round"/></svg></div>
+  </div>
+  <div class="cos-lab">COSMETICS · 2 ACTIEF</div>
+</div>
+
+<div class="side">
+  <div class="panel">
+    <h3>DEZE SESSIE</h3>
+    <div class="metric"><span class="k">Opstarttijd</span><span class="v good">0,41<small>s</small></span></div>
+    <div class="metric"><span class="k">Gem. FPS</span><span class="v">486</span></div>
+    <div class="metric"><span class="k">1% low</span><span class="v good">311</span></div>
+    <div class="metric"><span class="k">Input-latency</span><span class="v">7,2<small>ms</small></span></div>
+    <div class="cmp">Vanilla + Sodium, zelfde wereld: <b>19 s opstart</b>, <b>268 fps</b>,
+      <b>1% low 94</b>. Ingebouwde benchmark.</div>
+  </div>
+  <div class="quick">
+    <div class="srv"><div class="ic">B</div><span class="nm">bradgesmp.nl</span><span class="pg">12 ms</span></div>
+    <div class="srv"><div class="ic" style="background:linear-gradient(135deg,#FFB347,#A86C1E)">H</div>
+      <span class="nm">hypixel.net</span><span class="pg mid">38 ms</span></div>
+  </div>
+</div>
+
+<div class="bottom">
+  <div style="display:flex;align-items:center">
+    <div class="version">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A9096" stroke-width="1.8">
+        <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" stroke-linejoin="round"/></svg>
+      <span class="num">1.21.11</span><span class="meta">protocol 774</span>
+      <span style="color:#5F656B;font-size:10px">▼</span></div>
+    <span class="soon"><b>1.8.9</b> binnenkort</span>
+  </div>
+  <div class="rb">
+    <div class="vanilla"><span class="sw"></span>Vanilla-menu</div>
+    <span class="build">0.1.0 · open source</span>
+  </div>
+</div>
+</div></body></html>

@@ -1,0 +1,109 @@
+#include "mcpp/features.hpp"
+
+#include <array>
+#include <cstdlib>
+#include <fstream>
+#include <string>
+
+namespace mcpp::features {
+
+namespace {
+
+constexpr std::array<Feature, static_cast<size_t>(Id::Count)> kFeatures{{
+    {"fps",          "FPS-teller",            Category::Hud,    true,  false},
+    {"cps",          "CPS-teller",            Category::Hud,    true,  false},
+    {"ping",         "Ping",                  Category::Hud,    true,  false},
+    {"keystrokes",   "Keystrokes",            Category::Hud,    true,  false},
+    {"armorhud",     "Armor HUD",             Category::Hud,    true,  false},
+    {"potionhud",    "Potion HUD",            Category::Hud,    true,  false},
+    {"coords",       "Coordinaten",           Category::Hud,    false, false},
+    {"togglesprint", "Toggle sprint",         Category::Input,  false, true},
+    {"togglesneak",  "Toggle sneak",          Category::Input,  false, true},
+    {"zoom",         "Zoom",                  Category::Input,  true,  false},
+    {"hitboxes",     "Hitboxes",              Category::Visual, false, true},
+    {"fullbright",   "Fullbright",            Category::Visual, true,  false},
+    {"nohurtcam",    "Geen hurt-cam",         Category::Visual, true,  false},
+    {"nofireoverlay","Geen vuur-overlay",     Category::Visual, true,  false},
+    {"cleanscore",   "Scoreboard opschonen",  Category::Visual, false, false},
+}};
+
+} // namespace
+
+Registry::Registry() {
+    for (size_t i = 0; i < kFeatures.size(); ++i) {
+        enabled_[i] = kFeatures[i].enabled_by_default;
+    }
+}
+
+Registry& Registry::instance() {
+    static Registry registry;
+    return registry;
+}
+
+std::span<const Feature> Registry::all() const { return {kFeatures.data(), kFeatures.size()}; }
+
+bool Registry::enabled(Id id) const {
+    const auto index = static_cast<size_t>(id);
+    return index < kFeatures.size() && enabled_[index];
+}
+
+void Registry::set(Id id, bool on) {
+    const auto index = static_cast<size_t>(id);
+    if (index < kFeatures.size()) enabled_[index] = on;
+}
+
+bool Registry::toggle(Id id) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= kFeatures.size()) return false;
+    enabled_[index] = !enabled_[index];
+    return enabled_[index];
+}
+
+std::filesystem::path Registry::default_config_path() {
+    const char* home = std::getenv("HOME");
+    std::filesystem::path base = home != nullptr ? home : ".";
+    return base / ".config" / "plodder-client" / "features.txt";
+}
+
+void Registry::load(const std::filesystem::path& path) {
+    std::ifstream file(path);
+    if (!file) return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line.front() == '#') continue;
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string_view key(line.data(), eq);
+        const std::string_view value(line.data() + eq + 1, line.size() - eq - 1);
+        for (size_t i = 0; i < kFeatures.size(); ++i) {
+            if (kFeatures[i].key == key) {
+                enabled_[i] = (value == "1" || value == "true" || value == "on");
+                break;
+            }
+        }
+    }
+}
+
+void Registry::save(const std::filesystem::path& path) const {
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    std::ofstream file(path, std::ios::trunc);
+    if (!file) return;
+
+    file << "# Plodder Client\n";
+    for (size_t i = 0; i < kFeatures.size(); ++i) {
+        file << kFeatures[i].key << '=' << (enabled_[i] ? 1 : 0) << '\n';
+    }
+}
+
+std::string_view category_name(Category category) {
+    switch (category) {
+        case Category::Hud: return "HUD";
+        case Category::Input: return "Input";
+        case Category::Visual: return "Beeld";
+    }
+    return "?";
+}
+
+} // namespace mcpp::features

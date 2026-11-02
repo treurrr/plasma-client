@@ -1,0 +1,18 @@
+:root {
+  --bg-0: #08080A;
+  --bg-1: #101014;
+  --bg-2: #16161B;
+  --line: #22222A;
+  --line-soft: #1A1A20;
+  --txt: #F4F5F7;
+  --txt-dim: #8A9096;
+  --txt-mute: #5F656B;
+  --accent: #FF4D57;
+  --accent-dim: #C9353E;
+  --accent-glow: rgba(255, 77, 87, 0.18);
+  --good: #4ADE80;
+  --warn: #FFB347;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+}
