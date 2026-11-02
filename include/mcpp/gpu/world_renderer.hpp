@@ -1,5 +1,6 @@
 #pragma once
 #include "mcpp/gpu/device.hpp"
+#include "mcpp/world/atlas.hpp"
 #include "mcpp/world/mesher.hpp"
 
 #include <cstdint>
@@ -19,7 +20,8 @@ struct Camera {
 // the same pipeline, buffers and recording.
 class WorldRenderer {
 public:
-    WorldRenderer(Device& device, uint32_t width, uint32_t height);
+    WorldRenderer(Device& device, uint32_t width, uint32_t height,
+                  const world::Atlas& atlas);
     ~WorldRenderer();
 
     WorldRenderer(const WorldRenderer&) = delete;
@@ -35,6 +37,7 @@ public:
 
 private:
     void create_targets();
+    void create_atlas(const world::Atlas& atlas);
     void create_pipeline();
     void destroy_mesh();
 
@@ -55,6 +58,18 @@ private:
     VkDeviceMemory vertex_memory_ = VK_NULL_HANDLE;
     VkBuffer index_buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory index_memory_ = VK_NULL_HANDLE;
+
+    VkImage atlas_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory atlas_memory_ = VK_NULL_HANDLE;
+    VkImageView atlas_view_ = VK_NULL_HANDLE;
+    VkSampler sampler_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet descriptor_set_ = VK_NULL_HANDLE;
+    uint32_t atlas_columns_ = 0;
+    uint32_t atlas_tile_ = 0;
+    uint32_t atlas_width_ = 0;
+    uint32_t atlas_height_ = 0;
 
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;

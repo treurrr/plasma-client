@@ -149,7 +149,8 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                                                              kCornerUv[corner][1]) /
                                            (16.0f * kUnitsPerModelUnit);
                             vertex.texture = quad.texture;
-                            vertex.face = static_cast<uint32_t>(face);
+                            vertex.face = static_cast<uint32_t>(face) |
+                                         (quad.tintindex >= 0 ? 0x100u : 0u);
                             mesh.vertices.push_back(vertex);
                         }
 

@@ -76,6 +76,8 @@ AdapterInfo describe(VkPhysicalDevice device) {
     info.capabilities.host_query_reset = vulkan12.hostQueryReset == VK_TRUE;
     info.capabilities.dynamic_rendering = vulkan13.dynamicRendering == VK_TRUE;
     info.capabilities.synchronization2 = vulkan13.synchronization2 == VK_TRUE;
+    info.capabilities.demote_to_helper =
+        vulkan13.shaderDemoteToHelperInvocation == VK_TRUE;
     return info;
 }
 
@@ -224,6 +226,7 @@ void Device::create(const Options& options) {
     vulkan13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     vulkan13.dynamicRendering = adapter_.capabilities.dynamic_rendering;
     vulkan13.synchronization2 = adapter_.capabilities.synchronization2;
+    vulkan13.shaderDemoteToHelperInvocation = adapter_.capabilities.demote_to_helper;
     vulkan13.pNext = &vulkan12;
 
     VkPhysicalDeviceFeatures2 features{};

@@ -16,6 +16,7 @@ struct DeviceCapabilities {
     bool synchronization2 = false;
     bool timeline_semaphore = false;
     bool host_query_reset = false;
+    bool demote_to_helper = false;
 };
 
 struct AdapterInfo {

@@ -62,6 +62,7 @@ add_library(mcpp_net STATIC
     src/world/chunk.cpp
     src/world/block_table.cpp
     src/world/mesher.cpp
+    src/world/atlas.cpp
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp

@@ -13,7 +13,7 @@
 namespace mcpp::gpu {
 namespace {
 
-constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 void check(VkResult result, std::string_view what) {
@@ -86,6 +86,11 @@ void transition(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspec
 
 struct Mat4 {
     float m[16];
+};
+
+struct PushConstants {
+    Mat4 view_projection;
+    uint32_t atlas[4];   // columns, tile size, atlas width, atlas height
 };
 
 void normalise(float v[3]) {
@@ -162,7 +167,8 @@ VkShaderModule make_module(VkDevice device, std::span<const uint32_t> words) {
 
 } // namespace
 
-WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height)
+WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
+                             const world::Atlas& atlas)
     : device_(device), width_(width), height_(height) {
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(device_.physical(), &properties);
@@ -181,7 +187,162 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height)
     check(vkCreateQueryPool(device_.handle(), &query, nullptr, &timestamps_), "vkCreateQueryPool");
 
     create_targets();
+    create_atlas(atlas);
     create_pipeline();
+}
+
+void WorldRenderer::create_atlas(const world::Atlas& atlas) {
+    atlas_columns_ = atlas.columns();
+    atlas_tile_ = atlas.tile_size();
+    atlas_width_ = atlas.width();
+    atlas_height_ = atlas.height();
+
+    VkImageCreateInfo create{};
+    create.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    create.imageType = VK_IMAGE_TYPE_2D;
+    create.format = VK_FORMAT_R8G8B8A8_SRGB;
+    create.extent = {atlas_width_, atlas_height_, 1};
+    create.mipLevels = 1;
+    create.arrayLayers = 1;
+    create.samples = VK_SAMPLE_COUNT_1_BIT;
+    create.tiling = VK_IMAGE_TILING_OPTIMAL;
+    create.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    create.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    check(vkCreateImage(device_.handle(), &create, nullptr, &atlas_image_), "vkCreateImage atlas");
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device_.handle(), atlas_image_, &requirements);
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex = memory_type(device_.physical(), requirements.memoryTypeBits,
+                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    check(vkAllocateMemory(device_.handle(), &allocate, nullptr, &atlas_memory_),
+          "vkAllocateMemory atlas");
+    check(vkBindImageMemory(device_.handle(), atlas_image_, atlas_memory_, 0),
+          "vkBindImageMemory atlas");
+
+    auto staging = make_buffer(device_, atlas.pixels().size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* mapped = nullptr;
+    check(vkMapMemory(device_.handle(), staging.memory, 0, VK_WHOLE_SIZE, 0, &mapped),
+          "vkMapMemory atlas");
+    std::memcpy(mapped, atlas.pixels().data(), atlas.pixels().size());
+    vkUnmapMemory(device_.handle(), staging.memory);
+
+    VkCommandBufferAllocateInfo command_allocate{};
+    command_allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command_allocate.commandPool = pool_;
+    command_allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_allocate.commandBufferCount = 1;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    check(vkAllocateCommandBuffers(device_.handle(), &command_allocate, &command),
+          "vkAllocateCommandBuffers atlas");
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer atlas");
+
+    transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {atlas_width_, atlas_height_, 1};
+    vkCmdCopyBufferToImage(command, staging.buffer, atlas_image_,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+    check(vkEndCommandBuffer(command), "vkEndCommandBuffer atlas");
+
+    VkCommandBufferSubmitInfo command_submit{};
+    command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    command_submit.commandBuffer = command;
+    VkSubmitInfo2 submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &command_submit;
+    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, VK_NULL_HANDLE),
+          "vkQueueSubmit2 atlas");
+    check(vkQueueWaitIdle(device_.graphics_queue()), "vkQueueWaitIdle atlas");
+
+    vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
+    vkDestroyBuffer(device_.handle(), staging.buffer, nullptr);
+    vkFreeMemory(device_.handle(), staging.memory, nullptr);
+
+    VkImageViewCreateInfo view{};
+    view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view.image = atlas_image_;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = VK_FORMAT_R8G8B8A8_SRGB;
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    check(vkCreateImageView(device_.handle(), &view, nullptr, &atlas_view_),
+          "vkCreateImageView atlas");
+
+    // Nearest filtering is the look; clamping keeps a tile from bleeding into
+    // its neighbour in the atlas.
+    VkSamplerCreateInfo sampler{};
+    sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler.magFilter = VK_FILTER_NEAREST;
+    sampler.minFilter = VK_FILTER_NEAREST;
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    check(vkCreateSampler(device_.handle(), &sampler, nullptr, &sampler_), "vkCreateSampler");
+
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layout{};
+    layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout.bindingCount = 1;
+    layout.pBindings = &binding;
+    check(vkCreateDescriptorSetLayout(device_.handle(), &layout, nullptr, &set_layout_),
+          "vkCreateDescriptorSetLayout");
+
+    VkDescriptorPoolSize size{};
+    size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    size.descriptorCount = 1;
+    VkDescriptorPoolCreateInfo pool_create{};
+    pool_create.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_create.maxSets = 1;
+    pool_create.poolSizeCount = 1;
+    pool_create.pPoolSizes = &size;
+    check(vkCreateDescriptorPool(device_.handle(), &pool_create, nullptr, &descriptor_pool_),
+          "vkCreateDescriptorPool");
+
+    VkDescriptorSetAllocateInfo set_allocate{};
+    set_allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    set_allocate.descriptorPool = descriptor_pool_;
+    set_allocate.descriptorSetCount = 1;
+    set_allocate.pSetLayouts = &set_layout_;
+    check(vkAllocateDescriptorSets(device_.handle(), &set_allocate, &descriptor_set_),
+          "vkAllocateDescriptorSets");
+
+    VkDescriptorImageInfo image_info{};
+    image_info.sampler = sampler_;
+    image_info.imageView = atlas_view_;
+    image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptor_set_;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &image_info;
+    vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
 }
 
 void WorldRenderer::create_targets() {
@@ -238,10 +399,12 @@ void WorldRenderer::create_targets() {
 void WorldRenderer::create_pipeline() {
     VkPushConstantRange push{};
     push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    push.size = sizeof(Mat4);
+    push.size = sizeof(PushConstants);
 
     VkPipelineLayoutCreateInfo layout{};
     layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout.setLayoutCount = 1;
+    layout.pSetLayouts = &set_layout_;
     layout.pushConstantRangeCount = 1;
     layout.pPushConstantRanges = &push;
     check(vkCreatePipelineLayout(device_.handle(), &layout, nullptr, &layout_),
@@ -476,10 +639,16 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera) {
         vkCmdSetViewport(command, 0, 1, &viewport);
         vkCmdSetScissor(command, 0, 1, &scissor);
 
-        const Mat4 matrix = view_projection(camera, static_cast<float>(width_) /
-                                                        static_cast<float>(height_));
-        vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(matrix),
-                           &matrix);
+        PushConstants push{};
+        push.view_projection = view_projection(camera, static_cast<float>(width_) /
+                                                           static_cast<float>(height_));
+        push.atlas[0] = atlas_columns_;
+        push.atlas[1] = atlas_tile_;
+        push.atlas[2] = atlas_width_;
+        push.atlas[3] = atlas_height_;
+        vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+        vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
+                                &descriptor_set_, 0, nullptr);
 
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
@@ -556,6 +725,12 @@ WorldRenderer::~WorldRenderer() {
     destroy_mesh();
     vkDestroyPipeline(device_.handle(), pipeline_, nullptr);
     vkDestroyPipelineLayout(device_.handle(), layout_, nullptr);
+    vkDestroyDescriptorPool(device_.handle(), descriptor_pool_, nullptr);
+    vkDestroyDescriptorSetLayout(device_.handle(), set_layout_, nullptr);
+    vkDestroySampler(device_.handle(), sampler_, nullptr);
+    vkDestroyImageView(device_.handle(), atlas_view_, nullptr);
+    vkDestroyImage(device_.handle(), atlas_image_, nullptr);
+    vkFreeMemory(device_.handle(), atlas_memory_, nullptr);
     vkDestroyBuffer(device_.handle(), readback_, nullptr);
     vkFreeMemory(device_.handle(), readback_memory_, nullptr);
     vkDestroyImageView(device_.handle(), depth_view_, nullptr);

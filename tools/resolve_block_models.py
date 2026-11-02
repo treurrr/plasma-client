@@ -67,13 +67,21 @@ class Assets:
         return {"textures": textures, "elements": elements or [], "parent": parent}
 
 
-def deref_texture(name, textures, depth=0):
-    while isinstance(name, str) and name.startswith("#"):
-        if depth > 16:
-            return None
-        name = textures.get(name[1:])
-        depth += 1
-    return name
+def deref_texture(name, textures):
+    """Follow a texture slot to a real path.
+
+    A reference normally starts with '#', but block/heavy_core.json names its
+    own slot without one, and the game resolves that too."""
+    for _ in range(16):
+        if not isinstance(name, str):
+            return name
+        if name.startswith("#"):
+            name = textures.get(name[1:])
+        elif name in textures:
+            name = textures[name]
+        else:
+            return name
+    return None
 
 
 def variant_matches(properties, predicate):

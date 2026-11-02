@@ -327,3 +327,45 @@ hoort en bovendien de float-precisie legt waar je hem nodig hebt.
 Dit is de reden dat de eerste renderpad een PNG schrijft in plaats van een
 venster te openen. De test slaagde, er kwam een frame uit, de timings waren
 goed, en het was hartstikke fout. Alleen kijken vond het.
+
+## Texturen
+
+De atlas wordt net als de blokkentabel vooraf gebakken, uit een installatie die
+de speler zelf heeft. `tools/find_minecraft.py` zoekt die op - Modrinth App,
+Prism, MultiMC, `~/.minecraft` - en leest de versie uit `version.json` in de jar
+zelf in plaats van af te gaan op de mapnaam.
+
+`tools/bake_atlas.py` leest de textuurlijst **uit de blokkentabel**, zodat de
+indices van beide bestanden per constructie gelijk lopen. Tegels zijn uniform
+(de grootste native maat in de pack, kleinere met nearest opgeschaald), wat ook
+is wat het spel zelf doet, en wat betekent dat de plek van een tegel een
+vermenigvuldiging is in plaats van een opzoeking. Van een animatiestrip wordt
+het eerste frame genomen.
+
+Resultaat voor 1.21.11: **2048x576, tegels van 32px, 1096 texturen, 4,73 MB**,
+in 0,2 seconden gebakken. De client mapt dat bestand en kopieert het naar de gpu.
+
+Geen enkele asset van Mojang staat in deze repo of hoort in een download van de
+client mee te gaan. Elke speler bakt uit zijn eigen jar.
+
+### Twee fouten die hier boven water kwamen
+
+**`heavy_core.json` verwijst naar `"texture": "all"` zonder de `#`.** Dat is een
+eigenaardigheid in Mojangs eigen asset; hun lader accepteert het, de mijne niet,
+en dat leverde precies een ontbrekende textuur op. De resolver volgt nu ook een
+naam zonder hekje als die een sleutel in de textuurmap is.
+
+**De eerste getextureerde frames waren veel te donker.** De atlas staat als sRGB
+op de gpu, dus sampelen geeft lineaire waarden, en die werden naar een
+UNORM-doel geschreven dat een kijker weer als sRGB leest. Het renderdoel is nu
+ook sRGB, zodat de conversie bij het schrijven gebeurt.
+
+### Wat er nog niet is
+
+- **Water wordt niet getekend.** Vloeistoffen hebben geen blokmodel en vragen een
+  eigen renderpad.
+- **Biomekleuren liggen vast.** Gras, bladeren en stengels worden vermenigvuldigd
+  met een vaste vlaktekleur. De biomen worden al uit de chunk gelezen maar nog
+  niet omgezet naar kleuren.
+- **Geen mipmaps en geen ambient occlusion.** Het eerste geeft flikkering in de
+  verte, het tweede maakt het beeld vlakker dan vanilla.

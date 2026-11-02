@@ -7,11 +7,13 @@
 #include "mcpp/gpu/offscreen.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 #include "mcpp/image_png.hpp"
+#include "mcpp/world/atlas.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/mesher.hpp"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <format>
 #include <iostream>
@@ -207,7 +209,13 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     gpu_options.validation = true;
     device.create(gpu_options);
 
-    mcpp::gpu::WorldRenderer renderer(device, 1600, 900);
+    mcpp::world::Atlas atlas;
+    if (!atlas.open(mcpp::world::Atlas::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "geen atlas; bak er een met tools/bake_atlas.py\n";
+        return 1;
+    }
+
+    mcpp::gpu::WorldRenderer renderer(device, 1600, 900, atlas);
     renderer.upload(combined);
 
     mcpp::gpu::Camera camera{};
@@ -222,25 +230,32 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         camera.fov_degrees = 60.0f;
     } else if (view == "eye") {
         // Find the surface under the centre so the camera stands on the ground.
+        // The highest solid block anywhere near the centre, so the camera
+        // clears the hills instead of standing inside one.
         float ground = 64.0f;
         for (const auto& chunk : chunks) {
-            if (chunk.x * 16 > centre_x || (chunk.x + 1) * 16 <= centre_x) continue;
-            if (chunk.z * 16 > centre_z || (chunk.z + 1) * 16 <= centre_z) continue;
-            for (int32_t y = static_cast<int32_t>(chunk.sections.size()) * 16 - 1; y >= 0; --y) {
-                const int32_t state = chunk.block_state(8, y, 8);
-                if (state != 0 && table.full_cube(state)) {
-                    ground = static_cast<float>(y - 64);
-                    break;
+            if (std::abs((chunk.x + 0.5f) * 16.0f - centre_x) > 48.0f) continue;
+            if (std::abs((chunk.z + 0.5f) * 16.0f - centre_z) > 48.0f) continue;
+            for (int32_t lz = 0; lz < 16; lz += 4) {
+                for (int32_t lx = 0; lx < 16; lx += 4) {
+                    for (int32_t y = static_cast<int32_t>(chunk.sections.size()) * 16 - 1;
+                         y >= 0; --y) {
+                        const int32_t state = chunk.block_state(lx, y, lz);
+                        if (state != 0 && table.full_cube(state)) {
+                            ground = std::max(ground, static_cast<float>(y - 64));
+                            break;
+                        }
+                    }
                 }
             }
-            break;
         }
         camera.eye[0] = centre_x;
-        camera.eye[1] = ground + 20.0f;
-        camera.eye[2] = centre_z + 100.0f;
+        camera.eye[1] = ground + 12.0f;
+        camera.eye[2] = centre_z + 110.0f;
         camera.target[0] = centre_x;
-        camera.target[1] = ground + 2.0f;
-        camera.target[2] = centre_z - 40.0f;
+        camera.target[1] = ground - 4.0f;
+        camera.target[2] = centre_z - 60.0f;
+        camera.fov_degrees = 65.0f;
         std::cout << std::format("- grond onder het midden op y={}\n", static_cast<int>(ground));
     } else {
         camera.eye[0] = centre_x + extent * 0.9f;
@@ -325,10 +340,12 @@ int do_gpu() {
                                  caps.mesh_shader ? "ja" : "nee",
                                  caps.descriptor_indexing ? "ja" : "nee",
                                  caps.buffer_device_address ? "ja" : "nee");
-        std::cout << std::format("  dynamic rendering {}  sync2 {}  timeline semaphores {}\n\n",
+        std::cout << std::format("  dynamic rendering {}  sync2 {}  timeline semaphores {}  "
+                                 "demote-to-helper {}\n\n",
                                  caps.dynamic_rendering ? "ja" : "nee",
                                  caps.synchronization2 ? "ja" : "nee",
-                                 caps.timeline_semaphore ? "ja" : "nee");
+                                 caps.timeline_semaphore ? "ja" : "nee",
+                                 caps.demote_to_helper ? "ja" : "nee");
     }
 
     mcpp::gpu::Device device;
