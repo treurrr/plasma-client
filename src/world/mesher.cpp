@@ -10,6 +10,16 @@ namespace {
 constexpr float kBlock = static_cast<float>(kUnitsPerBlock);
 constexpr int kSection = 16;
 
+// One block of padding on every side: ambient occlusion reads diagonals, so the
+// inner loop needs a ring of neighbours. With it the loop never tests a bound
+// or crosses into another chunk again.
+constexpr int kPadded = kSection + 2;
+constexpr size_t kPaddedCells = kPadded * kPadded * kPadded;
+
+constexpr size_t padded_index(int x, int y, int z) {
+    return static_cast<size_t>((y + 1) * kPadded * kPadded + (z + 1) * kPadded + (x + 1));
+}
+
 struct Offset {
     int x, y, z;
 };
@@ -112,6 +122,9 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
     std::vector<SectionMesh> meshes;
     const auto section_count = static_cast<int32_t>(blocks.section_count());
 
+    std::vector<int32_t> padded_state(kPaddedCells);
+    std::vector<uint8_t> padded_solid(kPaddedCells);
+
     const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
         const bool past_x = x < 0 || x > 15;
         const bool past_z = z < 0 || z > 15;
@@ -134,6 +147,18 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
     for (int32_t section = 0; section < section_count; ++section) {
         if (chunk.sections[static_cast<size_t>(section)].non_air_count == 0) continue;
 
+        // Fill the padded cube once: 5832 reads here instead of 27 per block.
+        for (int32_t py = -1; py <= kSection; ++py) {
+            for (int32_t pz = -1; pz <= kSection; ++pz) {
+                for (int32_t px = -1; px <= kSection; ++px) {
+                    const int32_t state = state_at(px, section * kSection + py, pz);
+                    const auto cell = padded_index(px, py, pz);
+                    padded_state[cell] = state;
+                    padded_solid[cell] = state >= 0 && table.occludes(state);
+                }
+            }
+        }
+
         SectionMesh mesh;
         mesh.origin[0] = chunk.x * kSection;
         mesh.origin[1] = (section + min_section_y) * kSection;
@@ -145,37 +170,26 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
             const int32_t y = section * kSection + local_y;
             for (int32_t z = 0; z < kSection; ++z) {
                 for (int32_t x = 0; x < kSection; ++x) {
-                    const int32_t state = state_at(x, y, z);
-                    if (state < 0) continue;
+                    const int32_t state = padded_state[padded_index(x, local_y, z)];
+                    if (state <= 0) continue;
                     const auto quads = table.quads(state);
                     if (quads.empty()) continue;
 
 
                     // A fluid also hides against its own kind, or an ocean
                     // would be full of faces between neighbouring water blocks.
-                    // One 3x3x3 read per block instead of a lookup per face and
-                    // per corner; occlusion and ambient occlusion both use it.
-                    bool solid[3][3][3];
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        for (int dy = -1; dy <= 1; ++dy) {
-                            for (int dz = -1; dz <= 1; ++dz) {
-                                const int32_t around = state_at(x + dx, y + dy, z + dz);
-                                solid[dx + 1][dy + 1][dz + 1] =
-                                    around >= 0 && table.occludes(around);
-                            }
-                        }
-                    }
-
                     const bool self_fluid = table.fluid(state);
                     // Only the top block of a fluid column has a lowered
                     // surface; a submerged one fills its block, or the column
                     // would be sliced by a gap at every level.
                     const bool submerged =
-                        self_fluid && table.fluid(state_at(x, y + 1, z));
+                        self_fluid && table.fluid(padded_state[padded_index(x, local_y + 1, z)]);
                     bool hidden[6];
                     for (int side = 0; side < 6; ++side) {
                         const Offset offset = kFaceOffset[side];
-                        if (solid[offset.x + 1][offset.y + 1][offset.z + 1]) {
+                        const auto cell =
+                            padded_index(x + offset.x, local_y + offset.y, z + offset.z);
+                        if (padded_solid[cell]) {
                             hidden[side] = true;
                             continue;
                         }
@@ -183,8 +197,8 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             hidden[side] = false;
                             continue;
                         }
-                        const int32_t neighbour = state_at(x + offset.x, y + offset.y, z + offset.z);
-                        hidden[side] = neighbour >= 0 && table.fluid(neighbour);
+                        const int32_t neighbour = padded_state[cell];
+                        hidden[side] = neighbour > 0 && table.fluid(neighbour);
                     }
 
 
@@ -214,20 +228,26 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             };
                             apply_rotation(local, quad.rotation_x, quad.rotation_y);
 
-                            int away[3] = {normal.x, normal.y, normal.z};
+                            const int away[3] = {normal.x, normal.y, normal.z};
                             const int sign_a = pick[axis_a] ? 1 : -1;
                             const int sign_b = pick[axis_b] ? 1 : -1;
+                            const int base_cell[3] = {x + away[0], local_y + away[1], z + away[2]};
 
-                            int probe[3] = {away[0], away[1], away[2]};
+                            int probe[3] = {base_cell[0], base_cell[1], base_cell[2]};
                             probe[axis_a] += sign_a;
-                            const bool side_a = solid[probe[0] + 1][probe[1] + 1][probe[2] + 1];
+                            const bool side_a = padded_solid[padded_index(probe[0], probe[1],
+                                                                          probe[2])] != 0;
 
-                            probe[0] = away[0]; probe[1] = away[1]; probe[2] = away[2];
+                            probe[0] = base_cell[0];
+                            probe[1] = base_cell[1];
+                            probe[2] = base_cell[2];
                             probe[axis_b] += sign_b;
-                            const bool side_b = solid[probe[0] + 1][probe[1] + 1][probe[2] + 1];
+                            const bool side_b = padded_solid[padded_index(probe[0], probe[1],
+                                                                          probe[2])] != 0;
 
                             probe[axis_a] += sign_a;
-                            const bool diagonal = solid[probe[0] + 1][probe[1] + 1][probe[2] + 1];
+                            const bool diagonal = padded_solid[padded_index(probe[0], probe[1],
+                                                                            probe[2])] != 0;
 
                             const auto shadow =
                                 static_cast<uint32_t>(corner_shadow(side_a, side_b, diagonal));

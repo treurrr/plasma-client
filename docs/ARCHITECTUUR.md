@@ -566,3 +566,30 @@ een **nagemaakte Mojang-dienst**. Een lokale mock van het discovery-document en
 eigen schakelaar naar die mock wijst, en hun client die inlogt met een
 nep-token. Vanilla's eigen code controleert dan de server-hash, de RSA-wrapping
 en de AES/CFB8-cipher. Geen Mojang-account nodig, geen regel van hun code gelezen.
+
+## De gepadde kubus
+
+Meshen kostte 4 ms per chunk, zestien keer een heel frame. De oorzaak was de
+binnenlus: elk blok deed 27 buuropzoekingen, en elke opzoeking rekende een
+sectie uit met een deling en een modulo, testte grenzen, en stapte aan de rand
+over naar een ander chunk-object.
+
+Per sectie wordt nu één keer een kubus van 18x18x18 gevuld - de sectie plus een
+ring van een blok eromheen, want ambient occlusion leest diagonalen. Daarna is
+elke opzoeking in de binnenlus een plat array-index, zonder grenstest en zonder
+dat er ooit nog een buurchunk in beeld komt. Naast de blokstaten gaat ook de
+"mag wegsnijden"-vlag mee, zodat ook die niet meer per blok opgezocht wordt.
+
+5.832 reads om te vullen, tegen 110.000 met delingen om hetzelfde te doen.
+
+| | per chunk |
+|---|---|
+| losse opzoekingen | 4,01 ms |
+| via de gepadde kubus | **1,35 ms** |
+
+Drie keer sneller, en het beeld is pixel-identiek: de blokkentoets geeft exact
+hetzelfde plaatje en `meshtest` nog steeds precies 1536 overgebleven quads op
+een massieve sectie.
+
+Horizon doet hetzelfde met twee ringen in plaats van een, omdat zij ook het
+licht meenemen. Zodra wij blocklight gaan lezen gaat die ring mee omhoog.
