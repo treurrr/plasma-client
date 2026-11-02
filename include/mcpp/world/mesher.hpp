@@ -2,17 +2,34 @@
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
 namespace mcpp::world {
 
+// 16 bytes. Positions are section-local, so they fit in fixed point: 1/2048 of
+// a block, shifted by one block because a model may stick out on either side.
+// That is coarser than the baked geometry's 1/4096, which is 0.0005 of a block
+// here - far below one screen pixel at any sane distance.
+constexpr int32_t kPositionScale = 2048;
+constexpr int32_t kPositionBias = 1;      // in blocks
+
 struct Vertex {
-    float position[3];
-    float uv[2];
-    uint32_t texture;
-    uint32_t face;
+    uint16_t position[3];
+    uint16_t packed;        // face | tint kind | corner shadow
+    uint16_t uv[2];         // normalised across the texture
+    uint16_t texture;       // array layer
+    uint16_t light;         // reserved: sky and block light
+
+    static uint16_t encode(float blocks) {
+        const float shifted = (blocks + static_cast<float>(kPositionBias)) *
+                              static_cast<float>(kPositionScale);
+        const auto rounded = static_cast<int32_t>(shifted + 0.5f);
+        return static_cast<uint16_t>(std::clamp(rounded, 0, 65535));
+    }
 };
+static_assert(sizeof(Vertex) == 16, "the vertex layout must match the pipeline");
 
 // Geometry for one 16x16x16 section, with positions relative to its own corner.
 // Per section rather than per chunk because that is the unit the renderer can

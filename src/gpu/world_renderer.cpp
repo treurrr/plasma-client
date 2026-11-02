@@ -489,17 +489,18 @@ void WorldRenderer::create_pipeline() {
     binding.stride = sizeof(world::Vertex);
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    VkVertexInputAttributeDescription attributes[4]{};
-    attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(world::Vertex, position)};
-    attributes[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(world::Vertex, uv)};
-    attributes[2] = {2, 0, VK_FORMAT_R32_UINT, offsetof(world::Vertex, texture)};
-    attributes[3] = {3, 0, VK_FORMAT_R32_UINT, offsetof(world::Vertex, face)};
+    // Position and the packed flags share one 16-bit vector; uv arrives already
+    // normalised to 0..1 because the format says UNORM.
+    VkVertexInputAttributeDescription attributes[3]{};
+    attributes[0] = {0, 0, VK_FORMAT_R16G16B16A16_UINT, offsetof(world::Vertex, position)};
+    attributes[1] = {1, 0, VK_FORMAT_R16G16_UNORM, offsetof(world::Vertex, uv)};
+    attributes[2] = {2, 0, VK_FORMAT_R16_UINT, offsetof(world::Vertex, texture)};
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input.vertexBindingDescriptionCount = 1;
     vertex_input.pVertexBindingDescriptions = &binding;
-    vertex_input.vertexAttributeDescriptionCount = 4;
+    vertex_input.vertexAttributeDescriptionCount = 3;
     vertex_input.pVertexAttributeDescriptions = attributes;
 
     VkPipelineInputAssemblyStateCreateInfo assembly{};

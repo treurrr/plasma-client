@@ -497,3 +497,41 @@ het beeld pixel-identiek.
 De les zit in het gereedschap: beelden uit verschillende runs vergelijken zegt
 niets zolang de invoer niet vastligt. Een vaste chunk-set op schijf hoort bij
 het benchmark-harnas.
+
+## De vertex van 28 naar 16 bytes
+
+Zodra posities per sectie zijn, hoeven ze geen floats meer te zijn: een sectie
+is 16 blokken breed en een model steekt er hooguit een blok uit. Dus vaste komma
+in 1/2048 blok, verschoven met een blok, in `uint16`. Dat is grover dan de
+gebakken geometrie (1/4096 blok), maar de fout blijft onder 0,0005 blok - ver
+onder een beeldpixel.
+
+```
+uint16 position[3]   xyz, vaste komma
+uint16 packed        vlak | tintsoort | hoekschaduw
+uint16 uv[2]         genormaliseerd, het formaat doet de deling
+uint16 texture       laag in de array-textuur
+uint16 light         gereserveerd voor sky- en blocklight
+```
+
+De uv's staan als `R16G16_UNORM`, zodat de GPU ze zelf naar 0..1 schaalt en er
+geen deling in de shader nodig is. Positie en vlaggen delen één `R16G16B16A16`,
+want een driecomponents 16-bits vertexformaat wordt niet overal ondersteund.
+
+## De som van drie stappen
+
+Zelfde scene, 1920x1080, 200 chunks, 2,04 miljoen driehoeken, RTX 4070 Laptop:
+
+| stap | frametijd | fps | 1% low |
+|------|-----------|-----|--------|
+| alles tekenen, 28-byte vertex | 0,629 ms | 1589 | 1453 |
+| per sectie + frustum culling | 0,331 ms | 3017 | 2414 |
+| vertex naar 16 bytes | **0,247 ms** | **4050** | **3126** |
+
+Twee en een half keer sneller, en de vertexdata ging van 139 naar 90 MB.
+
+Dit meet het tekenpad en niets anders: geen spellogica, geen entities, geen UI,
+en de wereld staat als één statische buffer op de kaart. Het is dus geen cijfer
+om mee te adverteren. Wat het wel zegt is waar het werk zit: **meshen kost 4 ms
+per chunk, zestien keer een heel frame.** Daar ligt de volgende winst, niet in de
+renderer.

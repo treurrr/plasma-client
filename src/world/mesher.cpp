@@ -232,21 +232,33 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             const auto shadow =
                                 static_cast<uint32_t>(corner_shadow(side_a, side_b, diagonal));
 
+                            const float world[3] = {
+                                static_cast<float>(x) + local[0],
+                                static_cast<float>(local_y) + local[1],
+                                static_cast<float>(z) + local[2],
+                            };
+
                             Vertex vertex{};
-                            vertex.position[0] = static_cast<float>(x) + local[0];
-                            vertex.position[1] = static_cast<float>(local_y) + local[1];
-                            vertex.position[2] = static_cast<float>(z) + local[2];
-                            vertex.uv[0] = (quad.uv[0] + (quad.uv[2] - quad.uv[0]) *
-                                                             kCornerUv[corner][0]) /
-                                           (16.0f * kUnitsPerModelUnit);
-                            vertex.uv[1] = (quad.uv[1] + (quad.uv[3] - quad.uv[1]) *
-                                                             kCornerUv[corner][1]) /
-                                           (16.0f * kUnitsPerModelUnit);
-                            vertex.texture = quad.texture;
-                            vertex.face = static_cast<uint32_t>(face);
-                            if (quad.tintindex == 0) vertex.face |= 0x100u;   // grass, foliage
-                            if (quad.tintindex == 1) vertex.face |= 0x200u;   // water
-                            vertex.face |= shadow << 16;
+                            for (int axis = 0; axis < 3; ++axis) {
+                                vertex.position[axis] = Vertex::encode(world[axis]);
+                            }
+
+                            const float u = (quad.uv[0] + (quad.uv[2] - quad.uv[0]) *
+                                                              kCornerUv[corner][0]) /
+                                            (16.0f * kUnitsPerModelUnit);
+                            const float v = (quad.uv[1] + (quad.uv[3] - quad.uv[1]) *
+                                                              kCornerUv[corner][1]) /
+                                            (16.0f * kUnitsPerModelUnit);
+                            vertex.uv[0] = static_cast<uint16_t>(
+                                std::clamp(u, 0.0f, 1.0f) * 65535.0f + 0.5f);
+                            vertex.uv[1] = static_cast<uint16_t>(
+                                std::clamp(v, 0.0f, 1.0f) * 65535.0f + 0.5f);
+
+                            vertex.texture = static_cast<uint16_t>(quad.texture);
+                            vertex.packed = static_cast<uint16_t>(face);
+                            if (quad.tintindex == 0) vertex.packed |= 0x0008u;   // grass, foliage
+                            if (quad.tintindex == 1) vertex.packed |= 0x0010u;   // water
+                            vertex.packed |= static_cast<uint16_t>(shadow << 5);
                             mesh.vertices.push_back(vertex);
                         }
 
@@ -264,14 +276,19 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
             continue;
         }
 
+        const auto decode = [](uint16_t value) {
+            return static_cast<float>(value) / static_cast<float>(kPositionScale) -
+                   static_cast<float>(kPositionBias);
+        };
         for (int axis = 0; axis < 3; ++axis) {
-            mesh.bounds_min[axis] = mesh.vertices.front().position[axis];
+            mesh.bounds_min[axis] = decode(mesh.vertices.front().position[axis]);
             mesh.bounds_max[axis] = mesh.bounds_min[axis];
         }
         for (const auto& vertex : mesh.vertices) {
             for (int axis = 0; axis < 3; ++axis) {
-                mesh.bounds_min[axis] = std::min(mesh.bounds_min[axis], vertex.position[axis]);
-                mesh.bounds_max[axis] = std::max(mesh.bounds_max[axis], vertex.position[axis]);
+                const float value = decode(vertex.position[axis]);
+                mesh.bounds_min[axis] = std::min(mesh.bounds_min[axis], value);
+                mesh.bounds_max[axis] = std::max(mesh.bounds_max[axis], value);
             }
         }
         meshes.push_back(std::move(mesh));
@@ -284,12 +301,10 @@ Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable&
     Mesh merged;
     for (const auto& section : mesh_sections(chunk, blocks, table, neighbours, min_section_y)) {
         const auto base = static_cast<uint32_t>(merged.vertices.size());
-        for (auto vertex : section.vertices) {
-            for (int axis = 0; axis < 3; ++axis) {
-                vertex.position[axis] += static_cast<float>(section.origin[axis]);
-            }
-            merged.vertices.push_back(vertex);
-        }
+        // The merged form keeps section-local positions; only the renderer's
+        // section path knows where each section sits.
+        merged.vertices.insert(merged.vertices.end(), section.vertices.begin(),
+                               section.vertices.end());
         for (uint32_t index : section.indices) merged.indices.push_back(base + index);
         merged.quads_emitted += section.quads_emitted;
         merged.quads_culled += section.quads_culled;
