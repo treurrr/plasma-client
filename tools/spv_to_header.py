@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Turn a .spv file into a C++ header holding its words.
+
+Usage: spv_to_header.py <in.spv> <out.hpp> <symbol>
+
+SPIR-V is compiled at build time and linked in, so no shader is compiled or
+read from disk while the client starts.
+"""
+import sys
+from pathlib import Path
+
+SPIRV_MAGIC = 0x07230203
+
+
+def main(args):
+    if len(args) != 3:
+        sys.exit(__doc__)
+    data = Path(args[0]).read_bytes()
+    if len(data) % 4 or int.from_bytes(data[:4], "little") != SPIRV_MAGIC:
+        sys.exit(f"{args[0]} is geen SPIR-V")
+
+    words = [int.from_bytes(data[i:i + 4], "little") for i in range(0, len(data), 4)]
+    lines = ["// Gegenereerd door tools/spv_to_header.py. Niet met de hand aanpassen.",
+             "#pragma once", "#include <cstdint>", "#include <span>", "",
+             f"namespace mcpp::gpu::shaders {{", "",
+             f"inline constexpr uint32_t k{args[2]}Words[] = {{"]
+    for i in range(0, len(words), 8):
+        lines.append("    " + " ".join(f"0x{w:08x}," for w in words[i:i + 8]))
+    lines += ["};", "",
+              f"inline constexpr std::span<const uint32_t> {args[2]}() {{",
+              f"    return {{k{args[2]}Words, std::size(k{args[2]}Words)}};",
+              "}", "", "} // namespace mcpp::gpu::shaders", ""]
+    Path(args[1]).write_text("\n".join(lines))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -218,3 +218,42 @@ dichte kubus en mogen het aanliggende vlak van hun buur wegsnijden.
 Het bestand bevat alleen geometrie die uit de eigen installatie is afgeleid.
 Geen assets van Mojang in de repo, en `tools/bake_block_table.py` heeft een
 client-jar van de speler zelf nodig.
+
+## Vulkan-fundament
+
+Rauw Vulkan 1.3, geen wrapper-bibliotheek. Dat is geen koppigheid: de claims over
+opstarttijd en frame-pacing hangen af van zelf de pipeline-cache, het
+submissiepad en de geheugenindeling bezitten.
+
+Twee keuzes die vanaf het begin vastliggen:
+
+**SPIR-V wordt tijdens het bouwen gecompileerd en meegelinkt.** `glslangValidator`
+maakt er `.spv` van, `tools/spv_to_header.py` zet dat om in een header met de
+woorden erin. De client compileert dus geen shader en leest er geen van schijf.
+
+**De pipeline-cache staat op schijf** en wordt bij het afsluiten weggeschreven.
+Gemeten met één triviale pipeline:
+
+| | pipeline bouwen |
+|---|---|
+| koud, lege cache | 6,7 ms |
+| warm, 15 kB cache ingelezen | 0,4 ms |
+
+Zeventien keer sneller, en dat voor één pipeline. Een echte client heeft er
+tientallen, dus dit schaalt mee.
+
+Wat niet weg te optimaliseren valt is het aanmaken van het device zelf: **175-215
+ms**, vrijwel helemaal driver-initialisatie. Dat is de ondergrens van elke
+opstarttijd die we gaan claimen, en vanilla betaalt hem net zo goed.
+
+### Offscreen renderen als controlemiddel
+
+De eerste renderpad is niet een venster maar een afbeelding: renderen naar een
+image, terugkopieren naar een host-buffer en wegschrijven als PNG
+(`src/image_png.cpp`, zlib die we al linkten). Dat geeft een frame dat je kunt
+bekijken in plaats van alleen tellen, het draait zonder een venster over andermans
+scherm te gooien, en het werkt ook op `llvmpipe` als er geen gpu is.
+
+Timestamp-queries meten de gpu-tijd in het frame zelf. Een 1280x720 frame met
+clear, driehoek en volledige terugkopie kost **0,31 ms** op de 4070, waarvan het
+grootste deel de terugkopie is die een echt frame niet doet.

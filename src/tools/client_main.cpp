@@ -3,6 +3,9 @@
 #include "mcpp/packet_io.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/session.hpp"
+#include "mcpp/gpu/device.hpp"
+#include "mcpp/gpu/offscreen.hpp"
+#include "mcpp/image_png.hpp"
 #include "mcpp/world/block_table.hpp"
 
 #include <atomic>
@@ -71,6 +74,90 @@ Address parse_address(const std::string& target) {
         address.port = static_cast<uint16_t>(std::stoi(target.substr(colon + 1)));
     }
     return address;
+}
+
+int do_render(const std::string& out_path, uint32_t width, uint32_t height) {
+    using clock = std::chrono::steady_clock;
+    const auto ms = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+
+    const auto t0 = clock::now();
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options options;
+    options.validation = true;
+    device.create(options);
+    const auto t1 = clock::now();
+
+    mcpp::gpu::Offscreen frame(device, width, height);
+    const auto t2 = clock::now();
+
+    auto pixels = frame.render();
+    const auto t3 = clock::now();
+
+    mcpp::write_png(out_path, width, height, pixels);
+    device.save_pipeline_cache();
+
+    std::cout << std::format("{} ({}x{})\n", out_path, width, height);
+    std::cout << std::format("  gpu: {}\n", device.adapter().name);
+    std::cout << std::format("  device {:.1f} ms, opzet {:.1f} ms (pipeline {:.1f} ms), "
+                             "frame {:.1f} ms\n",
+                             ms(t0, t1), ms(t1, t2), frame.pipeline_build_ms(), ms(t2, t3));
+    std::cout << std::format("  gpu-tijd in het frame: {:.3f} ms\n", frame.last_gpu_ms());
+    return 0;
+}
+
+int do_gpu() {
+    using clock = std::chrono::steady_clock;
+    const auto ms = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+
+    const auto before_list = clock::now();
+    const auto adapters = mcpp::gpu::Device::list_adapters();
+    const auto after_list = clock::now();
+
+    std::cout << std::format("validation layers: {}\n",
+                             mcpp::gpu::Device::validation_available() ? "beschikbaar"
+                                                                      : "niet geinstalleerd");
+    std::cout << std::format("{} adapter(s) gevonden in {:.1f} ms\n\n", adapters.size(),
+                             ms(before_list, after_list));
+
+    for (const auto& adapter : adapters) {
+        const auto& caps = adapter.capabilities;
+        std::cout << std::format("{}\n", adapter.name);
+        std::cout << std::format("  {}, Vulkan {}, {}\n",
+                                 mcpp::gpu::adapter_type_name(adapter.type),
+                                 mcpp::gpu::api_version_string(adapter.api_version),
+                                 adapter.driver);
+        std::cout << std::format("  {:.1f} GB device-lokaal geheugen\n",
+                                 static_cast<double>(adapter.device_local_bytes) / 1e9);
+        std::cout << std::format("  mesh shaders {}  descriptor indexing {}  "
+                                 "buffer device address {}\n",
+                                 caps.mesh_shader ? "ja" : "nee",
+                                 caps.descriptor_indexing ? "ja" : "nee",
+                                 caps.buffer_device_address ? "ja" : "nee");
+        std::cout << std::format("  dynamic rendering {}  sync2 {}  timeline semaphores {}\n\n",
+                                 caps.dynamic_rendering ? "ja" : "nee",
+                                 caps.synchronization2 ? "ja" : "nee",
+                                 caps.timeline_semaphore ? "ja" : "nee");
+    }
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options options;
+    options.validation = true;
+
+    const auto before_create = clock::now();
+    device.create(options);
+    const auto after_create = clock::now();
+
+    std::cout << std::format("gekozen: {}\n", device.adapter().name);
+    std::cout << std::format("  device aangemaakt in {:.1f} ms\n", ms(before_create, after_create));
+    std::cout << std::format("  pipeline-cache: {} ({} bytes ingelezen)\n",
+                             mcpp::gpu::Device::default_pipeline_cache().string(),
+                             device.pipeline_cache_bytes_loaded());
+    device.save_pipeline_cache();
+    return 0;
 }
 
 int do_blocks(const std::string& query) {
@@ -293,6 +380,15 @@ int main(int argc, char** argv) {
         if (command == "ping" && argc > 2) {
             return do_ping(argv[2]);
         }
+        if (command == "render") {
+            const std::string out = argc > 2 ? argv[2] : "frame.png";
+            const uint32_t width = argc > 3 ? static_cast<uint32_t>(std::stoul(argv[3])) : 1280;
+            const uint32_t height = argc > 4 ? static_cast<uint32_t>(std::stoul(argv[4])) : 720;
+            return do_render(out, width, height);
+        }
+        if (command == "gpu") {
+            return do_gpu();
+        }
         if (command == "blocks") {
             return do_blocks(argc > 2 ? argv[2] : "");
         }
@@ -310,6 +406,8 @@ int main(int argc, char** argv) {
             "  versions            ondersteunde protocolversies\n"
             "  ping <host:poort>   serverinfo opvragen\n"
             "  blocks [naam]       de voorgebakken blokkentabel\n"
+            "  gpu                 welke gpu en welke features\n"
+            "  render <uit.png> [b] [h]   een frame renderen en wegschrijven\n"
             "  join <host:poort> [naam] [protocol]\n"
             "                      inloggen en in de play-state blijven\n"
             "\nrenderen volgt in mijlpaal 3.\n",
