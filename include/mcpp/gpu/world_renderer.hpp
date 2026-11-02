@@ -48,6 +48,9 @@ public:
     size_t drawn_sections() const { return drawn_sections_; }
     size_t drawn_triangles() const { return drawn_triangles_; }
     double upload_ms() const { return upload_ms_; }
+    double upload_alloc_ms() const { return upload_alloc_ms_; }
+    double upload_copy_ms() const { return upload_copy_ms_; }
+    double upload_gpu_ms() const { return upload_gpu_ms_; }
     size_t uploaded_bytes() const { return vertex_bytes_ + index_bytes_; }
     uint32_t index_count() const { return index_count_; }
 
@@ -57,6 +60,8 @@ private:
                       bool leave_transfer_src);
     double submit(VkCommandBuffer command);
     void upload_merged(const world::Mesh& mesh);
+    void upload_sections(const std::vector<world::SectionMesh>& sections,
+                         const std::vector<size_t>& order);
     void create_targets();
     void create_atlas(const world::Atlas& atlas);
     void create_pipeline();
@@ -119,6 +124,9 @@ private:
     size_t index_bytes_ = 0;
     double last_gpu_ms_ = 0.0;
     double upload_ms_ = 0.0;
+    double upload_alloc_ms_ = 0.0;
+    double upload_copy_ms_ = 0.0;
+    double upload_gpu_ms_ = 0.0;
     float timestamp_period_ = 1.0f;
 };
 

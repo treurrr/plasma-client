@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <atomic>
+#include <thread>
 #include <format>
 
 #include <mcpp/gpu/shaders/WorldFrag.hpp>
@@ -14,6 +16,31 @@
 
 namespace mcpp::gpu {
 namespace {
+
+// Section data is written straight into mapped memory from several threads;
+// every section owns a disjoint range, so no locking is needed.
+template <typename Body>
+void parallel_for(size_t count, Body&& body) {
+    const size_t hardware = std::max<size_t>(1, std::thread::hardware_concurrency());
+    const size_t workers = std::min(hardware, count);
+    if (workers <= 1) {
+        for (size_t i = 0; i < count; ++i) body(i);
+        return;
+    }
+    std::atomic<size_t> next{0};
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+    for (size_t w = 0; w < workers; ++w) {
+        threads.emplace_back([&] {
+            for (size_t i = next.fetch_add(1, std::memory_order_relaxed); i < count;
+                 i = next.fetch_add(1, std::memory_order_relaxed)) {
+                body(i);
+            }
+        });
+    }
+    for (auto& thread : threads) thread.join();
+}
+
 
 constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
@@ -590,21 +617,16 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
     destroy_mesh();
     sections_.clear();
 
-    // Growing a 54 MB vector by insertion reallocates it a dozen times over.
+    // Work out every section's place in the buffer first, then let the threads
+    // write straight into mapped memory. Building a merged copy on the way was
+    // costing more than the transfer itself.
+    sections_.reserve(sections.size());
+    std::vector<size_t> source;
+    source.reserve(sections.size());
     size_t vertex_total = 0;
     size_t index_total = 0;
-    for (const auto& section : sections) {
-        if (section.indices.empty()) continue;
-        vertex_total += section.vertices.size();
-        index_total += section.indices.size();
-    }
-
-    std::vector<world::Vertex> vertices;
-    std::vector<uint32_t> indices;
-    vertices.reserve(vertex_total);
-    indices.reserve(index_total);
-    sections_.reserve(sections.size());
-    for (const auto& section : sections) {
+    for (size_t i = 0; i < sections.size(); ++i) {
+        const auto& section = sections[i];
         if (section.indices.empty()) continue;
 
         Section entry{};
@@ -613,19 +635,23 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
             entry.bounds_min[axis] = entry.origin[axis] + section.bounds_min[axis];
             entry.bounds_max[axis] = entry.origin[axis] + section.bounds_max[axis];
         }
-        entry.first_index = static_cast<uint32_t>(indices.size());
+        entry.first_index = static_cast<uint32_t>(index_total);
         entry.index_count = static_cast<uint32_t>(section.indices.size());
-        entry.vertex_offset = static_cast<int32_t>(vertices.size());
+        entry.vertex_offset = static_cast<int32_t>(vertex_total);
         sections_.push_back(entry);
+        source.push_back(i);
 
-        vertices.insert(vertices.end(), section.vertices.begin(), section.vertices.end());
-        indices.insert(indices.end(), section.indices.begin(), section.indices.end());
+        vertex_total += section.vertices.size();
+        index_total += section.indices.size();
     }
 
-    world::Mesh merged;
-    merged.vertices = std::move(vertices);
-    merged.indices = std::move(indices);
-    upload_merged(merged);
+    vertex_bytes_ = vertex_total * sizeof(world::Vertex);
+    index_bytes_ = index_total * sizeof(uint32_t);
+    index_count_ = static_cast<uint32_t>(index_total);
+    if (index_count_ > 0) {
+        upload_sections(sections, source);
+    }
+
     upload_ms_ = std::chrono::duration<double, std::milli>(
                      std::chrono::steady_clock::now() - start).count();
 }
@@ -639,22 +665,104 @@ void WorldRenderer::upload(const world::Mesh& mesh) {
                      std::chrono::steady_clock::now() - start).count();
 }
 
+void WorldRenderer::upload_sections(const std::vector<world::SectionMesh>& sections,
+                                    const std::vector<size_t>& order) {
+    const auto t0 = std::chrono::steady_clock::now();
+    auto staging = make_buffer(device_, vertex_bytes_ + index_bytes_,
+                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const auto t1 = std::chrono::steady_clock::now();
+
+    void* mapped = nullptr;
+    check(vkMapMemory(device_.handle(), staging.memory, 0, VK_WHOLE_SIZE, 0, &mapped),
+          "vkMapMemory");
+    auto* base = static_cast<uint8_t*>(mapped);
+
+    parallel_for(order.size(), [&](size_t slot) {
+        const auto& section = sections[order[slot]];
+        const auto& entry = sections_[slot];
+        std::memcpy(base + static_cast<size_t>(entry.vertex_offset) * sizeof(world::Vertex),
+                    section.vertices.data(), section.vertices.size() * sizeof(world::Vertex));
+        std::memcpy(base + vertex_bytes_ + static_cast<size_t>(entry.first_index) * sizeof(uint32_t),
+                    section.indices.data(), section.indices.size() * sizeof(uint32_t));
+    });
+
+    vkUnmapMemory(device_.handle(), staging.memory);
+    const auto t2 = std::chrono::steady_clock::now();
+
+    auto vertex = make_buffer(device_, vertex_bytes_,
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    auto index = make_buffer(device_, index_bytes_,
+                             VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vertex_buffer_ = vertex.buffer;
+    vertex_memory_ = vertex.memory;
+    index_buffer_ = index.buffer;
+    index_memory_ = index.memory;
+
+    VkCommandBufferAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocate.commandPool = pool_;
+    allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocate.commandBufferCount = 1;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    check(vkAllocateCommandBuffers(device_.handle(), &allocate, &command),
+          "vkAllocateCommandBuffers");
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer");
+    VkBufferCopy vertex_copy{0, 0, vertex_bytes_};
+    vkCmdCopyBuffer(command, staging.buffer, vertex_buffer_, 1, &vertex_copy);
+    VkBufferCopy index_copy{vertex_bytes_, 0, index_bytes_};
+    vkCmdCopyBuffer(command, staging.buffer, index_buffer_, 1, &index_copy);
+    check(vkEndCommandBuffer(command), "vkEndCommandBuffer");
+
+    VkCommandBufferSubmitInfo command_submit{};
+    command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    command_submit.commandBuffer = command;
+    VkSubmitInfo2 submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &command_submit;
+    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit2");
+    check(vkQueueWaitIdle(device_.graphics_queue()), "vkQueueWaitIdle");
+    const auto t3 = std::chrono::steady_clock::now();
+
+    vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
+    vkDestroyBuffer(device_.handle(), staging.buffer, nullptr);
+    vkFreeMemory(device_.handle(), staging.memory, nullptr);
+
+    const auto ms = [](auto a, auto b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    upload_alloc_ms_ = ms(t0, t1);
+    upload_copy_ms_ = ms(t1, t2);
+    upload_gpu_ms_ = ms(t2, t3);
+}
+
 void WorldRenderer::upload_merged(const world::Mesh& mesh) {
     vertex_bytes_ = mesh.vertices.size() * sizeof(world::Vertex);
     index_bytes_ = mesh.indices.size() * sizeof(uint32_t);
     index_count_ = static_cast<uint32_t>(mesh.indices.size());
     if (index_count_ == 0) return;
 
+    const auto t0 = std::chrono::steady_clock::now();
     auto staging = make_buffer(device_, vertex_bytes_ + index_bytes_,
                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const auto t1 = std::chrono::steady_clock::now();
     void* mapped = nullptr;
     check(vkMapMemory(device_.handle(), staging.memory, 0, VK_WHOLE_SIZE, 0, &mapped),
           "vkMapMemory");
     std::memcpy(mapped, mesh.vertices.data(), vertex_bytes_);
     std::memcpy(static_cast<uint8_t*>(mapped) + vertex_bytes_, mesh.indices.data(), index_bytes_);
     vkUnmapMemory(device_.handle(), staging.memory);
+    const auto t2 = std::chrono::steady_clock::now();
 
     auto vertex = make_buffer(device_, vertex_bytes_,
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -696,9 +804,18 @@ void WorldRenderer::upload_merged(const world::Mesh& mesh) {
     check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit2");
     check(vkQueueWaitIdle(device_.graphics_queue()), "vkQueueWaitIdle");
 
+    const auto t3 = std::chrono::steady_clock::now();
+
     vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
     vkDestroyBuffer(device_.handle(), staging.buffer, nullptr);
     vkFreeMemory(device_.handle(), staging.memory, nullptr);
+
+    const auto ms = [](auto a, auto b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    upload_alloc_ms_ = ms(t0, t1);
+    upload_copy_ms_ = ms(t1, t2);
+    upload_gpu_ms_ = ms(t2, t3);
 }
 
 void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback) {

@@ -342,7 +342,9 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
     std::cout << std::format("gpu: {}\n", device.adapter().name);
     std::cout << std::format("meshing: {:.0f} ms ({:.2f} ms per chunk)\n", mesh_ms,
                              mesh_ms / static_cast<double>(chunks.size()));
-    std::cout << std::format("upload: {:.0f} ms\n\n", renderer.upload_ms());
+    std::cout << std::format("upload: {:.0f} ms  (allocate {:.0f}, memcpy {:.0f}, gpu copy {:.0f})\n\n",
+                             renderer.upload_ms(), renderer.upload_alloc_ms(),
+                             renderer.upload_copy_ms(), renderer.upload_gpu_ms());
     std::cout << std::format("{} frames measured, first 10 discarded\n", count);
     std::cout << std::format("  mean        {:7.3f} ms   {:8.0f} fps\n", average, as_fps(average));
     std::cout << std::format("  median      {:7.3f} ms   {:8.0f} fps\n", median, as_fps(median));
