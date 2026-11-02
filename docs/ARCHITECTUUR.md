@@ -137,3 +137,47 @@ Deepslate onder stone, de steensoorten in de juiste verhouding, en bedrock op
 253.914 blokken = 256 x 3,0 lagen per chunk, wat precies klopt met het
 willekeurige patroon van ongeveer drie lagen diep. Die getallen kunnen niet per
 ongeluk kloppen.
+
+## Blokmodellen
+
+Dit is het stuk dat ik in de planning onderschatte, dus het is als eerste van
+mijlpaal 3 uitgezocht: het heeft geen GPU nodig en is volledig te controleren.
+
+Een blokstaat wordt geometrie in vier stappen:
+
+1. `blocks.json` geeft staat-ID naar bloknaam plus eigenschappen.
+2. `assets/minecraft/blockstates/<blok>.json` kiest een model. Twee vormen:
+   `variants` matcht op de hele eigenschappenset, `multipart` verzamelt alle
+   delen waarvan de `when`-voorwaarde klopt (AND over sleutels, OR over
+   `|`-waarden, plus geneste `OR`/`AND`).
+3. Het model erft via `parent`. Texturen mergen kind-eerst; `elements` komen van
+   de naaste voorouder die ze definieert. Textuurnamen als `#all` worden door de
+   gemergede map gevolgd tot een echt pad.
+4. De variant levert nog `x`/`y`-rotatie en `uvlock` mee.
+
+`tools/resolve_block_models.py` doet dit voor alle 29.671 staten van 1.21.11 en
+leest alleen assets uit een eigen installatie.
+
+### Uitkomst, en waarom "leeg" niet hetzelfde is als "fout"
+
+| | staten |
+|---|---|
+| met geometrie | 26.706 (356.952 quads, 13,4 gemiddeld) |
+| zonder model: lucht, vloeistoffen, barrier, light | 84 |
+| legitiem leeg | 2.881 |
+| onopgelost | 0 |
+
+Die 2.881 zijn nagelopen in plaats van weggewuifd, want een onzichtbaar blok is
+precies het soort fout dat je pas maanden later ziet. Drie groepen:
+
+- **Block entities.** Borden, banieren, bedden, kisten, shulkers, koppen,
+  conduit, end_portal, decorated_pot, copper_golem_statue. Die worden in vanilla
+  door een eigen renderer getekend; hun model bevat alleen een particle-textuur.
+  Dat is een aparte renderpad die nog moet komen.
+- **Onbereikbare muurstaten.** `cobblestone_wall` heeft 324 staten met
+  geometrie; alleen de combinatie `up=false` met niets verbonden is leeg, en die
+  bestaat in het register maar nooit in de wereld, want de server zet `up` dan
+  op true.
+- **Onvolgroeide gewassen.** `pitcher_crop` half=upper is leeg in stadium 0-2 en
+  heeft 4 quads in 3-4. Dat is geen bug maar precies wat vanilla doet: de plant
+  is nog niet hoog genoeg om in het bovenste blok te komen.
