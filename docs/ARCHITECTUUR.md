@@ -535,3 +535,34 @@ en de wereld staat als één statische buffer op de kaart. Het is dus geen cijfe
 om mee te adverteren. Wat het wel zegt is waar het werk zit: **meshen kost 4 ms
 per chunk, zestien keer een heel frame.** Daar ligt de volgende winst, niet in de
 renderer.
+
+
+## Obfuscatie verschilt per versie, en dat bepaalt onze testroute
+
+Horizon verifieert hun gedrag met **orakels**: ze compileren een paar regels Java
+tegen de officiele jar, draaien dat naast hun eigen implementatie en eisen dat de
+uitvoer identiek is. Dat kan bij hun doelversie 26.3 omdat die **onobfusceerd**
+wordt uitgeleverd: de klassen heten gewoon zoals ze heten.
+
+Bij onze doelversie ligt dat anders. Gemeten op 2 november:
+
+| | geobfusceerd | officiele mappings van Mojang |
+|---|---|---|
+| 1.21.11 | ja, 10.291 klassen (`fzu$a.class`) | client 11,8 MB, server 8,7 MB |
+| 26.2 | nee | niet aanwezig, niet nodig |
+
+Mojang is op de 26-reeks gestopt met obfusceren en publiceert daar geen mappings
+meer. Voor 1.21.11 bestaan ze wel, en dat is precies een keuze die niet impliciet
+mag blijven: mappings gebruiken om een orakel aan te roepen valt in een grijze
+zone van onze clean-room-regel.
+
+Die keuze is nu niet urgent. **Het hele netwerkdeel heeft geen orakel nodig** -
+daar is de server zelf de scheidsrechter, en die zegt het meteen als we iets fout
+sturen. Hij wordt pas urgent bij worldgen, waar niets je corrigeert.
+
+Wat wel meteen bruikbaar is, en volledig clean-room: Horizon test online-mode met
+een **nagemaakte Mojang-dienst**. Een lokale mock van het discovery-document en
+`join`/`hasJoined`, een echte vanilla server in online mode die via authlib's
+eigen schakelaar naar die mock wijst, en hun client die inlogt met een
+nep-token. Vanilla's eigen code controleert dan de server-hash, de RSA-wrapping
+en de AES/CFB8-cipher. Geen Mojang-account nodig, geen regel van hun code gelezen.

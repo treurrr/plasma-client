@@ -17,11 +17,13 @@ constexpr int32_t kProtocol_1_21_11 = 774;
 constexpr int32_t kProtocol_26_2 = 776;   // ~/bradge-testserver
 constexpr int32_t kProtocol_26_3 = 777;
 
+// Supported means a generated packet table exists and a join has been tested
+// against a real server of that version, not that the number is known.
 constexpr Version kVersions[] = {
     {kProtocol_1_8_9,   "1.8.9",   false},  // het PvP-publiek; na 1.21.11
     {kProtocol_1_21_11, "1.21.11", true},
-    {kProtocol_26_2,    "26.2",    false},
-    {kProtocol_26_3,    "26.3",    false},
+    {kProtocol_26_2,    "26.2",    true},
+    {kProtocol_26_3,    "26.3",    false},  // accept_teleportation kreeg hier velden
 };
 
 constexpr int32_t kTargetProtocol = kProtocol_1_21_11;
