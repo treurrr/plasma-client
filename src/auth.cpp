@@ -75,7 +75,7 @@ Response request(const char* url, const std::string& body, bool json_body,
     return response;
 }
 
-std::string quoted(std::string_view value) {
+[[maybe_unused]] std::string quoted(std::string_view value) {
     std::string out = "\"";
     for (char c : value) {
         switch (c) {
@@ -90,7 +90,7 @@ std::string quoted(std::string_view value) {
     return out + "\"";
 }
 
-std::string form_escaped(std::string_view value) {
+[[maybe_unused]] std::string form_escaped(std::string_view value) {
     std::string out;
     for (unsigned char c : value) {
         if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
@@ -107,13 +107,13 @@ std::string form_escaped(std::string_view value) {
     return out;
 }
 
-std::string field(const json::Value& root, std::string_view key) {
+[[maybe_unused]] std::string field(const json::Value& root, std::string_view key) {
     const auto* value = root.find(key);
     return value ? value->string_or("") : std::string{};
 }
 
 // Dashed form, because that is how the rest of the client writes a uuid.
-std::string dashed(const std::string& compact) {
+[[maybe_unused]] std::string dashed(const std::string& compact) {
     if (compact.size() != 32) return compact;
     return compact.substr(0, 8) + "-" + compact.substr(8, 4) + "-" + compact.substr(12, 4) + "-" +
            compact.substr(16, 4) + "-" + compact.substr(20);
@@ -130,6 +130,27 @@ std::filesystem::path state_directory() {
 }
 
 } // namespace
+
+std::string join_server(const Profile& profile, const std::string& server_hash) {
+    if (!profile.valid()) return "not signed in";
+
+    std::string undashed;
+    undashed.reserve(32);
+    for (const char ch : profile.uuid) {
+        if (ch != '-') undashed += ch;
+    }
+
+    const std::string body = std::format(
+        R"({{"accessToken":"{}","selectedProfile":"{}","serverId":"{}"}})",
+        profile.access_token, undashed, server_hash);
+
+    const auto response = request("https://sessionserver.mojang.com/session/minecraft/join", body,
+                                  true);
+    if (response.transport_failed) return "could not reach the session server";
+    if (response.status == 204) return {};
+    if (response.status == 403) return "the session server refused this token";
+    return std::format("the session server answered {}", response.status);
+}
 
 std::string_view describe(Failure failure) {
     switch (failure) {

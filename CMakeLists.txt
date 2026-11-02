@@ -14,6 +14,7 @@ find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 # Optional: without it the client still renders to PNG, it just has no window.
 find_package(glfw3 QUIET)
 
@@ -61,6 +62,8 @@ mcpp_shader(triangle.vert TriangleVert)
 mcpp_shader(triangle.frag TriangleFrag)
 mcpp_shader(world.vert WorldVert)
 mcpp_shader(world.frag WorldFrag)
+mcpp_shader(text.vert TextVert)
+mcpp_shader(text.frag TextFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
 if(glfw3_FOUND)
@@ -69,6 +72,7 @@ endif()
 
 add_library(mcpp_net STATIC
     src/byte_buffer.cpp
+    src/crypto.cpp
     src/tcp_socket.cpp
     src/packet_io.cpp
     src/json.cpp
@@ -83,13 +87,14 @@ add_library(mcpp_net STATIC
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
+    src/gpu/text.cpp
     ${MCPP_WINDOW_SOURCES}
     src/image_png.cpp
     src/proto/packet_ids_gen.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)
-target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl)
+target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl OpenSSL::Crypto)
 if(glfw3_FOUND)
     target_link_libraries(mcpp_net PUBLIC glfw)
     target_compile_definitions(mcpp_net PUBLIC MCPP_HAVE_WINDOW)

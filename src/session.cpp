@@ -1,5 +1,8 @@
 #include "mcpp/session.hpp"
 
+#include "mcpp/auth.hpp"
+#include "mcpp/crypto.hpp"
+
 #include "mcpp/json.hpp"
 #include "mcpp/nbt.hpp"
 #include "mcpp/world/chunk.hpp"
@@ -157,7 +160,40 @@ void Session::run_login() {
             return;
         }
         if (packet.id == cb.hello) {
-            fail("server is in online mode and asks for encryption; Microsoft sessions come later");
+            const std::string server_id = packet.data.read_string(20);
+            const auto key = packet.data.read_bytes(
+                static_cast<size_t>(packet.data.read_varint()));
+            const auto token = packet.data.read_bytes(
+                static_cast<size_t>(packet.data.read_varint()));
+            const bool authenticate = packet.data.read_bool();
+
+            const auto secret = crypto::random_secret();
+
+            if (authenticate) {
+                if (!options_.profile.valid()) {
+                    fail("this server is in online mode and needs a signed-in account");
+                }
+                const auto hash = crypto::server_hash(server_id, secret, key);
+                if (const auto problem = auth::join_server(options_.profile, hash);
+                    !problem.empty()) {
+                    fail(std::format("could not join as {}: {}", options_.profile.name, problem));
+                }
+                status(std::format("session accepted for {}", options_.profile.name));
+            }
+
+            ByteBuffer out;
+            const auto sealed_secret = crypto::rsa_encrypt(key, secret);
+            const auto sealed_token = crypto::rsa_encrypt(key, token);
+            out.write_varint(static_cast<int32_t>(sealed_secret.size()));
+            out.write_bytes(sealed_secret);
+            out.write_varint(static_cast<int32_t>(sealed_token.size()));
+            out.write_bytes(sealed_token);
+            send(ids_->login_sb.key, out);
+
+            // Everything after this packet is encrypted, including the reply.
+            connection_.start_encryption(secret);
+            status("encryption on");
+            continue;
         }
         if (packet.id == cb.disconnect) {
             fail(std::format("server refused the login: {}",

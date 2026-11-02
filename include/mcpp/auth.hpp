@@ -19,6 +19,11 @@ struct Profile {
     bool valid() const { return !uuid.empty() && !access_token.empty(); }
 };
 
+// Tells Mojang's session server that this account is about to join a server
+// with this handshake hash. The server then asks Mojang the same question.
+// Returns empty on success, or a reason.
+std::string join_server(const Profile& profile, const std::string& server_hash);
+
 // Shown while the device-code flow waits for the player.
 struct DeviceCode {
     std::string user_code;

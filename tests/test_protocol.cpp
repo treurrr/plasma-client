@@ -1,3 +1,4 @@
+#include "mcpp/crypto.hpp"
 #include "mcpp/byte_buffer.hpp"
 #include "mcpp/json.hpp"
 #include "mcpp/nbt.hpp"
@@ -404,6 +405,41 @@ void test_mesher_culls_interiors() {
     std::filesystem::remove(path);
 }
 
+void test_server_hash() {
+    // Mojang's own published examples. The third is the one that matters: its
+    // digest has the top bit set, so the answer is a negative hex number, and
+    // getting that wrong means every online-mode join is refused.
+    check(mcpp::crypto::server_hash("Notch", {}, {}) ==
+              "4ed1f46bbe04bc756bcb17c0c7ce3e4632f06a48",
+          "server hash of Notch");
+    check(mcpp::crypto::server_hash("jeb_", {}, {}) ==
+              "-7c9d5b0044c130109a5d7b5fb5c317c02b4e28c1",
+          "server hash of jeb_ is negative");
+    check(mcpp::crypto::server_hash("simon", {}, {}) ==
+              "88e16a1019277b15d58faf0541e11910eb756f6",
+          "server hash of simon drops the leading zero");
+}
+
+void test_stream_cipher() {
+    const std::vector<uint8_t> secret(16, 0x42);
+    const std::string message = "a packet, byte by byte, carried across the wire";
+
+    std::vector<uint8_t> wire(message.begin(), message.end());
+    mcpp::crypto::Stream out;
+    out.start(secret, true);
+    out.apply(wire.data(), wire.size());
+    check(!std::equal(wire.begin(), wire.end(), message.begin()), "cipher changed the bytes");
+
+    // Split the read, because CFB8 carries state between calls and a reader
+    // takes the length byte before the rest of the frame.
+    mcpp::crypto::Stream in;
+    in.start(secret, false);
+    in.apply(wire.data(), 1);
+    in.apply(wire.data() + 1, wire.size() - 1);
+    check(std::equal(wire.begin(), wire.end(), message.begin()),
+          "a split read decrypts the same as a whole one");
+}
+
 void test_packet_tables() {
     const auto* v774 = mcpp::proto::ids_for(774);
     const auto* v776 = mcpp::proto::ids_for(776);
@@ -429,6 +465,8 @@ int main() {
     test_block_table();
     test_mesher_culls_interiors();
     test_packet_tables();
+    test_server_hash();
+    test_stream_cipher();
 
     if (failures == 0) {
         std::cout << "all protocol tests passed\n";

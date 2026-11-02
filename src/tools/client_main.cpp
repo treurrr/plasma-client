@@ -450,13 +450,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
     mcpp::gpu::Window window(device, 1600, 900, "Plasma Client");
     mcpp::gpu::WorldRenderer renderer(device, window.width(), window.height(), atlas);
 
-    // Room for roughly four times what we start with, so chunks arriving while
-    // you walk are appended instead of forcing the whole world to be rebuilt.
     size_t vertex_bytes = 0;
-    size_t index_bytes = 0;
     for (const auto& section : combined) {
         vertex_bytes += section.vertices.size() * sizeof(mcpp::world::Vertex);
-        index_bytes += section.indices.size() * sizeof(uint32_t);
     }
     // A server with view distance 10 sends 441 chunks. Measured on real
     // terrain the vertex and index data come out around 2.7 to 1, so an even

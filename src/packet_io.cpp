@@ -37,6 +37,7 @@ int32_t PacketConnection::read_wire_varint() {
     for (int shift = 0; shift < 35; shift += 7) {
         uint8_t byte = 0;
         socket_.recv_exact(&byte, 1);
+        incoming_.apply(&byte, 1);
         result |= static_cast<uint32_t>(byte & 0x7F) << shift;
         if ((byte & 0x80) == 0) return static_cast<int32_t>(result);
     }
@@ -65,7 +66,14 @@ void PacketConnection::send(int32_t id, const ByteBuffer& payload) {
         frame.write_bytes(body.data());
     }
 
-    socket_.send_all(frame.data());
+    if (outgoing_.active()) {
+        auto bytes = frame.data();
+        std::vector<uint8_t> sealed(bytes.begin(), bytes.end());
+        outgoing_.apply(sealed.data(), sealed.size());
+        socket_.send_all(sealed);
+    } else {
+        socket_.send_all(frame.data());
+    }
 }
 
 PacketConnection::Packet PacketConnection::receive() {
@@ -76,6 +84,7 @@ PacketConnection::Packet PacketConnection::receive() {
 
     std::vector<uint8_t> raw(static_cast<size_t>(length));
     socket_.recv_exact(raw.data(), raw.size());
+    incoming_.apply(raw.data(), raw.size());
 
     ByteBuffer buf(std::move(raw));
     if (compression_threshold_ >= 0) {
@@ -93,6 +102,11 @@ PacketConnection::Packet PacketConnection::receive() {
     packet.id = buf.read_varint();
     packet.data = ByteBuffer(buf.read_bytes(buf.remaining()));
     return packet;
+}
+
+void PacketConnection::start_encryption(std::span<const uint8_t> secret) {
+    outgoing_.start(secret, true);
+    incoming_.start(secret, false);
 }
 
 } // namespace mcpp
