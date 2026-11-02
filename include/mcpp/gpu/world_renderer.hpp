@@ -66,10 +66,8 @@ private:
     VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet descriptor_set_ = VK_NULL_HANDLE;
-    uint32_t atlas_columns_ = 0;
     uint32_t atlas_tile_ = 0;
-    uint32_t atlas_width_ = 0;
-    uint32_t atlas_height_ = 0;
+    uint32_t atlas_layers_ = 0;
 
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;

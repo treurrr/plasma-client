@@ -391,13 +391,35 @@ anders zit een oceaan vol vlakken tussen aangrenzende waterblokken.
 Dat laatste is nog niet vanilla-exact: echte vloeistofhoogtes interpoleren
 tussen buren, en water hoort doorzichtig te zijn in plaats van dekkend.
 
-## Mipmaps
+## Mipmaps, en waarom de atlas een array-textuur werd
 
-Zonder mipmaps korrelde alles op afstand. De atlas bevat nu **vier niveaus**,
-gebakken met een box-filter. Dat mag hier over de hele atlas tegelijk: tegels
-liggen op een macht van twee uitgelijnd, dus halveren blijft binnen de
-tegelgrenzen en er lekt niets van de ene tegel in de andere. Vier niveaus brengt
-een tegel van 32px terug tot 4px; daaronder begint dat wel mis te gaan.
+Zonder mipmaps korrelde alles op afstand. Met mipmaps en lineair verkleinen
+verscheen er iets anders: een **raster van lichte lijnen** op elke blokgrens.
+
+Dat is atlas-bleeding. Bij verkleinen leest de sampler aan de rand van een tegel
+over de tegelgrens heen en mengt de buurtextuur erin. Padding verzacht dat maar
+lost het niet op, want elk extra mipniveau vraagt twee keer zoveel rand.
+
+De atlas is daarom geen raster meer maar een **array-textuur**: een laag per
+textuur, de laag-index is gewoon de textuur-id uit de blokkentabel. Lagen kunnen
+per constructie niet in elkaar lekken, mipniveaus worden per textuur gemaakt, en
+uv's buiten 0..1 mogen nu herhalen zoals sommige modellen verwachten.
+
+1098 lagen van 32px met vier mipniveaus is 5,97 MB. De spec garandeert maar 256
+lagen; de kaarten hier doen 2048 en 8192, en de client weigert netjes met een
+leesbare fout als een gpu te weinig lagen aankan. Een terugval op een
+raster-atlas voor zulke kaarten staat nog open.
 
 De sampler vergroot met nearest - dat is de blokkenlook - en verkleint met
-lineair plus anisotropie. Atlas: 6,28 MB met mipmaps tegen 4,73 MB zonder.
+lineair plus anisotropie.
+
+## Water in lagen
+
+Na dat raster bleven er horizontale lijnen over, een per bloklaag, dwars door
+elke watermassa. Dat was geen filterprobleem maar de geometrie: ik verlaagde het
+bovenvlak van **elk** waterblok naar 14/16, ook blokken die onder water zitten.
+Tussen twee lagen zat dus een spleet van 2/16 waar je doorheen keek.
+
+Alleen het bovenste blok van een waterkolom heeft een verlaagd oppervlak. Dat is
+geen eigenschap van de blokstaat maar van zijn buur, dus het hoort in de mesher,
+die de buren wel kent: ligt er water boven, dan vult het blok zijn hele hoogte.

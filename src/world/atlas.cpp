@@ -14,10 +14,8 @@ namespace mcpp::world {
 namespace {
 
 constexpr char kMagic[4] = {'P', 'L', 'A', 'T'};
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 3;
 constexpr size_t kHeaderBytes = 32;
-
-size_t align8(size_t value) { return (value + 7) & ~size_t{7}; }
 
 } // namespace
 
@@ -63,39 +61,31 @@ bool Atlas::open(const std::filesystem::path& path) {
     }
 
     protocol_ = static_cast<int32_t>(header[1]);
-    width_ = header[2];
-    height_ = header[3];
-    tile_size_ = header[4];
-    texture_count_ = header[5];
-    mip_levels_ = header[6];
-    pixel_bytes_ = header[7];
+    tile_size_ = header[2];
+    layers_ = header[3];
+    mip_levels_ = header[4];
+    pixel_bytes_ = header[5];
 
-    const size_t rects = align8(static_cast<size_t>(texture_count_) * 4 * sizeof(uint16_t));
-    pixels_ = base_ + kHeaderBytes + rects;
+    pixels_ = base_ + kHeaderBytes;
 
-    if (kHeaderBytes + rects + pixel_bytes_ > size_) {
-        close();
-        throw ProtocolError("atlas is korter dan de header beschrijft");
-    }
     size_t expected = 0;
-    for (uint32_t mip = 0; mip < mip_levels_; ++mip) {
-        expected += static_cast<size_t>(width_ >> mip) * (height_ >> mip) * 4;
-    }
-    if (pixel_bytes_ != expected) {
+    for (uint32_t mip = 0; mip < mip_levels_; ++mip) expected += level_bytes(mip);
+    if (pixel_bytes_ != expected || kHeaderBytes + pixel_bytes_ > size_) {
         close();
         throw ProtocolError("atlas-pixels passen niet bij de afmetingen");
     }
     return true;
 }
 
-std::span<const uint8_t> Atlas::level(uint32_t mip) const {
-    if (mip >= mip_levels_) return {};
+size_t Atlas::level_bytes(uint32_t mip) const {
+    const size_t side = tile_size_ >> mip;
+    return side * side * 4 * layers_;
+}
+
+size_t Atlas::level_offset(uint32_t mip) const {
     size_t offset = 0;
-    for (uint32_t i = 0; i < mip; ++i) {
-        offset += static_cast<size_t>(width_ >> i) * (height_ >> i) * 4;
-    }
-    const size_t bytes = static_cast<size_t>(width_ >> mip) * (height_ >> mip) * 4;
-    return {pixels_ + offset, bytes};
+    for (uint32_t i = 0; i < mip; ++i) offset += level_bytes(i);
+    return offset;
 }
 
 std::filesystem::path Atlas::default_path(int32_t protocol) {

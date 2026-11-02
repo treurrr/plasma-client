@@ -80,6 +80,27 @@ Address parse_address(const std::string& target) {
     return address;
 }
 
+float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
+                         const mcpp::world::BlockTable& table, float centre_x, float centre_z) {
+    float ground = 64.0f;
+    for (const auto& chunk : chunks) {
+        if (std::abs((chunk.x + 0.5f) * 16.0f - centre_x) > 48.0f) continue;
+        if (std::abs((chunk.z + 0.5f) * 16.0f - centre_z) > 48.0f) continue;
+        for (int32_t lz = 0; lz < 16; lz += 4) {
+            for (int32_t lx = 0; lx < 16; lx += 4) {
+                for (int32_t y = static_cast<int32_t>(chunk.sections.size()) * 16 - 1; y >= 0; --y) {
+                    const int32_t state = chunk.block_state(lx, y, lz);
+                    if (state != 0 && table.full_cube(state)) {
+                        ground = std::max(ground, static_cast<float>(y - 64));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    return ground;
+}
+
 int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
                  const std::string& view) {
     using clock = std::chrono::steady_clock;
@@ -215,11 +236,30 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         return 1;
     }
 
-    mcpp::gpu::WorldRenderer renderer(device, 1600, 900, atlas);
+    const uint32_t shot_width = view == "macro" ? 1920u : 1600u;
+    const uint32_t shot_height = view == "macro" ? 1080u : 900u;
+    mcpp::gpu::WorldRenderer renderer(device, shot_width, shot_height, atlas);
     renderer.upload(combined);
 
     mcpp::gpu::Camera camera{};
-    if (view == "air") {
+    if (view == "macro") {
+        const float ground = ground_near_centre(chunks, table, centre_x, centre_z);
+        camera.eye[0] = centre_x;
+        camera.eye[1] = ground + 1.5f;
+        camera.eye[2] = centre_z + 9.0f;
+        camera.target[0] = centre_x;
+        camera.target[1] = ground + 0.5f;
+        camera.target[2] = centre_z;
+        camera.fov_degrees = 50.0f;
+    } else if (view == "close") {
+        camera.eye[0] = centre_x + 6.0f;
+        camera.eye[1] = ground_near_centre(chunks, table, centre_x, centre_z) + 4.0f;
+        camera.eye[2] = centre_z + 22.0f;
+        camera.target[0] = centre_x;
+        camera.target[1] = camera.eye[1] - 6.0f;
+        camera.target[2] = centre_z - 6.0f;
+        camera.fov_degrees = 70.0f;
+    } else if (view == "air") {
         // Outside the patch and above everything, looking across the surface.
         camera.eye[0] = centre_x - extent * 0.55f;
         camera.eye[1] = 135.0f;
@@ -267,7 +307,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     }
 
     auto pixels = renderer.render(camera);
-    mcpp::write_png(out_path, 1600, 900, pixels);
+    mcpp::write_png(out_path, shot_width, shot_height, pixels);
     device.save_pipeline_cache();
 
     std::cout << std::format("{}\n", out_path);
@@ -362,6 +402,41 @@ int do_gpu() {
                              mcpp::gpu::Device::default_pipeline_cache().string(),
                              device.pipeline_cache_bytes_loaded());
     device.save_pipeline_cache();
+    return 0;
+}
+
+// Builds one uniform section of a given state and reports what the mesher does
+// with it, so a culling rule can be checked against a number.
+int do_meshtest(int32_t state) {
+    mcpp::world::BlockTable table;
+    if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "geen blokkentabel\n";
+        return 1;
+    }
+
+    mcpp::ByteBuffer blocks;
+    blocks.write_u8(0);
+    blocks.write_varint(state);
+    mcpp::ByteBuffer biomes;
+    biomes.write_u8(0);
+    biomes.write_varint(0);
+
+    mcpp::world::Chunk chunk;
+    mcpp::world::ChunkSection section;
+    section.non_air_count = 4096;
+    section.blocks = mcpp::world::PalettedContainer::read(blocks, 4096, 8);
+    section.biomes = mcpp::world::PalettedContainer::read(biomes, 64, 3);
+    chunk.sections.push_back(std::move(section));
+
+    const auto mesh = mcpp::world::mesh_chunk(chunk, table);
+    std::cout << std::format("staat {} {}\n", state, table.block_name(state));
+    std::cout << std::format("  vlaggen {:#04x}  volle kubus {}  ondoorzichtig {}  vloeistof {}\n",
+                             table.flags(state), table.full_cube(state) ? "ja" : "nee",
+                             table.occludes(state) ? "ja" : "nee", table.fluid(state) ? "ja" : "nee");
+    std::cout << std::format("  quads per blok in de tabel: {}\n", table.quads(state).size());
+    std::cout << std::format("  massieve sectie: {} quads over, {} weggesneden\n",
+                             mesh.quads_emitted, mesh.quads_culled);
+    std::cout << std::format("  (alleen de schil zou {} zijn)\n", 6 * 16 * 16);
     return 0;
 }
 
@@ -627,6 +702,9 @@ int main(int argc, char** argv) {
         }
         if (command == "gpu") {
             return do_gpu();
+        }
+        if (command == "meshtest" && argc > 2) {
+            return do_meshtest(std::stoi(argv[2]));
         }
         if (command == "blocks") {
             return do_blocks(argc > 2 ? argv[2] : "");

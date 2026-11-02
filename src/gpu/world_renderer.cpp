@@ -66,7 +66,7 @@ Allocated make_buffer(Device& device, VkDeviceSize size, VkBufferUsageFlags usag
 void transition(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspect,
                 VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage,
                 VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
-                VkAccessFlags2 dst_access, uint32_t levels = 1) {
+                VkAccessFlags2 dst_access, uint32_t levels = 1, uint32_t layers = 1) {
     VkImageMemoryBarrier2 barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
     barrier.srcStageMask = src_stage;
@@ -76,7 +76,7 @@ void transition(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspec
     barrier.oldLayout = from;
     barrier.newLayout = to;
     barrier.image = image;
-    barrier.subresourceRange = {aspect, 0, levels, 0, 1};
+    barrier.subresourceRange = {aspect, 0, levels, 0, layers};
 
     VkDependencyInfo dependency{};
     dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
@@ -91,7 +91,6 @@ struct Mat4 {
 
 struct PushConstants {
     Mat4 view_projection;
-    uint32_t atlas[4];   // columns, tile size, atlas width, atlas height
 };
 
 void normalise(float v[3]) {
@@ -193,18 +192,23 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
 }
 
 void WorldRenderer::create_atlas(const world::Atlas& atlas) {
-    atlas_columns_ = atlas.columns();
     atlas_tile_ = atlas.tile_size();
-    atlas_width_ = atlas.width();
-    atlas_height_ = atlas.height();
+    atlas_layers_ = atlas.layers();
+
+    VkPhysicalDeviceProperties limits{};
+    vkGetPhysicalDeviceProperties(device_.physical(), &limits);
+    if (atlas_layers_ > limits.limits.maxImageArrayLayers) {
+        throw ProtocolError(std::format("atlas heeft {} lagen, deze gpu kan er {}",
+                                        atlas_layers_, limits.limits.maxImageArrayLayers));
+    }
 
     VkImageCreateInfo create{};
     create.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     create.imageType = VK_IMAGE_TYPE_2D;
     create.format = VK_FORMAT_R8G8B8A8_SRGB;
-    create.extent = {atlas_width_, atlas_height_, 1};
+    create.extent = {atlas_tile_, atlas_tile_, 1};
     create.mipLevels = atlas.mip_levels();
-    create.arrayLayers = 1;
+    create.arrayLayers = atlas_layers_;
     create.samples = VK_SAMPLE_COUNT_1_BIT;
     create.tiling = VK_IMAGE_TILING_OPTIMAL;
     create.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -249,16 +253,14 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     const uint32_t mips = atlas.mip_levels();
     transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, mips);
+               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, mips, atlas_layers_);
 
     std::vector<VkBufferImageCopy> regions(mips);
-    VkDeviceSize offset = 0;
     for (uint32_t mip = 0; mip < mips; ++mip) {
         regions[mip] = {};
-        regions[mip].bufferOffset = offset;
-        regions[mip].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
-        regions[mip].imageExtent = {atlas_width_ >> mip, atlas_height_ >> mip, 1};
-        offset += atlas.level(mip).size();
+        regions[mip].bufferOffset = atlas.level_offset(mip);
+        regions[mip].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, atlas_layers_};
+        regions[mip].imageExtent = {atlas_tile_ >> mip, atlas_tile_ >> mip, 1};
     }
     vkCmdCopyBufferToImage(command, staging.buffer, atlas_image_,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -267,7 +269,8 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT,
                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, mips);
+               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, mips,
+               atlas_layers_);
 
     check(vkEndCommandBuffer(command), "vkEndCommandBuffer atlas");
 
@@ -289,9 +292,9 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     VkImageViewCreateInfo view{};
     view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view.image = atlas_image_;
-    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     view.format = VK_FORMAT_R8G8B8A8_SRGB;
-    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, atlas_layers_};
     check(vkCreateImageView(device_.handle(), &view, nullptr, &atlas_view_),
           "vkCreateImageView atlas");
 
@@ -307,9 +310,11 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
         sampler.anisotropyEnable = VK_TRUE;
         sampler.maxAnisotropy = std::min(16.0f, device_.adapter().capabilities.max_anisotropy);
     }
-    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    // Layers cannot bleed into one another, so uvs outside 0..1 can repeat the
+    // way some block models expect.
+    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
     check(vkCreateSampler(device_.handle(), &sampler, nullptr, &sampler_), "vkCreateSampler");
 
@@ -656,10 +661,6 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera) {
         PushConstants push{};
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
-        push.atlas[0] = atlas_columns_;
-        push.atlas[1] = atlas_tile_;
-        push.atlas[2] = atlas_width_;
-        push.atlas[3] = atlas_height_;
         vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
                                 &descriptor_set_, 0, nullptr);

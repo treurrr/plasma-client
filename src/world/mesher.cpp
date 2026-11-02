@@ -110,6 +110,11 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
                     // A fluid also hides against its own kind, or an ocean
                     // would be full of faces between neighbouring water blocks.
                     const bool self_fluid = table.fluid(state);
+                    // Only the top block of a fluid column has a lowered
+                    // surface; a submerged one fills its block, or the column
+                    // would be sliced by a gap at every level.
+                    const bool submerged =
+                        self_fluid && table.fluid(state_at(x, y + 1, z));
                     bool hidden[6];
                     for (int side = 0; side < 6; ++side) {
                         const Offset offset = kFaceOffset[side];
@@ -136,9 +141,10 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
 
                         for (int corner = 0; corner < 4; ++corner) {
                             const int* pick = kCorner[quad.face][corner];
+                            const float top = submerged ? kBlock : quad.to[1];
                             float local[3] = {
                                 (pick[0] ? quad.to[0] : quad.from[0]) / kBlock,
-                                (pick[1] ? quad.to[1] : quad.from[1]) / kBlock,
+                                (pick[1] ? top : quad.from[1]) / kBlock,
                                 (pick[2] ? quad.to[2] : quad.from[2]) / kBlock,
                             };
                             apply_rotation(local, quad.rotation_x, quad.rotation_y);

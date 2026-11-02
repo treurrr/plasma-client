@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Bake every texture the block table references into one atlas.
+"""Bake every texture the block table references into a layered array texture.
 
 Usage: bake_atlas.py <client.jar> <blocks.plbk> <out.plat>
 
-Texture ids come from the block table, so the two files stay aligned by
-construction. Tiles are a uniform size - the largest native size in the pack,
-smaller ones scaled up with nearest neighbour - which is what the game's own
-atlas does and what keeps a lookup a single multiply.
+Texture ids come from the block table and become array layers, so the two files
+stay aligned by construction and a lookup needs no arithmetic at all. A layer
+per texture also means mip levels are built per texture: a grid atlas bleeds
+between neighbouring tiles as soon as minification filters across their shared
+edge, which no amount of padding fully fixes.
 """
 import io
 import struct
@@ -17,7 +18,7 @@ from pathlib import Path
 from PIL import Image
 
 MAGIC = b"PLAT"
-VERSION = 2
+VERSION = 3
 # Four levels takes a 32px tile down to 4px; below that neighbouring tiles
 # start to matter even though a box filter stays inside tile boundaries.
 MIP_LEVELS = 4
@@ -98,42 +99,37 @@ def main(args):
         except KeyError:
             continue
 
-    columns = 1
-    while columns * columns < len(names):
-        columns *= 2
-    rows = (len(names) + columns - 1) // columns
-    atlas = Image.new("RGBA", (columns * tile_size, rows * tile_size), (0, 0, 0, 0))
-
-    rects = []
+    tiles = []
     missing = 0
     fallback = missing_tile(tile_size)
-    for index, name in enumerate(names):
+    for name in names:
         tile = load_tile(archive, name, tile_size)
         if tile is None:
             tile = fallback
             missing += 1
-        x = (index % columns) * tile_size
-        y = (index // columns) * tile_size
-        atlas.paste(tile, (x, y))
-        rects.append((x, y, tile_size, tile_size))
+        tiles.append(tile)
 
-    # Tiles are aligned to a power of two, so halving the whole atlas is the
-    # same as halving every tile: a box filter never crosses a tile boundary.
-    levels = [atlas]
-    while len(levels) < MIP_LEVELS and min(levels[-1].size) > 1:
-        previous = levels[-1]
-        levels.append(previous.resize((previous.width // 2, previous.height // 2), Image.BOX))
+    mips = 1
+    while mips < MIP_LEVELS and (tile_size >> mips) >= 1:
+        mips += 1
 
-    pixels = b"".join(level.tobytes() for level in levels)
-    header = MAGIC + struct.pack("<8I", VERSION, protocol, atlas.width, atlas.height, tile_size,
-                                 len(names), len(levels), len(pixels))
-    body = b"".join(struct.pack("<4H", *rect) for rect in rects)
-    body += b"\0" * (align8(len(body)) - len(body))
+    # Vulkan reads one region per mip level with every layer behind each other,
+    # so the file is laid out the same way.
+    chunks = []
+    for mip in range(mips):
+        size = tile_size >> mip
+        for tile in tiles:
+            level = tile if size == tile_size else tile.resize((size, size), Image.BOX)
+            chunks.append(level.tobytes())
+    pixels = b"".join(chunks)
 
-    Path(out_path).write_bytes(header + body + pixels)
-    print(f"{out_path}: {(len(header) + len(body) + len(pixels)) / 1e6:.2f} MB")
-    print(f"  {atlas.width}x{atlas.height}, tegels van {tile_size}px, {len(names)} texturen, "
-          f"{len(levels)} mipniveaus")
+    header = MAGIC + struct.pack("<6I", VERSION, protocol, tile_size, len(tiles), mips,
+                                 len(pixels))
+    header += b"\0" * (align8(len(header)) - len(header))
+
+    Path(out_path).write_bytes(header + pixels)
+    print(f"{out_path}: {(len(header) + len(pixels)) / 1e6:.2f} MB")
+    print(f"  {len(tiles)} lagen van {tile_size}px, {mips} mipniveaus")
     if missing:
         print(f"  {missing} texturen niet gevonden; die kregen het ontbrekend-blokje")
 
