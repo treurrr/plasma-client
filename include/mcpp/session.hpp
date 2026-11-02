@@ -4,6 +4,7 @@
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/translations.hpp"
+#include "mcpp/world/chunk.hpp"
 
 #include <functional>
 #include <mutex>
@@ -26,12 +27,14 @@ struct SessionOptions {
     bool accept_code_of_conduct = true;
     bool debug_packets = false;
     std::filesystem::path lang_file = Translations::default_path();
+    std::filesystem::path chunk_dump;
 };
 
 struct SessionEvents {
     std::function<void(std::string_view)> on_status;
     std::function<void(std::string_view)> on_chat;
     std::function<void(std::string_view)> on_disconnect;
+    std::function<void(const world::Chunk&)> on_chunk;
 };
 
 // Offline mode only: a server in online-mode sends an encryption request, which

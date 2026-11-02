@@ -2,6 +2,7 @@
 #include "mcpp/json.hpp"
 #include "mcpp/nbt.hpp"
 #include "mcpp/proto/packet_ids.hpp"
+#include "mcpp/world/chunk.hpp"
 
 #include <cassert>
 #include <format>
@@ -201,6 +202,51 @@ void test_translation_patterns() {
           "unknown key falls back to itself");
 }
 
+void test_paletted_container() {
+    // 24 entries of 5 bits: 12 fit in a long, the top 4 bits stay padding.
+    constexpr uint8_t kBits = 5;
+    constexpr size_t kEntries = 24;
+    constexpr size_t kPerLong = 64 / kBits;
+
+    mcpp::ByteBuffer buffer;
+    buffer.write_u8(kBits);
+    buffer.write_varint(8);
+    for (int32_t i = 0; i < 8; ++i) buffer.write_varint(100 + i);
+
+    uint64_t packed[2] = {0, 0};
+    for (size_t i = 0; i < kEntries; ++i) {
+        const uint64_t index = i % 8;
+        packed[i / kPerLong] |= index << (i % kPerLong * kBits);
+    }
+    buffer.write_i64(static_cast<int64_t>(packed[0]));
+    buffer.write_i64(static_cast<int64_t>(packed[1]));
+
+    auto container = mcpp::world::PalettedContainer::read(buffer, kEntries, 8);
+    check(buffer.remaining() == 0, "paletted container consumes exactly its bytes");
+    check(container.bits() == kBits, "bits per entry are read");
+
+    bool all = true;
+    for (size_t i = 0; i < kEntries; ++i) {
+        if (container.at(i) != static_cast<int32_t>(100 + i % 8)) all = false;
+    }
+    check(all, "every entry unpacks to its palette value");
+
+    mcpp::ByteBuffer uniform;
+    uniform.write_u8(0);
+    uniform.write_varint(1234);
+    auto single = mcpp::world::PalettedContainer::read(uniform, 4096, 8);
+    check(single.uniform() && single.at(0) == 1234 && single.at(4095) == 1234,
+          "a uniform section needs no data array");
+
+    bool threw = false;
+    try {
+        container.at(kEntries);
+    } catch (const mcpp::ProtocolError&) {
+        threw = true;
+    }
+    check(threw, "reading past the end is rejected");
+}
+
 void test_packet_tables() {
     const auto* v774 = mcpp::proto::ids_for(774);
     const auto* v776 = mcpp::proto::ids_for(776);
@@ -222,6 +268,7 @@ int main() {
     test_json();
     test_nbt();
     test_translation_patterns();
+    test_paletted_container();
     test_packet_tables();
 
     if (failures == 0) {

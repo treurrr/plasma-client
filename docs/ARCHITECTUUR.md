@@ -94,3 +94,46 @@ lezen we chat in beide vormen (`system_chat` en `player_chat`).
 - **Wereld.** Chunks, blokken, entiteiten: mijlpaal 3, samen met de renderer.
 - **1.8.9.** Protocol 47 heeft geen configuratiefase. De tabel heeft daar al
   ruimte voor: een ontbrekend pakket is -1 in plaats van een gat in de code.
+
+## Chunks
+
+Een chunk komt binnen als `level_chunk_with_light`: coordinaten, heightmaps, een
+blob met secties, block entities en lichtdata. Elke sectie bevat het aantal
+niet-lucht-blokken en twee paletted containers, een voor blokken en een voor
+biomen.
+
+Een paletted container is bit-gepakt in longs, en entries steken **nooit** over
+een long-grens: bij 5 bits passen er 12 in een long en blijven de bovenste 4
+bits padding. Drie vormen: `bits == 0` is één waarde voor de hele sectie,
+`bits <= 8` (blokken) of `<= 3` (biomen) is indirect met een palet, en daarboven
+staan de blokstaat-ID's direct in de data.
+
+Twee dingen die de spec niet (duidelijk) zegt en die uit de bytes kwamen:
+
+1. **De data-array van een paletted container heeft geen lengte-prefix.** De
+   heightmaps erboven wel. De lengte van de container-data volgt uit het aantal
+   entries en de bits per entry. Wie hier een varint leest, leest de eerste long
+   als lengte en loopt vast.
+2. **Het aantal secties staat niet in het pakket.** Dat volgt uit de hoogte van
+   de dimensie, die in een register staat dat wij niet bijhouden. Secties lezen
+   tot de blob leeg is heeft dat register niet nodig.
+
+### Hoe dit gecontroleerd is
+
+Dat het parst zonder uitzondering bewijst niets: verschoven bit-unpacking geeft
+plausibel uitziende onzin. De controle is de blokverdeling van 329 chunks echte
+overworld, met de ID's omgezet naar namen via `blocks.json`:
+
+| blokstaat | blokken | blok |
+|-----------|---------|------|
+| 0 | 21.939.649 | air |
+| 27722 | 4.247.954 | deepslate |
+| 1 | 2.773.842 | stone |
+| 86 | 1.157.748 | water |
+| 23250 | 351.876 | tuff |
+| 85 | 253.914 | bedrock |
+
+Deepslate onder stone, de steensoorten in de juiste verhouding, en bedrock op
+253.914 blokken = 256 x 3,0 lagen per chunk, wat precies klopt met het
+willekeurige patroon van ongeveer drie lagen diep. Die getallen kunnen niet per
+ongeluk kloppen.

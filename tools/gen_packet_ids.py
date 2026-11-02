@@ -45,6 +45,12 @@ CURATED = {
         "disguised_chat": "disguised_chat", "start_configuration": "start_configuration",
         "player_position": "player_position", "custom_payload": "custom_payload",
         "set_health": "set_health", "respawn": "respawn", "game_event": "game_event",
+        "level_chunk_with_light": "level_chunk_with_light",
+        "chunk_batch_start": "chunk_batch_start", "chunk_batch_finished": "chunk_batch_finished",
+        "forget_level_chunk": "forget_level_chunk", "light_update": "light_update",
+        "block_update": "block_update", "section_blocks_update": "section_blocks_update",
+        "set_chunk_cache_center": "set_chunk_cache_center",
+        "set_chunk_cache_radius": "set_chunk_cache_radius",
     }),
     "play_sb": ("play", "serverbound", {
         "keep_alive": "keep_alive", "pong": "pong", "chat": "chat",
@@ -54,6 +60,7 @@ CURATED = {
         "custom_payload": "custom_payload", "accept_teleportation": "accept_teleportation",
         "move_player_pos": "move_player_pos", "move_player_pos_rot": "move_player_pos_rot",
         "client_tick_end": "client_tick_end",
+        "chunk_batch_received": "chunk_batch_received",
     }),
 }
 

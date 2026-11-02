@@ -9,6 +9,12 @@
 #include <format>
 #include <iostream>
 #include <mutex>
+#include <algorithm>
+#include <map>
+#include <ranges>
+#include <set>
+#include <utility>
+#include <vector>
 #include <string>
 #include <thread>
 
@@ -76,11 +82,32 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
 
     mcpp::SessionOptions options{.host = address.host, .port = address.port, .username = username,
                                  .protocol = protocol,
-                                 .debug_packets = std::getenv("PLODDER_DEBUG") != nullptr};
+                                 .debug_packets = std::getenv("PLODDER_DEBUG") != nullptr,
+                                 .chunk_dump = std::getenv("PLODDER_CHUNK_DUMP")
+                                     ? std::getenv("PLODDER_CHUNK_DUMP") : ""};
+    size_t chunks = 0;
+    size_t sections = 0;
+    std::set<int32_t> states;
+    std::map<int32_t, size_t> histogram;
+
     mcpp::SessionEvents events{
         .on_status = [&](std::string_view line) { print('-', line); },
         .on_chat = [&](std::string_view line) { print('|', line); },
         .on_disconnect = [&](std::string_view line) { print('x', line); },
+        .on_chunk = [&](const mcpp::world::Chunk& chunk) {
+            ++chunks;
+            sections += chunk.non_empty_sections();
+            for (const auto& section : chunk.sections) {
+                for (int32_t state : section.blocks.palette()) states.insert(state);
+                for (size_t i = 0; i < section.blocks.size(); ++i) {
+                    ++histogram[section.blocks.at(i)];
+                }
+            }
+            if (chunks % 32 == 0) {
+                print('#', std::format("{} chunks, {} gevulde secties, {} blokstaten, laatste ({},{})",
+                                       chunks, sections, states.size(), chunk.x, chunk.z));
+            }
+        },
     };
 
     mcpp::Session session(options, events);
@@ -120,6 +147,15 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
     running.store(false);
     session.close();
     reader.join();
+    if (chunks > 0) {
+        print('#', std::format("totaal {} chunks, {} gevulde secties, {} unieke blokstaten",
+                               chunks, sections, states.size()));
+        std::vector<std::pair<int32_t, size_t>> ranked(histogram.begin(), histogram.end());
+        std::ranges::sort(ranked, [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (size_t i = 0; i < ranked.size() && i < 10; ++i) {
+            print('#', std::format("  state {:<6} {} blokken", ranked[i].first, ranked[i].second));
+        }
+    }
     return 0;
 }
 

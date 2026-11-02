@@ -2,8 +2,10 @@
 
 #include "mcpp/json.hpp"
 #include "mcpp/nbt.hpp"
+#include "mcpp/world/chunk.hpp"
 
 #include <chrono>
+#include <fstream>
 #include <format>
 
 namespace mcpp {
@@ -14,6 +16,7 @@ constexpr size_t kUuidBytes = 16;
 constexpr size_t kSignatureBytes = 256;
 constexpr size_t kAcknowledgedBytes = 3;   // Fixed BitSet(20)
 constexpr int kIdleTimeoutMs = 40000;      // keep-alives arrive every 15s
+constexpr float kChunksPerTick = 32.0f;    // the server throttles to what we claim
 
 void write_nil_uuid(ByteBuffer& out) {
     for (size_t i = 0; i < kUuidBytes; ++i) out.write_u8(0);
@@ -283,6 +286,25 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         ByteBuffer out;
         out.write_varint(in.read_varint());
         send(ids_->play_sb.accept_teleportation, out);
+        return true;
+    }
+    if (packet.id == cb.level_chunk_with_light) {
+        if (!options_.chunk_dump.empty()) {
+            std::ofstream out(options_.chunk_dump, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(in.data().data()),
+                      static_cast<std::streamsize>(in.data().size()));
+            options_.chunk_dump.clear();
+            status("eerste chunk-pakket ruw weggeschreven");
+        }
+        auto chunk = world::read_chunk(in);
+        if (events_.on_chunk) events_.on_chunk(chunk);
+        return true;
+    }
+    if (packet.id == cb.chunk_batch_finished) {
+        in.read_varint();
+        ByteBuffer out;
+        out.write_f32(kChunksPerTick);
+        send(ids_->play_sb.chunk_batch_received, out);
         return true;
     }
     if (packet.id == cb.player_chat) {

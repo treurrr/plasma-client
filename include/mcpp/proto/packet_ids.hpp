@@ -31,13 +31,16 @@ struct PacketIds {
 
     struct PlayClientbound {
         int32_t login, keep_alive, ping, disconnect, system_chat, player_chat, disguised_chat,
-            start_configuration, player_position, custom_payload, set_health, respawn, game_event;
+            start_configuration, player_position, custom_payload, set_health, respawn, game_event,
+            level_chunk_with_light, chunk_batch_start, chunk_batch_finished, forget_level_chunk,
+            light_update, block_update, section_blocks_update, set_chunk_cache_center,
+            set_chunk_cache_radius;
     } play_cb;
 
     struct PlayServerbound {
         int32_t keep_alive, pong, chat, chat_command, chat_ack, client_information,
             configuration_acknowledged, custom_payload, accept_teleportation, move_player_pos,
-            move_player_pos_rot, client_tick_end;
+            move_player_pos_rot, client_tick_end, chunk_batch_received;
     } play_sb;
 };
 
