@@ -451,9 +451,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
         vertex_bytes += section.vertices.size() * sizeof(mcpp::world::Vertex);
         index_bytes += section.indices.size() * sizeof(uint32_t);
     }
-    // A server with view distance 10 sends 441 chunks. Budget for well past
-    // that: 384 MB is a rounding error on any card that can run this.
-    renderer.reserve(384u << 20, 96u << 20);
+    // A server with view distance 10 sends 441 chunks. Measured on real
+    // terrain the vertex and index data come out around 2.7 to 1, so an even
+    // split would run out of indices long before it ran out of room.
+    renderer.reserve(384u << 20, 160u << 20);
     renderer.append(combined);
     std::cout << std::format("- {:.0f} MB reserved on the gpu, {:.1f} MB used by the first {} chunks\n",
                              renderer.vertex_capacity() / 1e6, vertex_bytes / 1e6, chunks.size());
@@ -478,6 +479,39 @@ int do_play(const std::string& target, size_t chunk_limit) {
     }
     float yaw = placed ? spawn_yaw - 90.0f : -90.0f;
     float pitch = placed ? -spawn_pitch : -8.0f;
+
+    // Meshing runs here, never in the frame. The frame only ever does the copy.
+    struct Batch {
+        std::vector<mcpp::world::SectionMesh> pieces;
+        size_t chunks = 0;
+    };
+    std::vector<Batch> ready;
+    std::mutex ready_guard;
+    std::atomic<bool> streaming{true};
+
+    std::thread mesher([&] {
+        constexpr size_t kChunksPerBatch = 12;
+        while (streaming.load()) {
+            std::vector<mcpp::world::Chunk> arrived;
+            {
+                std::lock_guard lock(guard);
+                const size_t take = std::min(pending.size(), kChunksPerBatch);
+                if (take > 0) {
+                    arrived.assign(std::make_move_iterator(pending.begin()),
+                                   std::make_move_iterator(pending.begin() + take));
+                    pending.erase(pending.begin(), pending.begin() + take);
+                }
+            }
+            if (arrived.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(4));
+                continue;
+            }
+            double batch_ms = 0.0;
+            auto pieces = mesh_world(arrived, table, &batch_ms);
+            std::lock_guard lock(ready_guard);
+            ready.push_back(Batch{std::move(pieces), arrived.size()});
+        }
+    });
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
                  "  left control to sprint, escape to leave\n";
@@ -530,31 +564,31 @@ int do_play(const std::string& target, size_t chunk_limit) {
         }
         // Mesh and append whatever arrived, in batches, so one chunk does not
         // cost a submit of its own.
-        // At most a handful per frame. Meshing 257 at once cost 47 ms, which is
-        // exactly the hitch this client is supposed not to have.
-        constexpr size_t kChunksPerFrame = 12;
-        std::vector<mcpp::world::Chunk> arrived;
+        // One finished batch a frame. Meshing happens on the worker, so all the
+        // frame pays for is the copy to the gpu.
+        std::vector<mcpp::world::SectionMesh> ready_batch;
+        size_t ready_chunks = 0;
         {
-            std::lock_guard lock(guard);
-            const size_t take = std::min(pending.size(), kChunksPerFrame);
-            if (take > 0) {
-                arrived.assign(std::make_move_iterator(pending.begin()),
-                               std::make_move_iterator(pending.begin() + take));
-                pending.erase(pending.begin(), pending.begin() + take);
+            std::lock_guard lock(ready_guard);
+            if (!ready.empty()) {
+                ready_batch = std::move(ready.front().pieces);
+                ready_chunks = ready.front().chunks;
+                ready.erase(ready.begin());
             }
         }
-        if (!arrived.empty()) {
-            double batch_ms = 0.0;
-            const auto pieces = mesh_world(arrived, table, &batch_ms);
-            if (!renderer.append(pieces)) {
-                std::cout << "- the streaming buffer is full; not adding more chunks\n";
-                std::lock_guard lock(guard);
-                pending.clear();
+        if (!ready_batch.empty()) {
+            if (!renderer.append(ready_batch)) {
+                std::cout << std::format("- out of {} room after {} sections; stopping here\n",
+                                         renderer.out_of_vertex_room() ? "vertex" : "index",
+                                         renderer.appended_sections());
+                streaming.store(false);
             } else {
-                streamed += arrived.size();
-                std::cout << std::format(
-                    "- streamed in {} chunks in {:.1f} ms, {} sections drawn in total\n",
-                    arrived.size(), batch_ms, renderer.appended_sections());
+                const size_t before = streamed;
+                streamed += ready_chunks;
+                if (streamed / 100 != before / 100) {
+                    std::cout << std::format("- {} chunks streamed in, {} sections drawn\n",
+                                             streamed, renderer.appended_sections());
+                }
             }
         }
 
@@ -575,6 +609,8 @@ int do_play(const std::string& target, size_t chunk_limit) {
         ++frames;
     }
 
+    streaming.store(false);
+    mesher.join();
     session.close();
     if (frames > 0) {
         std::cout << std::format("- {} frames, {:.3f} ms gpu on average, {} positions sent, "

@@ -715,6 +715,7 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
     if (vertex_start + vertex_added > vertex_capacity_ ||
         index_start + index_added > index_capacity_) {
         sections_.resize(first_section);   // out of room; the caller decides what to drop
+        out_of_vertex_room_ = vertex_start + vertex_added > vertex_capacity_;
         return false;
     }
 

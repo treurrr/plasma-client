@@ -37,6 +37,7 @@ public:
     bool append(const std::vector<world::SectionMesh>& sections);
     size_t vertex_capacity() const { return vertex_capacity_; }
     size_t appended_sections() const { return sections_.size(); }
+    bool out_of_vertex_room() const { return out_of_vertex_room_; }
     std::vector<uint8_t> render(const Camera& camera);
 
     // Draws a frame without reading it back, which is what a frame costs
@@ -128,6 +129,7 @@ private:
     size_t drawn_triangles_ = 0;
 
     uint32_t index_count_ = 0;
+    bool out_of_vertex_room_ = false;
     size_t vertex_capacity_ = 0;
     size_t index_capacity_ = 0;
     VkBuffer append_staging_ = VK_NULL_HANDLE;
