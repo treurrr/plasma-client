@@ -82,20 +82,36 @@ int rotate_face(int face, uint8_t rotation_x, uint8_t rotation_y) {
 
 } // namespace
 
-Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& neighbours,
-                int32_t min_section_y) {
+ChunkBlocks::ChunkBlocks(const Chunk& chunk) : sections_(chunk.sections.size()) {
+    for (size_t i = 0; i < chunk.sections.size(); ++i) {
+        // Most of a column is air; leaving those sections empty saves both the
+        // unpacking and the memory.
+        if (chunk.sections[i].non_air_count == 0) continue;
+
+        const auto& blocks = chunk.sections[i].blocks;
+        auto& flat = sections_[i];
+        flat.resize(kBlocksPerSection);
+        for (size_t at = 0; at < kBlocksPerSection; ++at) flat[at] = blocks.at(at);
+    }
+}
+
+int32_t ChunkBlocks::at(int32_t x, int32_t y, int32_t z) const {
+    if (y < 0) return -1;
+    const auto section = static_cast<size_t>(y / kSection);
+    if (section >= sections_.size()) return -1;
+    const auto& flat = sections_[section];
+    if (flat.empty()) return 0;
+    return flat[static_cast<size_t>(y % kSection) * 256 + static_cast<size_t>(z) * 16 +
+                static_cast<size_t>(x)];
+}
+
+Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
+                const Neighbours& neighbours, int32_t min_section_y) {
     Mesh mesh;
     mesh.vertices.reserve(1 << 16);
     mesh.indices.reserve(1 << 16);
-    const auto section_count = static_cast<int32_t>(chunk.sections.size());
 
-    const auto state_in = [&](const Chunk& source, int32_t x, int32_t y, int32_t z) -> int32_t {
-        const int32_t section = y / kSection;
-        if (y < 0 || section >= static_cast<int32_t>(source.sections.size())) return -1;
-        const size_t index = static_cast<size_t>(y % kSection) * 256 +
-                             static_cast<size_t>(z) * 16 + static_cast<size_t>(x);
-        return source.sections[static_cast<size_t>(section)].blocks.at(index);
-    };
+    const auto section_count = static_cast<int32_t>(blocks.section_count());
 
     const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
         const bool past_x = x < 0 || x > 15;
@@ -106,14 +122,14 @@ Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& n
         if (past_x && past_z) return -1;
 
         if (past_x) {
-            const Chunk* side = x < 0 ? neighbours.west : neighbours.east;
-            return side ? state_in(*side, x & 15, y, z) : -1;
+            const ChunkBlocks* side = x < 0 ? neighbours.west : neighbours.east;
+            return side ? side->at(x & 15, y, z) : -1;
         }
         if (past_z) {
-            const Chunk* side = z < 0 ? neighbours.north : neighbours.south;
-            return side ? state_in(*side, x, y, z & 15) : -1;
+            const ChunkBlocks* side = z < 0 ? neighbours.north : neighbours.south;
+            return side ? side->at(x, y, z & 15) : -1;
         }
-        return state_in(chunk, x, y, z);
+        return blocks.at(x, y, z);
     };
 
     for (int32_t section = 0; section < section_count; ++section) {

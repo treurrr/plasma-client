@@ -18,6 +18,7 @@
 #include <format>
 #include <iostream>
 #include <mutex>
+#include <numeric>
 #include <algorithm>
 #include <map>
 #include <ranges>
@@ -101,13 +102,186 @@ float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
     return ground;
 }
 
-int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
-                 const std::string& view) {
-    using clock = std::chrono::steady_clock;
-    const auto ms = [](auto from, auto to) {
-        return std::chrono::duration<double, std::milli>(to - from).count();
+float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
+                         const mcpp::world::BlockTable& table, float centre_x, float centre_z);
+
+// Joins a server, keeps chunks until it has enough, and leaves again.
+std::vector<mcpp::world::Chunk> load_chunks(const Address& address, size_t limit, bool quiet) {
+    std::mutex guard;
+    std::vector<mcpp::world::Chunk> chunks;
+    std::atomic<bool> enough{false};
+
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    options.username = "PlodderShot";
+
+    mcpp::SessionEvents events;
+    if (!quiet) {
+        events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    }
+    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+        std::lock_guard lock(guard);
+        if (chunks.size() < limit) chunks.push_back(chunk);
+        if (chunks.size() >= limit) enough.store(true);
     };
 
+    mcpp::Session session(options, events);
+    session.connect();
+    while (!enough.load()) {
+        try {
+            session.pump();
+        } catch (const mcpp::TimeoutError&) {
+            break;
+        }
+    }
+    session.close();
+    return chunks;
+}
+
+// Unpacks every chunk once - a neighbour is read by four others - then meshes
+// them all and merges the result into one buffer.
+mcpp::world::Mesh mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
+                             const mcpp::world::BlockTable& table, double* milliseconds) {
+    const auto start = std::chrono::steady_clock::now();
+
+    std::map<std::pair<int32_t, int32_t>, mcpp::world::ChunkBlocks> unpacked;
+    for (const auto& chunk : chunks) {
+        unpacked.emplace(std::pair{chunk.x, chunk.z}, mcpp::world::ChunkBlocks(chunk));
+    }
+    const auto find_blocks = [&](int32_t x, int32_t z) -> const mcpp::world::ChunkBlocks* {
+        auto it = unpacked.find({x, z});
+        return it == unpacked.end() ? nullptr : &it->second;
+    };
+
+    mcpp::world::Mesh combined;
+    for (const auto& chunk : chunks) {
+        const mcpp::world::Neighbours neighbours{
+            .west = find_blocks(chunk.x - 1, chunk.z),
+            .east = find_blocks(chunk.x + 1, chunk.z),
+            .north = find_blocks(chunk.x, chunk.z - 1),
+            .south = find_blocks(chunk.x, chunk.z + 1),
+        };
+        auto piece = mcpp::world::mesh_chunk(chunk, *find_blocks(chunk.x, chunk.z), table,
+                                             neighbours);
+        const auto base = static_cast<uint32_t>(combined.vertices.size());
+        const float offset_x = static_cast<float>(chunk.x * 16);
+        const float offset_z = static_cast<float>(chunk.z * 16);
+        for (auto vertex : piece.vertices) {
+            vertex.position[0] += offset_x;
+            vertex.position[2] += offset_z;
+            combined.vertices.push_back(vertex);
+        }
+        for (uint32_t index : piece.indices) combined.indices.push_back(base + index);
+        combined.quads_emitted += piece.quads_emitted;
+        combined.quads_culled += piece.quads_culled;
+    }
+
+    if (milliseconds) {
+        *milliseconds = std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - start).count();
+    }
+    return combined;
+}
+
+int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint32_t width,
+             uint32_t height) {
+
+    mcpp::world::BlockTable table;
+    mcpp::world::Atlas atlas;
+    const auto protocol = mcpp::protocol::kTargetProtocol;
+    if (!table.open(mcpp::world::BlockTable::default_path(protocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(protocol))) {
+        std::cerr << "blokkentabel of atlas ontbreekt\n";
+        return 1;
+    }
+
+    const auto chunks = load_chunks(parse_address(target), chunk_limit, true);
+    if (chunks.empty()) {
+        std::cerr << "geen chunks ontvangen\n";
+        return 1;
+    }
+
+    double mesh_ms = 0.0;
+    const auto mesh = mesh_world(chunks, table, &mesh_ms);
+
+    int32_t min_cx = chunks.front().x;
+    int32_t max_cx = min_cx;
+    int32_t min_cz = chunks.front().z;
+    int32_t max_cz = min_cz;
+    for (const auto& chunk : chunks) {
+        min_cx = std::min(min_cx, chunk.x);
+        max_cx = std::max(max_cx, chunk.x);
+        min_cz = std::min(min_cz, chunk.z);
+        max_cz = std::max(max_cz, chunk.z);
+    }
+    const float centre_x = (min_cx + max_cx + 1) * 16.0f / 2.0f;
+    const float centre_z = (min_cz + max_cz + 1) * 16.0f / 2.0f;
+    const float ground = ground_near_centre(chunks, table, centre_x, centre_z);
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options options;
+    device.create(options);
+
+    mcpp::gpu::WorldRenderer renderer(device, width, height, atlas);
+    renderer.upload(mesh);
+
+    std::vector<double> gpu_times;
+    gpu_times.reserve(frames);
+
+    // A turning camera, so the measurement is not one lucky viewpoint.
+    for (size_t frame = 0; frame < frames; ++frame) {
+        const double angle = 6.2831853 * static_cast<double>(frame) / static_cast<double>(frames);
+        mcpp::gpu::Camera camera{};
+        camera.eye[0] = centre_x + 40.0f * static_cast<float>(std::cos(angle));
+        camera.eye[1] = ground + 18.0f;
+        camera.eye[2] = centre_z + 40.0f * static_cast<float>(std::sin(angle));
+        camera.target[0] = centre_x;
+        camera.target[1] = ground;
+        camera.target[2] = centre_z;
+
+        const double gpu_ms = renderer.draw(camera);
+        if (frame >= 10) gpu_times.push_back(gpu_ms);   // let the driver settle first
+    }
+
+    std::ranges::sort(gpu_times);
+    const auto count = gpu_times.size();
+    const auto mean_of_slowest = [&](double fraction) {
+        const size_t take = std::max<size_t>(1, static_cast<size_t>(
+                                                    fraction * static_cast<double>(count)));
+        const double total = std::accumulate(gpu_times.end() - static_cast<long>(take),
+                                             gpu_times.end(), 0.0);
+        return total / static_cast<double>(take);
+    };
+    const double average =
+        std::accumulate(gpu_times.begin(), gpu_times.end(), 0.0) / static_cast<double>(count);
+    const double median = gpu_times[count / 2];
+
+    const auto as_fps = [](double ms) { return ms > 0 ? 1000.0 / ms : 0.0; };
+
+    std::cout << std::format("{}x{}, {} chunks, {} driehoeken, {:.1f} MB vertexdata\n", width,
+                             height, chunks.size(), mesh.triangles(), mesh.bytes() / 1e6);
+    std::cout << std::format("gpu: {}\n", device.adapter().name);
+    std::cout << std::format("meshen: {:.0f} ms ({:.2f} ms per chunk)\n", mesh_ms,
+                             mesh_ms / static_cast<double>(chunks.size()));
+    std::cout << std::format("uploaden: {:.0f} ms\n\n", renderer.upload_ms());
+    std::cout << std::format("{} frames gemeten, eerste 10 weggelaten\n", count);
+    std::cout << std::format("  gemiddeld   {:7.3f} ms   {:8.0f} fps\n", average, as_fps(average));
+    std::cout << std::format("  mediaan     {:7.3f} ms   {:8.0f} fps\n", median, as_fps(median));
+    // A 1% low is the mean frame time of the slowest one percent of frames,
+    // not the 99th percentile: one stutter should show up, and a percentile
+    // hides how bad it was.
+    std::cout << std::format("  1% low      {:7.3f} ms   {:8.0f} fps\n", mean_of_slowest(0.01),
+                             as_fps(mean_of_slowest(0.01)));
+    std::cout << std::format("  0.1% low    {:7.3f} ms   {:8.0f} fps\n", mean_of_slowest(0.001),
+                             as_fps(mean_of_slowest(0.001)));
+    std::cout << std::format("  snelste     {:7.3f} ms\n  traagste    {:7.3f} ms\n",
+                             gpu_times.front(), gpu_times.back());
+    return 0;
+}
+
+int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
+                 const std::string& view) {
     const auto address = parse_address(target);
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
@@ -194,36 +368,8 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                              min_cx * 16, (max_cx + 1) * 16, min_cz * 16, (max_cz + 1) * 16,
                              static_cast<int>(extent));
 
-    std::map<std::pair<int32_t, int32_t>, const mcpp::world::Chunk*> by_position;
-    for (const auto& chunk : chunks) by_position[{chunk.x, chunk.z}] = &chunk;
-    const auto find_chunk = [&](int32_t x, int32_t z) -> const mcpp::world::Chunk* {
-        auto it = by_position.find({x, z});
-        return it == by_position.end() ? nullptr : it->second;
-    };
-
-    mcpp::world::Mesh combined;
-    const auto before_mesh = clock::now();
-    for (const auto& chunk : chunks) {
-        const mcpp::world::Neighbours neighbours{
-            .west = find_chunk(chunk.x - 1, chunk.z),
-            .east = find_chunk(chunk.x + 1, chunk.z),
-            .north = find_chunk(chunk.x, chunk.z - 1),
-            .south = find_chunk(chunk.x, chunk.z + 1),
-        };
-        auto piece = mcpp::world::mesh_chunk(chunk, table, neighbours);
-        const auto base = static_cast<uint32_t>(combined.vertices.size());
-        const float offset_x = static_cast<float>(chunk.x * 16);
-        const float offset_z = static_cast<float>(chunk.z * 16);
-        for (auto vertex : piece.vertices) {
-            vertex.position[0] += offset_x;
-            vertex.position[2] += offset_z;
-            combined.vertices.push_back(vertex);
-        }
-        for (uint32_t index : piece.indices) combined.indices.push_back(base + index);
-        combined.quads_emitted += piece.quads_emitted;
-        combined.quads_culled += piece.quads_culled;
-    }
-    const auto after_mesh = clock::now();
+    double mesh_ms = 0.0;
+    const auto combined = mesh_world(chunks, table, &mesh_ms);
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options gpu_options;
@@ -314,7 +460,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     std::cout << std::format("  {} chunks, {} driehoeken, {:.1f} MB vertexdata\n",
                              chunks.size(), combined.triangles(), combined.bytes() / 1e6);
     std::cout << std::format("  meshen {:.0f} ms, uploaden {:.0f} ms\n",
-                             ms(before_mesh, after_mesh), renderer.upload_ms());
+                             mesh_ms, renderer.upload_ms());
     std::cout << std::format("  gpu-tijd in het frame: {:.2f} ms\n", renderer.last_gpu_ms());
     return 0;
 }
@@ -467,7 +613,8 @@ int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples
 
     mcpp::world::Chunk chunk;
     chunk.sections.push_back(section_from_states(states));
-    const auto mesh = mcpp::world::mesh_chunk(chunk, table, {}, 0);
+    const mcpp::world::ChunkBlocks unpacked(chunk);
+    const auto mesh = mcpp::world::mesh_chunk(chunk, unpacked, table, {}, 0);
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options options;
@@ -546,7 +693,8 @@ int do_meshtest(int32_t state) {
     section.biomes = mcpp::world::PalettedContainer::read(biomes, 64, 3);
     chunk.sections.push_back(std::move(section));
 
-    const auto mesh = mcpp::world::mesh_chunk(chunk, table);
+    const mcpp::world::ChunkBlocks unpacked(chunk);
+    const auto mesh = mcpp::world::mesh_chunk(chunk, unpacked, table);
     std::cout << std::format("staat {} {}\n", state, table.block_name(state));
     std::cout << std::format("  vlaggen {:#04x}  volle kubus {}  ondoorzichtig {}  vloeistof {}\n",
                              table.flags(state), table.full_cube(state) ? "ja" : "nee",
@@ -666,7 +814,8 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
         }
         if (meshing) {
             const auto start = std::chrono::steady_clock::now();
-            const auto mesh = mcpp::world::mesh_chunk(chunk, block_table);
+            const mcpp::world::ChunkBlocks unpacked_chunk(chunk);
+            const auto mesh = mcpp::world::mesh_chunk(chunk, unpacked_chunk, block_table);
             mesh_ms += std::chrono::duration<double, std::milli>(
                            std::chrono::steady_clock::now() - start).count();
             emitted += mesh.quads_emitted;
@@ -806,6 +955,13 @@ int main(int argc, char** argv) {
         if (command == "ping" && argc > 2) {
             return do_ping(argv[2]);
         }
+        if (command == "bench" && argc > 2) {
+            const size_t limit = argc > 3 ? std::stoul(argv[3]) : 200;
+            const size_t frames = argc > 4 ? std::stoul(argv[4]) : 600;
+            const uint32_t width = argc > 5 ? static_cast<uint32_t>(std::stoul(argv[5])) : 1920;
+            const uint32_t height = argc > 6 ? static_cast<uint32_t>(std::stoul(argv[6])) : 1080;
+            return do_bench(argv[2], limit, frames, width, height);
+        }
         if (command == "worldshot" && argc > 2) {
             const std::string out = argc > 3 ? argv[3] : "world.png";
             const size_t limit = argc > 4 ? std::stoul(argv[4]) : 120;
@@ -858,6 +1014,7 @@ int main(int argc, char** argv) {
             "  showcase <uit.png> <staat...>  blokken los renderen om te keuren\n"
             "  gpu                 welke gpu en welke features\n"
             "  render <uit.png> [b] [h]   een frame renderen en wegschrijven\n"
+            "  bench <host:poort> [chunks] [frames] [b] [h]   frametijd en fps meten\n"
             "  worldshot <host:poort> [uit.png] [chunks]\n"
             "                      inloggen, chunks meshen en de wereld renderen\n"
             "  join <host:poort> [naam] [protocol]\n"

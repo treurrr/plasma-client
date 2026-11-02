@@ -391,7 +391,8 @@ void test_mesher_culls_interiors() {
     section.biomes = mcpp::world::PalettedContainer::read(biomes, 64, 3);
     chunk.sections.push_back(std::move(section));
 
-    const auto mesh = mcpp::world::mesh_chunk(chunk, table);
+    const mcpp::world::ChunkBlocks unpacked(chunk);
+    const auto mesh = mcpp::world::mesh_chunk(chunk, unpacked, table);
 
     // Six faces of a 16x16 shell, with nothing above or below the one section.
     check(mesh.quads_emitted == 6 * 16 * 16,

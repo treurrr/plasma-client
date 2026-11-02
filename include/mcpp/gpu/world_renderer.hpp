@@ -30,12 +30,18 @@ public:
     void upload(const world::Mesh& mesh);
     std::vector<uint8_t> render(const Camera& camera);
 
+    // Draws a frame without reading it back, which is what a frame costs
+    // in a running client; the readback alone is several milliseconds.
+    double draw(const Camera& camera);
+
     double last_gpu_ms() const { return last_gpu_ms_; }
     double upload_ms() const { return upload_ms_; }
     size_t uploaded_bytes() const { return vertex_bytes_ + index_bytes_; }
     uint32_t index_count() const { return index_count_; }
 
 private:
+    void record_frame(VkCommandBuffer command, const Camera& camera, bool readback);
+    double submit(VkCommandBuffer command);
     void create_targets();
     void create_atlas(const world::Atlas& atlas);
     void create_pipeline();
