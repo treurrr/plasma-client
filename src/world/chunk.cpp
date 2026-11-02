@@ -12,7 +12,7 @@ constexpr uint8_t kMaxBiomeIndirectBits = 3;
 
 std::vector<uint64_t> read_prefixed_longs(ByteBuffer& in) {
     const int32_t count = in.read_varint();
-    if (count < 0) throw ProtocolError("long-array met negatieve lengte");
+    if (count < 0) throw ProtocolError("long array with a negative length");
     std::vector<uint64_t> data(static_cast<size_t>(count));
     for (auto& value : data) value = static_cast<uint64_t>(in.read_i64());
     return data;
@@ -41,7 +41,7 @@ PalettedContainer PalettedContainer::read(ByteBuffer& in, size_t entry_count,
         container.palette_.push_back(in.read_varint());
     } else if (container.bits_ <= max_indirect_bits) {
         const int32_t size = in.read_varint();
-        if (size < 0) throw ProtocolError("palet met negatieve lengte");
+        if (size < 0) throw ProtocolError("palette with a negative length");
         container.palette_.reserve(static_cast<size_t>(size));
         for (int32_t i = 0; i < size; ++i) container.palette_.push_back(in.read_varint());
     }
@@ -51,7 +51,7 @@ PalettedContainer PalettedContainer::read(ByteBuffer& in, size_t entry_count,
 }
 
 int32_t PalettedContainer::at(size_t index) const {
-    if (index >= entry_count_) throw ProtocolError("index buiten de paletted container");
+    if (index >= entry_count_) throw ProtocolError("index outside the paletted container");
     if (bits_ == 0) return palette_.empty() ? 0 : palette_.front();
 
     const size_t per_long = 64 / bits_;
@@ -61,7 +61,7 @@ int32_t PalettedContainer::at(size_t index) const {
 
     if (palette_.empty()) return raw;
     if (static_cast<size_t>(raw) >= palette_.size()) {
-        throw ProtocolError("palet-index buiten het palet");
+        throw ProtocolError("palette index outside the palette");
     }
     return palette_[static_cast<size_t>(raw)];
 }
@@ -88,14 +88,14 @@ Chunk read_chunk(ByteBuffer& in) {
     chunk.z = in.read_i32();
 
     const int32_t heightmap_count = in.read_varint();
-    if (heightmap_count < 0) throw ProtocolError("negatief aantal heightmaps");
+    if (heightmap_count < 0) throw ProtocolError("negative heightmap count");
     for (int32_t i = 0; i < heightmap_count; ++i) {
         in.read_varint();
         read_prefixed_longs(in);
     }
 
     const int32_t data_size = in.read_varint();
-    if (data_size < 0) throw ProtocolError("negatieve chunk-datalengte");
+    if (data_size < 0) throw ProtocolError("negative chunk data length");
     ByteBuffer sections(in.read_bytes(static_cast<size_t>(data_size)));
 
     // The section count follows from the dimension height, which lives in a
@@ -109,7 +109,7 @@ Chunk read_chunk(ByteBuffer& in) {
     }
 
     const int32_t block_entity_count = in.read_varint();
-    if (block_entity_count < 0) throw ProtocolError("negatief aantal block entities");
+    if (block_entity_count < 0) throw ProtocolError("negative block entity count");
     for (int32_t i = 0; i < block_entity_count; ++i) {
         const uint8_t packed_xz = in.read_u8();
         BlockEntity entity;

@@ -50,14 +50,14 @@ bool Atlas::open(const std::filesystem::path& path) {
 
     if (std::memcmp(base_, kMagic, sizeof(kMagic)) != 0) {
         close();
-        throw ProtocolError(std::format("{} is geen atlas", path.string()));
+        throw ProtocolError(std::format("{} is not an atlas", path.string()));
     }
 
     const auto* header = reinterpret_cast<const uint32_t*>(base_ + sizeof(kMagic));
     if (header[0] != kVersion) {
         const uint32_t found = header[0];
         close();
-        throw ProtocolError(std::format("atlas versie {}, verwacht {}", found, kVersion));
+        throw ProtocolError(std::format("atlas version {}, expected {}", found, kVersion));
     }
 
     protocol_ = static_cast<int32_t>(header[1]);
@@ -72,7 +72,7 @@ bool Atlas::open(const std::filesystem::path& path) {
     for (uint32_t mip = 0; mip < mip_levels_; ++mip) expected += level_bytes(mip);
     if (pixel_bytes_ != expected || kHeaderBytes + pixel_bytes_ > size_) {
         close();
-        throw ProtocolError("atlas-pixels passen niet bij de afmetingen");
+        throw ProtocolError("atlas pixels do not match the dimensions");
     }
     return true;
 }

@@ -16,7 +16,7 @@ constexpr VkFormat kFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
 void check(VkResult result, std::string_view what) {
     if (result != VK_SUCCESS) {
-        throw ProtocolError(std::format("{} faalde met VkResult {}", what,
+        throw ProtocolError(std::format("{} failed with VkResult {}", what,
                                         static_cast<int>(result)));
     }
 }
@@ -28,7 +28,7 @@ uint32_t memory_type(VkPhysicalDevice physical, uint32_t mask, VkMemoryPropertyF
         if ((mask & (1u << i)) == 0) continue;
         if ((properties.memoryTypes[i].propertyFlags & wanted) == wanted) return i;
     }
-    throw ProtocolError("geen geschikt geheugentype op deze gpu");
+    throw ProtocolError("no suitable memory type on this gpu");
 }
 
 VkShaderModule make_module(VkDevice device, std::span<const uint32_t> words) {
@@ -110,7 +110,7 @@ void Offscreen::create_image() {
     allocate.memoryTypeIndex = memory_type(device_.physical(), requirements.memoryTypeBits,
                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     check(vkAllocateMemory(device_.handle(), &allocate, nullptr, &image_memory_),
-          "vkAllocateMemory voor de kleurbuffer");
+          "vkAllocateMemory for the colour buffer");
     check(vkBindImageMemory(device_.handle(), image_, image_memory_, 0), "vkBindImageMemory");
 
     VkImageViewCreateInfo view{};
@@ -140,7 +140,7 @@ void Offscreen::create_readback_buffer() {
                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     check(vkAllocateMemory(device_.handle(), &allocate, nullptr, &readback_memory_),
-          "vkAllocateMemory voor de terugleesbuffer");
+          "vkAllocateMemory for the readback buffer");
     check(vkBindBufferMemory(device_.handle(), readback_, readback_memory_, 0),
           "vkBindBufferMemory");
 }

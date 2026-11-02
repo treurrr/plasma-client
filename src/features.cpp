@@ -10,21 +10,21 @@ namespace mcpp::features {
 namespace {
 
 constexpr std::array<Feature, static_cast<size_t>(Id::Count)> kFeatures{{
-    {"fps",          "FPS-teller",            Category::Hud,    true,  false},
-    {"cps",          "CPS-teller",            Category::Hud,    true,  false},
+    {"fps",          "FPS counter",           Category::Hud,    true,  false},
+    {"cps",          "CPS counter",           Category::Hud,    true,  false},
     {"ping",         "Ping",                  Category::Hud,    true,  false},
     {"keystrokes",   "Keystrokes",            Category::Hud,    true,  false},
     {"armorhud",     "Armor HUD",             Category::Hud,    true,  false},
     {"potionhud",    "Potion HUD",            Category::Hud,    true,  false},
-    {"coords",       "Coordinaten",           Category::Hud,    false, false},
+    {"coords",       "Coordinates",           Category::Hud,    false, false},
     {"togglesprint", "Toggle sprint",         Category::Input,  false, true},
     {"togglesneak",  "Toggle sneak",          Category::Input,  false, true},
     {"zoom",         "Zoom",                  Category::Input,  true,  false},
     {"hitboxes",     "Hitboxes",              Category::Visual, false, true},
     {"fullbright",   "Fullbright",            Category::Visual, true,  false},
-    {"nohurtcam",    "Geen hurt-cam",         Category::Visual, true,  false},
-    {"nofireoverlay","Geen vuur-overlay",     Category::Visual, true,  false},
-    {"cleanscore",   "Scoreboard opschonen",  Category::Visual, false, false},
+    {"nohurtcam",    "No hurt cam",           Category::Visual, true,  false},
+    {"nofireoverlay","No fire overlay",       Category::Visual, true,  false},
+    {"cleanscore",   "Clean scoreboard",      Category::Visual, false, false},
 }};
 
 } // namespace
@@ -80,7 +80,7 @@ bool Registry::wanted(Id id) const {
 
 bool Registry::enabled(Id id) const {
     const auto index = static_cast<size_t>(id);
-    return index < kFeatures.size() && enabled_[index];
+    return index < kFeatures.size() && enabled_[index] && !locked_[index];
 }
 
 void Registry::set(Id id, bool on) {
@@ -137,7 +137,7 @@ std::string_view category_name(Category category) {
     switch (category) {
         case Category::Hud: return "HUD";
         case Category::Input: return "Input";
-        case Category::Visual: return "Beeld";
+        case Category::Visual: return "Visual";
     }
     return "?";
 }

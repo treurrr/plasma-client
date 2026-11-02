@@ -31,16 +31,16 @@
 namespace {
 
 void print_banner() {
-    std::cout << std::format("Crit Client 0.1.0  ·  doelversie {} (protocol {})\n",
+    std::cout << std::format("Crit Client 0.1.0  ·  target version {} (protocol {})\n",
                              mcpp::protocol::kTargetVersionName,
                              mcpp::protocol::kTargetProtocol);
 }
 
 void print_versions() {
-    std::cout << "\nversies:\n";
+    std::cout << "\nversions:\n";
     for (const auto& version : mcpp::protocol::all_versions()) {
         std::cout << std::format("  {:<9} protocol {:<4} {}\n", version.name, version.protocol,
-                                 version.supported ? "ondersteund" : "gepland");
+                                 version.supported ? "supported" : "planned");
     }
 }
 
@@ -62,9 +62,9 @@ void print_features() {
         }
         const bool on = registry.enabled(static_cast<mcpp::features::Id>(i));
         std::cout << std::format("    [{}] {:<24}{}\n", on ? 'x' : ' ', feature.label,
-                                 feature.server_may_object ? "  sommige servers verbieden dit" : "");
+                                 feature.server_may_object ? "  some servers forbid this" : "");
     }
-    std::cout << "\nGeen reach, aim assist, auto-clicker of ESP. Dat blijft zo.\n";
+    std::cout << "\nNo reach, aim assist, auto-clicker or ESP. That stays that way.\n";
 }
 
 struct Address {
@@ -199,13 +199,13 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
     const auto protocol = mcpp::protocol::kTargetProtocol;
     if (!table.open(mcpp::world::BlockTable::default_path(protocol)) ||
         !atlas.open(mcpp::world::Atlas::default_path(protocol))) {
-        std::cerr << "blokkentabel of atlas ontbreekt\n";
+        std::cerr << "block table or atlas missing\n";
         return 1;
     }
 
     const auto chunks = load_chunks(parse_address(target), chunk_limit, true);
     if (chunks.empty()) {
-        std::cerr << "geen chunks ontvangen\n";
+        std::cerr << "no chunks received\n";
         return 1;
     }
 
@@ -267,22 +267,22 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
     const auto as_fps = [](double ms) { return ms > 0 ? 1000.0 / ms : 0.0; };
 
     const auto totals = totals_of(mesh);
-    std::cout << std::format("{}x{}, {} chunks, {} secties, {} driehoeken, {:.1f} MB vertexdata\n",
+    std::cout << std::format("{}x{}, {} chunks, {} sections, {} triangles, {:.1f} MB vertex data\n",
                              width, height, chunks.size(), renderer.section_count(),
                              totals.triangles, totals.bytes / 1e6);
-    std::cout << std::format("in beeld: {} secties, {} driehoeken ({:.0f}% weggelaten)\n",
+    std::cout << std::format("in frame: {} sections, {} triangles ({:.0f}% skipped)\n",
                              renderer.drawn_sections(), renderer.drawn_triangles(),
                              totals.triangles > 0
                                  ? 100.0 * (1.0 - static_cast<double>(renderer.drawn_triangles()) /
                                                       static_cast<double>(totals.triangles))
                                  : 0.0);
     std::cout << std::format("gpu: {}\n", device.adapter().name);
-    std::cout << std::format("meshen: {:.0f} ms ({:.2f} ms per chunk)\n", mesh_ms,
+    std::cout << std::format("meshing: {:.0f} ms ({:.2f} ms per chunk)\n", mesh_ms,
                              mesh_ms / static_cast<double>(chunks.size()));
-    std::cout << std::format("uploaden: {:.0f} ms\n\n", renderer.upload_ms());
-    std::cout << std::format("{} frames gemeten, eerste 10 weggelaten\n", count);
-    std::cout << std::format("  gemiddeld   {:7.3f} ms   {:8.0f} fps\n", average, as_fps(average));
-    std::cout << std::format("  mediaan     {:7.3f} ms   {:8.0f} fps\n", median, as_fps(median));
+    std::cout << std::format("upload: {:.0f} ms\n\n", renderer.upload_ms());
+    std::cout << std::format("{} frames measured, first 10 discarded\n", count);
+    std::cout << std::format("  mean        {:7.3f} ms   {:8.0f} fps\n", average, as_fps(average));
+    std::cout << std::format("  median      {:7.3f} ms   {:8.0f} fps\n", median, as_fps(median));
     // A 1% low is the mean frame time of the slowest one percent of frames,
     // not the 99th percentile: one stutter should show up, and a percentile
     // hides how bad it was.
@@ -290,7 +290,7 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
                              as_fps(mean_of_slowest(0.01)));
     std::cout << std::format("  0.1% low    {:7.3f} ms   {:8.0f} fps\n", mean_of_slowest(0.001),
                              as_fps(mean_of_slowest(0.001)));
-    std::cout << std::format("  snelste     {:7.3f} ms\n  traagste    {:7.3f} ms\n",
+    std::cout << std::format("  fastest     {:7.3f} ms\n  slowest     {:7.3f} ms\n",
                              gpu_times.front(), gpu_times.back());
     return 0;
 }
@@ -300,7 +300,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     const auto address = parse_address(target);
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
-        std::cerr << "geen blokkentabel; bak er een met tools/bake_block_table.py\n";
+        std::cerr << "no block table; bake one with tools/bake_block_table.py\n";
         return 1;
     }
 
@@ -331,7 +331,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         }
     }
     session.close();
-    std::cout << std::format("- {} chunks opgehaald\n", chunks.size());
+    std::cout << std::format("- {} chunks fetched\n", chunks.size());
     if (chunks.empty()) return 1;
 
     int32_t min_cx = chunks.front().x;
@@ -353,7 +353,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         for (int32_t y = static_cast<int32_t>(first.sections.size()) * 16 - 1; y >= 0; --y) {
             const int32_t state = first.block_state(8, y, 8);
             if (state != 0) {
-                column = std::format("hoogste blok bij (8,8) van chunk ({},{}): y={} staat={} {}",
+                column = std::format("highest block at (8,8) of chunk ({},{}): y={} state={} {}",
                                      first.x, first.z, y - 64, state, table.block_name(state));
                 break;
             }
@@ -374,12 +374,12 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                 }
             }
         }
-        std::cout << std::format("- bovenste blok per kolom, y {} tot {}:\n", lowest, highest);
+        std::cout << std::format("- top block per column, y {} to {}:\n", lowest, highest);
         for (const auto& [name, count] : tops) {
             std::cout << std::format("    {:>4}x  {}\n", count, name);
         }
     }
-    std::cout << std::format("- chunks beslaan x {}..{}, z {}..{} ({} blokken breed)\n",
+    std::cout << std::format("- chunks span x {}..{}, z {}..{} ({} blocks wide)\n",
                              min_cx * 16, (max_cx + 1) * 16, min_cz * 16, (max_cz + 1) * 16,
                              static_cast<int>(extent));
 
@@ -393,7 +393,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
 
     mcpp::world::Atlas atlas;
     if (!atlas.open(mcpp::world::Atlas::default_path(mcpp::protocol::kTargetProtocol))) {
-        std::cerr << "geen atlas; bak er een met tools/bake_atlas.py\n";
+        std::cerr << "no atlas; bake one with tools/bake_atlas.py\n";
         return 1;
     }
 
@@ -457,7 +457,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         camera.target[1] = ground - 4.0f;
         camera.target[2] = centre_z - 60.0f;
         camera.fov_degrees = 65.0f;
-        std::cout << std::format("- grond onder het midden op y={}\n", static_cast<int>(ground));
+        std::cout << std::format("- ground under the centre at y={}\n", static_cast<int>(ground));
     } else {
         camera.eye[0] = centre_x + extent * 0.9f;
         camera.eye[1] = 120.0f + extent * 0.45f;
@@ -473,11 +473,11 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
 
     std::cout << std::format("{}\n", out_path);
     const auto totals = totals_of(combined);
-    std::cout << std::format("  {} chunks, {} driehoeken, {:.1f} MB vertexdata\n",
+    std::cout << std::format("  {} chunks, {} triangles, {:.1f} MB vertex data\n",
                              chunks.size(), totals.triangles, totals.bytes / 1e6);
-    std::cout << std::format("  meshen {:.0f} ms, uploaden {:.0f} ms\n",
+    std::cout << std::format("  meshing {:.0f} ms, upload {:.0f} ms\n",
                              mesh_ms, renderer.upload_ms());
-    std::cout << std::format("  gpu-tijd in het frame: {:.2f} ms\n", renderer.last_gpu_ms());
+    std::cout << std::format("  gpu time in the frame: {:.2f} ms\n", renderer.last_gpu_ms());
     return 0;
 }
 
@@ -505,10 +505,10 @@ int do_render(const std::string& out_path, uint32_t width, uint32_t height) {
 
     std::cout << std::format("{} ({}x{})\n", out_path, width, height);
     std::cout << std::format("  gpu: {}\n", device.adapter().name);
-    std::cout << std::format("  device {:.1f} ms, opzet {:.1f} ms (pipeline {:.1f} ms), "
+    std::cout << std::format("  device {:.1f} ms, setup {:.1f} ms (pipeline {:.1f} ms), "
                              "frame {:.1f} ms\n",
                              ms(t0, t1), ms(t1, t2), frame.pipeline_build_ms(), ms(t2, t3));
-    std::cout << std::format("  gpu-tijd in het frame: {:.3f} ms\n", frame.last_gpu_ms());
+    std::cout << std::format("  gpu time in the frame: {:.3f} ms\n", frame.last_gpu_ms());
     return 0;
 }
 
@@ -523,9 +523,9 @@ int do_gpu() {
     const auto after_list = clock::now();
 
     std::cout << std::format("validation layers: {}\n",
-                             mcpp::gpu::Device::validation_available() ? "beschikbaar"
-                                                                      : "niet geinstalleerd");
-    std::cout << std::format("{} adapter(s) gevonden in {:.1f} ms\n\n", adapters.size(),
+                             mcpp::gpu::Device::validation_available() ? "available"
+                                                                      : "not installed");
+    std::cout << std::format("{} adapter(s) found in {:.1f} ms\n\n", adapters.size(),
                              ms(before_list, after_list));
 
     for (const auto& adapter : adapters) {
@@ -535,19 +535,19 @@ int do_gpu() {
                                  mcpp::gpu::adapter_type_name(adapter.type),
                                  mcpp::gpu::api_version_string(adapter.api_version),
                                  adapter.driver);
-        std::cout << std::format("  {:.1f} GB device-lokaal geheugen\n",
+        std::cout << std::format("  {:.1f} GB device-local memory\n",
                                  static_cast<double>(adapter.device_local_bytes) / 1e9);
         std::cout << std::format("  mesh shaders {}  descriptor indexing {}  "
                                  "buffer device address {}\n",
-                                 caps.mesh_shader ? "ja" : "nee",
-                                 caps.descriptor_indexing ? "ja" : "nee",
-                                 caps.buffer_device_address ? "ja" : "nee");
+                                 caps.mesh_shader ? "yes" : "no",
+                                 caps.descriptor_indexing ? "yes" : "no",
+                                 caps.buffer_device_address ? "yes" : "no");
         std::cout << std::format("  dynamic rendering {}  sync2 {}  timeline semaphores {}  "
                                  "demote-to-helper {}\n\n",
-                                 caps.dynamic_rendering ? "ja" : "nee",
-                                 caps.synchronization2 ? "ja" : "nee",
-                                 caps.timeline_semaphore ? "ja" : "nee",
-                                 caps.demote_to_helper ? "ja" : "nee");
+                                 caps.dynamic_rendering ? "yes" : "no",
+                                 caps.synchronization2 ? "yes" : "no",
+                                 caps.timeline_semaphore ? "yes" : "no",
+                                 caps.demote_to_helper ? "yes" : "no");
     }
 
     mcpp::gpu::Device device;
@@ -558,9 +558,9 @@ int do_gpu() {
     device.create(options);
     const auto after_create = clock::now();
 
-    std::cout << std::format("gekozen: {}\n", device.adapter().name);
-    std::cout << std::format("  device aangemaakt in {:.1f} ms\n", ms(before_create, after_create));
-    std::cout << std::format("  pipeline-cache: {} ({} bytes ingelezen)\n",
+    std::cout << std::format("chosen: {}\n", device.adapter().name);
+    std::cout << std::format("  device created in {:.1f} ms\n", ms(before_create, after_create));
+    std::cout << std::format("  pipeline cache: {} ({} bytes read)\n",
                              mcpp::gpu::Device::default_pipeline_cache().string(),
                              device.pipeline_cache_bytes_loaded());
     device.save_pipeline_cache();
@@ -606,7 +606,7 @@ int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples
     const auto protocol = mcpp::protocol::kTargetProtocol;
     if (!table.open(mcpp::world::BlockTable::default_path(protocol)) ||
         !atlas.open(mcpp::world::Atlas::default_path(protocol))) {
-        std::cerr << "blokkentabel of atlas ontbreekt\n";
+        std::cerr << "block table or atlas missing\n";
         return 1;
     }
 
@@ -680,7 +680,7 @@ int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples
     mcpp::write_png(out_path, 1920, 1080, pixels);
     device.save_pipeline_cache();
 
-    std::cout << std::format("{}\n  {} blokken getoond, {} driehoeken\n", out_path,
+    std::cout << std::format("{}\n  {} blocks shown, {} triangles\n", out_path,
                              samples.size(), mesh.triangles());
     for (int32_t state : samples) {
         std::cout << std::format("  {:>6}  {}\n", state, table.block_name(state));
@@ -691,7 +691,7 @@ int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples
 int do_meshtest(int32_t state) {
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
-        std::cerr << "geen blokkentabel\n";
+        std::cerr << "no block table\n";
         return 1;
     }
 
@@ -711,14 +711,15 @@ int do_meshtest(int32_t state) {
 
     const mcpp::world::ChunkBlocks unpacked(chunk);
     const auto mesh = mcpp::world::mesh_chunk(chunk, unpacked, table);
-    std::cout << std::format("staat {} {}\n", state, table.block_name(state));
-    std::cout << std::format("  vlaggen {:#04x}  volle kubus {}  ondoorzichtig {}  vloeistof {}\n",
-                             table.flags(state), table.full_cube(state) ? "ja" : "nee",
-                             table.occludes(state) ? "ja" : "nee", table.fluid(state) ? "ja" : "nee");
-    std::cout << std::format("  quads per blok in de tabel: {}\n", table.quads(state).size());
-    std::cout << std::format("  massieve sectie: {} quads over, {} weggesneden\n",
+    std::cout << std::format("state {} {}\n", state, table.block_name(state));
+    std::cout << std::format("  flags {:#04x}  full cube {}  opaque {}  fluid {}\n",
+                             table.flags(state), table.full_cube(state) ? "yes" : "no",
+                             table.occludes(state) ? "yes" : "no",
+                             table.fluid(state) ? "yes" : "no");
+    std::cout << std::format("  quads per block in the table: {}\n", table.quads(state).size());
+    std::cout << std::format("  solid section: {} quads kept, {} culled\n",
                              mesh.quads_emitted, mesh.quads_culled);
-    std::cout << std::format("  (alleen de schil zou {} zijn)\n", 6 * 16 * 16);
+    std::cout << std::format("  (the shell alone would be {})\n", 6 * 16 * 16);
     return 0;
 }
 
@@ -733,7 +734,7 @@ int do_blocks(const std::string& query) {
     const auto after_open = clock::now();
 
     if (!opened) {
-        std::cerr << std::format("geen blokkentabel op {}\nbak er een met "
+        std::cerr << std::format("no block table at {}\nbake one with "
                                  "tools/bake_block_table.py\n", path.string());
         return 1;
     }
@@ -755,9 +756,9 @@ int do_blocks(const std::string& query) {
 
     std::cout << std::format("{}\n  {:.2f} MB, protocol {}\n", path.string(),
                              static_cast<double>(table.mapped_bytes()) / 1e6, table.protocol());
-    std::cout << std::format("  {} staten, {} quads, {} volle kubussen\n",
+    std::cout << std::format("  {} states, {} quads, {} full cubes\n",
                              table.state_count(), quads, full_cubes);
-    std::cout << std::format("  mmap {} us, hele tabel doorlopen {} us\n",
+    std::cout << std::format("  mmap {} us, whole table walked {} us\n",
                              us(before_open, after_open), us(before_walk, after_walk));
 
     if (query.empty()) return 0;
@@ -769,15 +770,15 @@ int do_blocks(const std::string& query) {
         if (name.find(query) == std::string_view::npos && std::to_string(state) != query) continue;
 
         const auto geometry = table.quads(id);
-        std::cout << std::format("\nstaat {} {}  flags {:#04x}  {} quads{}\n", state, name,
+        std::cout << std::format("\nstate {} {}  flags {:#04x}  {} quads{}\n", state, name,
                                  table.flags(id), geometry.size(),
-                                 table.full_cube(id) ? "  (volle kubus)" : "");
+                                 table.full_cube(id) ? "  (full cube)" : "");
         for (const auto& quad : geometry) {
             const auto units = [](int16_t v) {
                 return static_cast<double>(v) / mcpp::world::kUnitsPerModelUnit;
             };
             std::cout << std::format(
-                "  vlak {} cull {:>2}  van ({:g},{:g},{:g}) tot ({:g},{:g},{:g})  {}\n",
+                "  face {} cull {:>2}  from ({:g},{:g},{:g}) to ({:g},{:g},{:g})  {}\n",
                 quad.face, quad.cullface,
                 units(quad.from[0]), units(quad.from[1]), units(quad.from[2]),
                 units(quad.to[0]), units(quad.to[1]), units(quad.to[2]),
@@ -842,7 +843,7 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
             mesh_bytes += mesh.bytes();
         }
         if (chunks % 32 == 0) {
-            print('#', std::format("{} chunks, {} gevulde secties, {} blokstaten, laatste ({},{})",
+            print('#', std::format("{} chunks, {} filled sections, {} block states, last ({},{})",
                                    chunks, sections, states.size(), chunk.x, chunk.z));
         }
     };
@@ -865,7 +866,7 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
         }
     });
 
-    print('-', "typ om te chatten, /commando om een commando te sturen, /quit om te stoppen");
+    print('-', "type to chat, /command to send a command, /quit to stop");
     std::string line;
     while (running.load() && std::getline(std::cin, line)) {
         if (line == "/quit") break;
@@ -885,23 +886,23 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
     session.close();
     reader.join();
     if (chunks > 0) {
-        print('#', std::format("totaal {} chunks, {} gevulde secties, {} unieke blokstaten",
+        print('#', std::format("total {} chunks, {} filled sections, {} unique block states",
                                chunks, sections, states.size()));
         if (meshing) {
             const double total = static_cast<double>(emitted + culled);
-            print('#', std::format("mesh: {} quads over, {} weggesneden ({:.1f}%), {} driehoeken",
+            print('#', std::format("mesh: {} quads kept, {} culled ({:.1f}%), {} triangles",
                                    emitted, culled, total > 0 ? 100.0 * culled / total : 0.0,
                                    triangles));
-            print('#', std::format("      {:.1f} MB vertexdata, {:.1f} ms meshen "
+            print('#', std::format("      {:.1f} MB vertex data, {:.1f} ms meshing "
                                    "({:.2f} ms per chunk)",
                                    mesh_bytes / 1e6, mesh_ms, mesh_ms / chunks));
         } else {
-            print('#', "geen blokkentabel geladen, dus niet gemesht");
+            print('#', "no block table loaded, so nothing was meshed");
         }
         std::vector<std::pair<int32_t, size_t>> ranked(histogram.begin(), histogram.end());
         std::ranges::sort(ranked, [](const auto& a, const auto& b) { return a.second > b.second; });
         for (size_t i = 0; i < ranked.size() && i < 10; ++i) {
-            print('#', std::format("  state {:<6} {} blokken", ranked[i].first, ranked[i].second));
+            print('#', std::format("  state {:<6} {} blocks", ranked[i].first, ranked[i].second));
         }
     }
     return 0;
@@ -943,13 +944,13 @@ int do_ping(const std::string& target) {
         if (const auto* m = players->find("max")) max = static_cast<int>(m->number_or(-1));
     }
 
-    std::cout << std::format("{}:{}  {} (protocol {})  {}/{} spelers\n", host, port, version,
+    std::cout << std::format("{}:{}  {} (protocol {})  {}/{} players\n", host, port, version,
                              protocol, online, max);
 
     if (protocol == mcpp::protocol::kTargetProtocol) {
-        std::cout << "past: wij spreken dezelfde versie.\n";
+        std::cout << "match: we speak the same version.\n";
     } else {
-        std::cout << std::format("wij spreken {} ({}); werkt alleen als de server ViaVersion heeft.\n",
+        std::cout << std::format("we speak {} ({}); only works if the server has ViaVersion.\n",
                                  mcpp::protocol::kTargetProtocol, mcpp::protocol::kTargetVersionName);
     }
     return 0;
@@ -1024,24 +1025,24 @@ int main(int argc, char** argv) {
 
         print_banner();
         std::cout << std::format(
-            "\ngebruik: {} <commando>\n"
-            "  features            welke functies aan staan\n"
-            "  versions            ondersteunde protocolversies\n"
-            "  ping <host:poort>   serverinfo opvragen\n"
-            "  blocks [naam]       de voorgebakken blokkentabel\n"
-            "  showcase <uit.png> <staat...>  blokken los renderen om te keuren\n"
-            "  gpu                 welke gpu en welke features\n"
-            "  render <uit.png> [b] [h]   een frame renderen en wegschrijven\n"
-            "  bench <host:poort> [chunks] [frames] [b] [h]   frametijd en fps meten\n"
-            "  worldshot <host:poort> [uit.png] [chunks]\n"
-            "                      inloggen, chunks meshen en de wereld renderen\n"
-            "  join <host:poort> [naam] [protocol]\n"
-            "                      inloggen en in de play-state blijven\n"
-            "\nrenderen volgt in mijlpaal 3.\n",
+            "\nusage: {} <command>\n"
+            "  features            which features are on\n"
+            "  versions            supported protocol versions\n"
+            "  ping <host:port>    ask a server for its details\n"
+            "  blocks [name]       the pre-baked block table\n"
+            "  showcase <out.png> <state...>  render blocks on their own to inspect them\n"
+            "  gpu                 which gpu and which features\n"
+            "  render <out.png> [w] [h]   render a frame and write it out\n"
+            "  bench <host:port> [chunks] [frames] [w] [h]   measure frame time and fps\n"
+            "  worldshot <host:port> [out.png] [chunks]\n"
+            "                      log in, mesh chunks and render the world\n"
+            "  join <host:port> [name] [protocol]\n"
+            "                      log in and stay in the play state\n"
+            "\nno window yet: frames are written to PNG.\n",
             argv[0]);
         return command.empty() ? 0 : 2;
     } catch (const std::exception& error) {
-        std::cerr << std::format("fout: {}\n", error.what());
+        std::cerr << std::format("error: {}\n", error.what());
         return 1;
     }
 }

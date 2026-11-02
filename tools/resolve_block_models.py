@@ -162,7 +162,7 @@ def quads_for_state(assets, block_name, properties):
 
     blockstate = assets.blockstate(block_name)
     if blockstate is None:
-        return [], f"geen blockstate-bestand"
+        return [], f"no blockstate file"
 
     entries = pick_entries(blockstate, properties)
     if not entries:
@@ -170,13 +170,13 @@ def quads_for_state(assets, block_name, properties):
         # variants map with no match is a hole in our property handling.
         if "multipart" in blockstate:
             return [], None
-        return [], f"geen variant past op {properties}"
+        return [], f"no variant matches {properties}"
 
     quads = []
     for entry in entries:
         model = assets.resolve_model(entry["model"])
         if model is None:
-            return quads, f"model {entry['model']} ontbreekt"
+            return quads, f"model {entry['model']} is missing"
 
         rotation = (entry.get("x", 0), entry.get("y", 0))
         uvlock = entry.get("uvlock", False)
@@ -184,7 +184,7 @@ def quads_for_state(assets, block_name, properties):
             for face_name, face in element.get("faces", {}).items():
                 texture = deref_texture(face.get("texture"), model["textures"])
                 if texture is None:
-                    return quads, f"textuur {face.get('texture')} onopgelost"
+                    return quads, f"texture {face.get('texture')} unresolved"
                 quads.append({
                     "face": face_name,
                     "from": element["from"],
@@ -222,11 +222,11 @@ def main(args):
             culled = sorted({q["cullface"] for q in quads if q["cullface"]})
             textures = sorted({q["texture"] for q in quads})
             print(f"{state_id:>6}  {name} {properties or ''}")
-            print(f"        {len(quads)} quads, vlakken {faces}")
+            print(f"        {len(quads)} quads, faces {faces}")
             print(f"        cullface {culled}")
-            print(f"        texturen {textures}")
+            print(f"        textures {textures}")
             if problem:
-                print(f"        PROBLEEM: {problem}")
+                print(f"        PROBLEM: {problem}")
         return
 
     problems = {}
@@ -248,23 +248,23 @@ def main(args):
             empty_blocks.setdefault(name, 0)
             empty_blocks[name] += 1
 
-    print(f"{len(states)} blokstaten")
-    print(f"  {resolved:>6} met geometrie, {total_quads} quads "
-          f"({total_quads / max(resolved, 1):.1f} gemiddeld)")
-    print(f"  {modelless:>6} zonder model (lucht en vloeistoffen)")
-    print(f"  {sum(empty_blocks.values()):>6} leeg zonder fout, over {len(empty_blocks)} blokken")
-    print(f"  {sum(len(v) for v in problems.values()):>6} met een probleem")
+    print(f"{len(states)} block states")
+    print(f"  {resolved:>6} with geometry, {total_quads} quads "
+          f"({total_quads / max(resolved, 1):.1f} on average)")
+    print(f"  {modelless:>6} without a model (air and fluids)")
+    print(f"  {sum(empty_blocks.values()):>6} empty without an error, across {len(empty_blocks)} blocks")
+    print(f"  {sum(len(v) for v in problems.values()):>6} with a problem")
 
     if empty_blocks:
-        print("\nleeg, meest voorkomend:")
+        print("\nempty, most common:")
         limit = None if show_all else 8
         for name, count in sorted(empty_blocks.items(), key=lambda kv: -kv[1])[:limit]:
             print(f"  {count:>6}  {name}")
     if problems:
-        print("\nproblemen:")
+        print("\nproblems:")
         for kind, items in sorted(problems.items(), key=lambda kv: -len(kv[1])):
             name, props, problem = items[0]
-            print(f"  {len(items):>6}  {kind}   bv. {name} {props}")
+            print(f"  {len(items):>6}  {kind}   e.g. {name} {props}")
 
 
 if __name__ == "__main__":

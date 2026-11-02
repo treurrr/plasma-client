@@ -133,18 +133,18 @@ std::filesystem::path state_directory() {
 
 std::string_view describe(Failure failure) {
     switch (failure) {
-    case Failure::None:            return "geen fout";
-    case Failure::Network:         return "geen verbinding met Microsoft";
-    case Failure::Declined:        return "je hebt het inloggen geweigerd";
-    case Failure::TimedOut:        return "het inloggen duurde te lang";
-    case Failure::NoXboxProfile:   return "dit account heeft nog geen Xbox-profiel";
-    case Failure::CountryUnavailable: return "Xbox Live is niet beschikbaar in dit land";
-    case Failure::ChildAccount:    return "kinderaccount: voeg het toe aan een gezin";
+    case Failure::None:            return "no error";
+    case Failure::Network:         return "no connection to Microsoft";
+    case Failure::Declined:        return "you declined the sign-in";
+    case Failure::TimedOut:        return "the sign-in took too long";
+    case Failure::NoXboxProfile:   return "this account has no Xbox profile yet";
+    case Failure::CountryUnavailable: return "Xbox Live is not available in this country";
+    case Failure::ChildAccount:    return "child account: add it to a family";
     case Failure::NotApprovedByMojang:
-        return "deze client is nog niet door Mojang goedgekeurd";
-    case Failure::DoesNotOwnGame:  return "dit account bezit Minecraft: Java Edition niet";
+        return "this client has not been approved by Mojang yet";
+    case Failure::DoesNotOwnGame:  return "this account does not own Minecraft: Java Edition";
     }
-    return "onbekende fout";
+    return "unknown error";
 }
 
 std::string Session::client_id() {

@@ -15,7 +15,7 @@ constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
 void check(VkResult result, std::string_view what) {
     if (result != VK_SUCCESS) {
-        throw ProtocolError(std::format("{} faalde met VkResult {}", what,
+        throw ProtocolError(std::format("{} failed with VkResult {}", what,
                                         static_cast<int>(result)));
     }
 }
@@ -118,11 +118,11 @@ int score(const AdapterInfo& info, bool prefer_discrete) {
 
 std::string_view adapter_type_name(VkPhysicalDeviceType type) {
     switch (type) {
-    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   return "losse gpu";
-    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "geintegreerde gpu";
-    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    return "virtuele gpu";
+    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   return "discrete gpu";
+    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "integrated gpu";
+    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    return "virtual gpu";
     case VK_PHYSICAL_DEVICE_TYPE_CPU:            return "cpu";
-    default:                                     return "onbekend";
+    default:                                     return "unknown";
     }
 }
 
@@ -176,7 +176,7 @@ void Device::create(const Options& options) {
 
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(instance_, &count, nullptr);
-    if (count == 0) throw ProtocolError("geen enkele gpu met Vulkan-ondersteuning gevonden");
+    if (count == 0) throw ProtocolError("no gpu with Vulkan support found");
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(instance_, &count, devices.data());
 
@@ -192,7 +192,7 @@ void Device::create(const Options& options) {
         }
     }
     if (physical_ == VK_NULL_HANDLE) {
-        throw ProtocolError(std::format("geen gpu met Vulkan {}", api_version_string(kApiVersion)));
+        throw ProtocolError(std::format("no gpu with Vulkan {}", api_version_string(kApiVersion)));
     }
 
     uint32_t family_count = 0;
@@ -208,7 +208,7 @@ void Device::create(const Options& options) {
             break;
         }
     }
-    if (!found) throw ProtocolError("gpu heeft geen grafische wachtrij");
+    if (!found) throw ProtocolError("gpu has no graphics queue");
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queue{};

@@ -56,8 +56,8 @@ def main(args):
         print(f"  {info.get('id')}  protocol {info.get('protocol_version')}", file=sys.stderr)
         return 0
 
-    print(f"geen client-jar gevonden voor {wanted or 'welke versie dan ook'}", file=sys.stderr)
-    print("gezocht in:", file=sys.stderr)
+    print(f"no client jar found for {wanted or 'any version'}", file=sys.stderr)
+    print("searched in:", file=sys.stderr)
     for root in SEARCH:
         print(f"  {root}", file=sys.stderr)
     return 1

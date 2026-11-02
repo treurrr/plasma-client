@@ -33,7 +33,7 @@ void push_chunk(std::vector<uint8_t>& out, const char type[4], std::span<const u
 void write_png(const std::filesystem::path& path, uint32_t width, uint32_t height,
                std::span<const uint8_t> rgba) {
     if (rgba.size() != static_cast<size_t>(width) * height * 4) {
-        throw ProtocolError(std::format("png: {} bytes voor {}x{} pixels", rgba.size(), width,
+        throw ProtocolError(std::format("png: {} bytes for {}x{} pixels", rgba.size(), width,
                                         height));
     }
 
@@ -49,7 +49,7 @@ void write_png(const std::filesystem::path& path, uint32_t width, uint32_t heigh
     std::vector<uint8_t> compressed(compressed_size);
     if (::compress2(compressed.data(), &compressed_size, raw.data(),
                     static_cast<uLong>(raw.size()), Z_BEST_SPEED) != Z_OK) {
-        throw ProtocolError("png: zlib-compressie faalde");
+        throw ProtocolError("png: zlib compression failed");
     }
     compressed.resize(compressed_size);
 
@@ -66,7 +66,7 @@ void write_png(const std::filesystem::path& path, uint32_t width, uint32_t heigh
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
     std::ofstream out(path, std::ios::binary);
-    if (!out) throw ProtocolError(std::format("kan {} niet schrijven", path.string()));
+    if (!out) throw ProtocolError(std::format("cannot write {}", path.string()));
     out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
 }
 

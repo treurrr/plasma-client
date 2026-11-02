@@ -77,9 +77,9 @@ std::string_view state_name(SessionState state) {
     switch (state) {
     case SessionState::Handshaking: return "handshake";
     case SessionState::Login:       return "login";
-    case SessionState::Configuration: return "configuratie";
+    case SessionState::Configuration: return "configuration";
     case SessionState::Play:        return "play";
-    case SessionState::Closed:      return "gesloten";
+    case SessionState::Closed:      return "closed";
     }
     return "?";
 }
@@ -92,7 +92,7 @@ Session::Session(SessionOptions options, SessionEvents events)
 
     ids_ = proto::ids_for(options_.protocol);
     if (!ids_) {
-        throw ProtocolError(std::format("geen pakkettabel voor protocol {}; genereer er een met "
+        throw ProtocolError(std::format("no packet table for protocol {}; generate one with "
                                         "tools/gen_packet_ids.py", options_.protocol));
     }
 }
@@ -125,10 +125,10 @@ void Session::handshake() {
     send(0x00, out);
 
     state_ = SessionState::Login;
-    status(std::format("verbonden met {}:{} als protocol {}", options_.host, options_.port,
+    status(std::format("connected to {}:{} as protocol {}", options_.host, options_.port,
                        options_.protocol));
     if (translations_.empty()) {
-        status(std::format("geen taalbestand op {}; servermeldingen blijven ruwe sleutels "
+        status(std::format("no language file at {}; server messages stay raw keys "
                            "(tools/fetch_lang.sh)", options_.lang_file.string()));
     }
 }
@@ -146,21 +146,21 @@ void Session::run_login() {
         if (packet.id == cb.compression) {
             const int32_t threshold = packet.data.read_varint();
             connection_.set_compression_threshold(threshold);
-            status(std::format("compressie vanaf {} bytes", threshold));
+            status(std::format("compression from {} bytes", threshold));
             continue;
         }
         if (packet.id == cb.finished) {
             profile_uuid_ = read_uuid(packet.data);
             profile_name_ = packet.data.read_string(16);
             send(ids_->login_sb.acknowledged, ByteBuffer{});
-            status(std::format("ingelogd als {} ({})", profile_name_, profile_uuid_));
+            status(std::format("logged in as {} ({})", profile_name_, profile_uuid_));
             return;
         }
         if (packet.id == cb.hello) {
-            fail("server staat in online-mode en vraagt versleuteling; Microsoft-sessies komen later");
+            fail("server is in online mode and asks for encryption; Microsoft sessions come later");
         }
         if (packet.id == cb.disconnect) {
-            fail(std::format("server weigerde de login: {}",
+            fail(std::format("server refused the login: {}",
                              json::strip_formatting(
                                  json::flatten_component(json::parse(packet.data.read_string())))));
         }
@@ -178,7 +178,7 @@ void Session::run_login() {
             send(ids_->login_sb.cookie_response, answer);
             continue;
         }
-        fail(std::format("onverwacht login-pakket 0x{:02X}", packet.id));
+        fail(std::format("unexpected login packet 0x{:02X}", packet.id));
     }
 }
 
@@ -222,7 +222,7 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
         ByteBuffer out;
         out.write_varint(0);
         send(ids_->config_sb.select_known_packs, out);
-        status("geen bekende packs gemeld; server stuurt de volledige registers");
+        status("no known packs reported; server sends the full registries");
         return true;
     }
     if (packet.id == cb.resource_pack_push) {
@@ -234,9 +234,9 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.code_of_conduct) {
         const auto text = in.read_string();
-        status(std::format("server-gedragsregels:\n{}", text));
+        status(std::format("server code of conduct:\n{}", text));
         if (!options_.accept_code_of_conduct) {
-            fail("gedragsregels niet geaccepteerd");
+            fail("code of conduct not accepted");
         }
         send(ids_->config_sb.accept_code_of_conduct, ByteBuffer{});
         return true;
@@ -244,11 +244,11 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
     if (packet.id == cb.finish) {
         send(ids_->config_sb.finish, ByteBuffer{});
         state_ = SessionState::Play;
-        status("in de play-state");
+        status("in the play state");
         return true;
     }
     if (packet.id == cb.disconnect) {
-        fail(std::format("server sloot de verbinding tijdens configuratie: {}",
+        fail(std::format("server closed the connection during configuration: {}",
                          read_component(in, lookup_)));
     }
     return true;
@@ -279,7 +279,7 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.login) {
         entity_id_ = in.read_i32();
-        status(std::format("wereld betreden, entiteit {}", entity_id_));
+        status(std::format("entered the world, entity {}", entity_id_));
         return true;
     }
     if (packet.id == cb.player_position) {
@@ -294,7 +294,7 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
             out.write(reinterpret_cast<const char*>(in.data().data()),
                       static_cast<std::streamsize>(in.data().size()));
             options_.chunk_dump.clear();
-            status("eerste chunk-pakket ruw weggeschreven");
+            status("first chunk packet written out raw");
         }
         auto chunk = world::read_chunk(in);
         if (events_.on_chunk) events_.on_chunk(chunk);
@@ -320,11 +320,11 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
     if (packet.id == cb.start_configuration) {
         send(ids_->play_sb.configuration_acknowledged, ByteBuffer{});
         begin_configuration();
-        status("server stuurde ons terug naar configuratie");
+        status("server sent us back to configuration");
         return true;
     }
     if (packet.id == cb.disconnect) {
-        fail(std::format("server sloot de verbinding: {}", read_component(in, lookup_)));
+        fail(std::format("server closed the connection: {}", read_component(in, lookup_)));
     }
     return true;
 }
@@ -332,10 +332,10 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
 void Session::connect() {
     if (!options_.profile.valid()) {
 #ifdef MCPP_DEV_OFFLINE
-        status("ontwikkelbuild: geen eigendomscontrole, speelt alleen offline-mode");
+        status("development build: no ownership check, plays offline mode only");
 #else
-        fail("niet ingelogd. Deze client controleert eigendom van het spel voordat "
-             "er gespeeld wordt, ook op offline-mode servers");
+        fail("not logged in; this client checks ownership of the game before playing, "
+             "including on offline-mode servers");
 #endif
     }
 
@@ -359,7 +359,7 @@ void Session::close() {
 }
 
 void Session::send_chat(std::string_view message) {
-    if (state_ != SessionState::Play) throw ProtocolError("chat kan alleen in de play-state");
+    if (state_ != SessionState::Play) throw ProtocolError("chat only works in the play state");
 
     ByteBuffer out;
     out.write_string(message);
@@ -373,7 +373,7 @@ void Session::send_chat(std::string_view message) {
 }
 
 void Session::send_command(std::string_view command) {
-    if (state_ != SessionState::Play) throw ProtocolError("commando's kunnen alleen in de play-state");
+    if (state_ != SessionState::Play) throw ProtocolError("commands only work in the play state");
 
     ByteBuffer out;
     out.write_string(command);

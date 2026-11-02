@@ -108,7 +108,7 @@ def main(args):
             states.append((state["id"], name, state.get("properties", {})))
     states.sort()
     if [s[0] for s in states] != list(range(len(states))):
-        sys.exit("blokstaat-ID's zijn niet aaneensluitend vanaf 0")
+        sys.exit("block state ids are not contiguous from 0")
 
     strings = bytearray()
     string_offsets = {}
@@ -178,7 +178,7 @@ def main(args):
         state_flags.append(flags)
 
     if problems:
-        sys.exit(f"{problems} staten konden niet worden opgelost; bak niets")
+        sys.exit(f"{problems} states could not be resolved; baking nothing")
 
     header = MAGIC + struct.pack("<7I", VERSION, protocol, len(states),
                                  len(quad_blob) // QUAD.size,
@@ -197,10 +197,10 @@ def main(args):
     full = sum(1 for f in state_flags if f & FLAG_FULL_CUBE)
     occluding = sum(1 for f in state_flags if f & FLAG_OCCLUDES)
     print(f"{out_path}: {len(pad(header) + body) / 1e6:.2f} MB")
-    print(f"  {len(states)} staten, {len(quad_blob) // QUAD.size} quads, "
-          f"{len(texture_name_offsets)} texturen, {len(block_names)} blokken")
-    print(f"  {full} staten zijn een volle kubus, waarvan {occluding} ondoorzichtig "
-          f"(alleen die mogen buren wegsnijden)")
+    print(f"  {len(states)} states, {len(quad_blob) // QUAD.size} quads, "
+          f"{len(texture_name_offsets)} textures, {len(block_names)} blocks")
+    print(f"  {full} states are a full cube, of which {occluding} are opaque "
+          f"(only those may cull neighbours)")
 
 
 if __name__ == "__main__":

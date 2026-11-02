@@ -20,7 +20,7 @@ constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 void check(VkResult result, std::string_view what) {
     if (result != VK_SUCCESS) {
-        throw ProtocolError(std::format("{} faalde met VkResult {}", what,
+        throw ProtocolError(std::format("{} failed with VkResult {}", what,
                                         static_cast<int>(result)));
     }
 }
@@ -32,7 +32,7 @@ uint32_t memory_type(VkPhysicalDevice physical, uint32_t mask, VkMemoryPropertyF
         if ((mask & (1u << i)) == 0) continue;
         if ((properties.memoryTypes[i].propertyFlags & wanted) == wanted) return i;
     }
-    throw ProtocolError("geen geschikt geheugentype op deze gpu");
+    throw ProtocolError("no suitable memory type on this gpu");
 }
 
 struct Allocated {
@@ -240,7 +240,7 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     VkPhysicalDeviceProperties limits{};
     vkGetPhysicalDeviceProperties(device_.physical(), &limits);
     if (atlas_layers_ > limits.limits.maxImageArrayLayers) {
-        throw ProtocolError(std::format("atlas heeft {} lagen, deze gpu kan er {}",
+        throw ProtocolError(std::format("atlas has {} layers, this gpu supports {}",
                                         atlas_layers_, limits.limits.maxImageArrayLayers));
     }
 

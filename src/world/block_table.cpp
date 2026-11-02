@@ -64,14 +64,14 @@ bool BlockTable::open(const std::filesystem::path& path) {
 
     if (std::memcmp(base_, kMagic, sizeof(kMagic)) != 0) {
         close();
-        throw ProtocolError(std::format("{} is geen blokkentabel", path.string()));
+        throw ProtocolError(std::format("{} is not a block table", path.string()));
     }
 
     const auto* header = reinterpret_cast<const uint32_t*>(base_ + sizeof(kMagic));
     if (header[0] != kVersion) {
         const uint32_t found = header[0];
         close();
-        throw ProtocolError(std::format("blokkentabel versie {}, verwacht {}", found, kVersion));
+        throw ProtocolError(std::format("block table version {}, expected {}", found, kVersion));
     }
 
     protocol_ = static_cast<int32_t>(header[1]);
@@ -99,7 +99,7 @@ bool BlockTable::open(const std::filesystem::path& path) {
     if (at > size_) {
         const size_t needed = at;
         close();
-        throw ProtocolError(std::format("blokkentabel is {} bytes maar beschrijft {}", size_, needed));
+        throw ProtocolError(std::format("block table is {} bytes but describes {}", size_, needed));
     }
     return true;
 }

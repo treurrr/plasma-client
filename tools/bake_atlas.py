@@ -33,7 +33,7 @@ def align8(value):
 def read_texture_names(path):
     data = Path(path).read_bytes()
     if data[:4] != CRBK_MAGIC:
-        sys.exit(f"{path} is geen blokkentabel")
+        sys.exit(f"{path} is not a block table")
     version, protocol, states, quads, textures, blocks, strings = struct.unpack_from(
         "<7I", data, 4)
 
@@ -129,9 +129,9 @@ def main(args):
 
     Path(out_path).write_bytes(header + pixels)
     print(f"{out_path}: {(len(header) + len(pixels)) / 1e6:.2f} MB")
-    print(f"  {len(tiles)} lagen van {tile_size}px, {mips} mipniveaus")
+    print(f"  {len(tiles)} layers of {tile_size}px, {mips} mip levels")
     if missing:
-        print(f"  {missing} texturen niet gevonden; die kregen het ontbrekend-blokje")
+        print(f"  {missing} textures not found; those got the missing-texture tile")
 
 
 if __name__ == "__main__":
