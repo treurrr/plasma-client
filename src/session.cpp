@@ -135,7 +135,7 @@ void Session::handshake() {
 
 void Session::run_login() {
     ByteBuffer hello;
-    hello.write_string(options_.username);
+    hello.write_string(options_.profile.valid() ? options_.profile.name : options_.username);
     write_nil_uuid(hello);
     send(ids_->login_sb.hello, hello);
 
@@ -330,6 +330,15 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
 }
 
 void Session::connect() {
+    if (!options_.profile.valid()) {
+#ifdef MCPP_DEV_OFFLINE
+        status("ontwikkelbuild: geen eigendomscontrole, speelt alleen offline-mode");
+#else
+        fail("niet ingelogd. Deze client controleert eigendom van het spel voordat "
+             "er gespeeld wordt, ook op offline-mode servers");
+#endif
+    }
+
     handshake();
     run_login();
     begin_configuration();

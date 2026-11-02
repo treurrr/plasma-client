@@ -167,7 +167,6 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
         mesh.indices.reserve(1 << 12);
 
         for (int32_t local_y = 0; local_y < kSection; ++local_y) {
-            const int32_t y = section * kSection + local_y;
             for (int32_t z = 0; z < kSection; ++z) {
                 for (int32_t x = 0; x < kSection; ++x) {
                     const int32_t state = padded_state[padded_index(x, local_y, z)];

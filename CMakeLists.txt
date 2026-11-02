@@ -14,6 +14,15 @@ find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Vulkan REQUIRED)
 
+# Off by default on purpose: a build that nobody configured must be the one
+# that checks ownership. Turning this on only removes the gate for local
+# testing against an offline-mode server; it never ships.
+option(MCPP_DEV_OFFLINE "Allow joining without a verified Microsoft account" OFF)
+if(MCPP_DEV_OFFLINE)
+    add_compile_definitions(MCPP_DEV_OFFLINE)
+    message(WARNING "MCPP_DEV_OFFLINE: this build joins servers without checking game ownership")
+endif()
+
 option(MCPP_SANITIZE "Build with address/undefined sanitizers" OFF)
 if(MCPP_SANITIZE OR CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)

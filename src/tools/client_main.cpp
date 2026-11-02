@@ -797,11 +797,13 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
         std::cout << std::format("{} {}\n", marker, line) << std::flush;
     };
 
-    mcpp::SessionOptions options{.host = address.host, .port = address.port, .username = username,
-                                 .protocol = protocol,
-                                 .debug_packets = std::getenv("PLODDER_DEBUG") != nullptr,
-                                 .chunk_dump = std::getenv("PLODDER_CHUNK_DUMP")
-                                     ? std::getenv("PLODDER_CHUNK_DUMP") : ""};
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    options.username = username;
+    options.protocol = protocol;
+    options.debug_packets = std::getenv("PLODDER_DEBUG") != nullptr;
+    if (const char* dump = std::getenv("PLODDER_CHUNK_DUMP")) options.chunk_dump = dump;
     mcpp::world::BlockTable block_table;
     const bool meshing = block_table.open(mcpp::world::BlockTable::default_path(protocol));
 

@@ -1,4 +1,5 @@
 #pragma once
+#include "mcpp/auth.hpp"
 #include "mcpp/packet_io.hpp"
 #include "mcpp/nbt.hpp"
 #include "mcpp/proto/packet_ids.hpp"
@@ -20,6 +21,13 @@ std::string_view state_name(SessionState state);
 struct SessionOptions {
     std::string host;
     uint16_t port = 25565;
+
+    // Proof that this account owns the game, from Microsoft's own flow. A
+    // release build refuses to connect without it, to any server, in any mode:
+    // ownership is checked before play, not per server.
+    auth::Profile profile;
+
+    // Only used by a development build, where the gate is compiled out.
     std::string username;
     int32_t protocol = protocol::kTargetProtocol;
     std::string locale = "en_us";
