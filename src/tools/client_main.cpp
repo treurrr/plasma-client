@@ -6,6 +6,9 @@
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/offscreen.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
+#ifdef MCPP_HAVE_WINDOW
+#include "mcpp/gpu/window.hpp"
+#endif
 #include "mcpp/image_png.hpp"
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/block_table.hpp"
@@ -13,6 +16,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <numbers>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <format>
@@ -294,6 +299,130 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
                              gpu_times.front(), gpu_times.back());
     return 0;
 }
+
+
+#ifdef MCPP_HAVE_WINDOW
+int do_play(const std::string& target, size_t chunk_limit) {
+    const auto address = parse_address(target);
+    mcpp::world::BlockTable table;
+    if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "no block table; bake one with tools/bake_block_table.py\n";
+        return 1;
+    }
+
+    std::mutex guard;
+    std::vector<mcpp::world::Chunk> chunks;
+    std::atomic<bool> enough{false};
+
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    options.username = "PlasmaDev";
+
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+        std::lock_guard lock(guard);
+        if (chunks.size() < chunk_limit) chunks.push_back(chunk);
+        if (chunks.size() >= chunk_limit) enough.store(true);
+    };
+
+    mcpp::Session session(options, events);
+    session.connect();
+    while (!enough.load()) {
+        try {
+            session.pump();
+        } catch (const mcpp::TimeoutError&) {
+            break;
+        }
+    }
+    session.close();
+    std::cout << std::format("- {} chunks fetched\n", chunks.size());
+    if (chunks.empty()) return 1;
+
+    double mesh_ms = 0.0;
+    const auto combined = mesh_world(chunks, table, &mesh_ms);
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options gpu_options;
+    gpu_options.instance_extensions = mcpp::gpu::Window::required_instance_extensions();
+    gpu_options.swapchain = true;
+    device.create(gpu_options);
+
+    mcpp::world::Atlas atlas;
+    if (!atlas.open(mcpp::world::Atlas::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "no atlas; bake one with tools/bake_atlas.py\n";
+        return 1;
+    }
+
+    mcpp::gpu::Window window(device, 1600, 900, "Plasma Client");
+    mcpp::gpu::WorldRenderer renderer(device, window.width(), window.height(), atlas);
+    renderer.upload(combined);
+
+    float centre_x = 0.0f;
+    float centre_z = 0.0f;
+    for (const auto& chunk : chunks) {
+        centre_x += (chunk.x + 0.5f) * 16.0f;
+        centre_z += (chunk.z + 0.5f) * 16.0f;
+    }
+    centre_x /= static_cast<float>(chunks.size());
+    centre_z /= static_cast<float>(chunks.size());
+
+    float eye[3] = {centre_x, ground_near_centre(chunks, table, centre_x, centre_z) + 4.0f,
+                    centre_z};
+    float yaw = -90.0f;
+    float pitch = -8.0f;
+
+    std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
+                 "  left control to sprint, escape to leave\n";
+
+    auto previous = std::chrono::steady_clock::now();
+    size_t frames = 0;
+    double gpu_total = 0.0;
+
+    while (window.open()) {
+        const auto input = window.poll();
+        if (input.quit) break;
+
+        const auto now = std::chrono::steady_clock::now();
+        const float dt = std::chrono::duration<float>(now - previous).count();
+        previous = now;
+
+        yaw += input.yaw_delta * 0.12f;
+        pitch = std::clamp(pitch - input.pitch_delta * 0.12f, -89.0f, 89.0f);
+
+        const float yr = yaw * std::numbers::pi_v<float> / 180.0f;
+        const float pr = pitch * std::numbers::pi_v<float> / 180.0f;
+        const float forward[3] = {std::cos(yr) * std::cos(pr), std::sin(pr),
+                                  std::sin(yr) * std::cos(pr)};
+        const float right[3] = {-std::sin(yr), 0.0f, std::cos(yr)};
+
+        const float speed = (input.sprint ? 46.0f : 14.0f) * dt;
+        for (int i = 0; i < 3; ++i) {
+            eye[i] += forward[i] * input.forward * speed + right[i] * input.right * speed;
+        }
+        eye[1] += input.up * speed;
+
+        mcpp::gpu::Camera camera{};
+        for (int i = 0; i < 3; ++i) {
+            camera.eye[i] = eye[i];
+            camera.target[i] = eye[i] + forward[i];
+        }
+        camera.fov_degrees = 70.0f;
+
+        window.present(renderer, camera);
+        gpu_total += renderer.last_gpu_ms();
+        ++frames;
+    }
+
+    if (frames > 0) {
+        std::cout << std::format("- {} frames, {:.3f} ms gpu on average\n", frames,
+                                 gpu_total / static_cast<double>(frames));
+    }
+    device.save_pipeline_cache();
+    return 0;
+}
+#endif
 
 int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
                  const std::string& view) {
@@ -981,6 +1110,16 @@ int main(int argc, char** argv) {
             const uint32_t height = argc > 6 ? static_cast<uint32_t>(std::stoul(argv[6])) : 1080;
             return do_bench(argv[2], limit, frames, width, height);
         }
+        if (command == "play" && argc > 2) {
+            const size_t limit = argc > 3 ? std::stoul(argv[3]) : 240;
+#ifdef MCPP_HAVE_WINDOW
+            return do_play(argv[2], limit);
+#else
+            (void)limit;
+            std::cerr << "this build has no window: glfw3 was not found at configure time\n";
+            return 1;
+#endif
+        }
         if (command == "worldshot" && argc > 2) {
             const std::string out = argc > 3 ? argv[3] : "world.png";
             const size_t limit = argc > 4 ? std::stoul(argv[4]) : 120;
@@ -1034,6 +1173,7 @@ int main(int argc, char** argv) {
             "  gpu                 which gpu and which features\n"
             "  render <out.png> [w] [h]   render a frame and write it out\n"
             "  bench <host:port> [chunks] [frames] [w] [h]   measure frame time and fps\n"
+            "  play <host:port> [chunks]   open a window and walk through the world\n"
             "  worldshot <host:port> [out.png] [chunks]\n"
             "                      log in, mesh chunks and render the world\n"
             "  join <host:port> [name] [protocol]\n"
