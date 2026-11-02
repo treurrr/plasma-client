@@ -4,6 +4,7 @@
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
+#include "mcpp/world/mesher.hpp"
 
 #include <cassert>
 #include <filesystem>
@@ -323,6 +324,84 @@ void test_block_table() {
     std::filesystem::remove(path);
 }
 
+// One section of solid full cubes: every interior face must go, and exactly the
+// shell must stay. Chunk edges count as open, so all four sides are kept.
+void test_mesher_culls_interiors() {
+    std::vector<uint8_t> file;
+    const auto append = [&](const void* data, size_t bytes) {
+        const auto* src = static_cast<const uint8_t*>(data);
+        file.insert(file.end(), src, src + bytes);
+        while (file.size() % 8 != 0) file.push_back(0);
+    };
+    const auto append_u32s = [&](std::initializer_list<uint32_t> values) {
+        append(std::data(values), values.size() * sizeof(uint32_t));
+    };
+
+    const std::string name = "minecraft:solid";
+    std::vector<char> strings(name.begin(), name.end());
+    strings.push_back('\0');
+
+    const char magic[4] = {'P', 'L', 'B', 'K'};
+    file.insert(file.end(), magic, magic + 4);
+    append_u32s({1, 774, 2, 6, 1, 1, static_cast<uint32_t>(strings.size())});
+    append_u32s({0, 0, 6});                       // state 0 empty, state 1 holds six quads
+
+    std::vector<mcpp::world::BakedQuad> quads(6);
+    for (int face = 0; face < 6; ++face) {
+        auto& quad = quads[static_cast<size_t>(face)];
+        quad.from[0] = quad.from[1] = quad.from[2] = 0;
+        quad.to[0] = quad.to[1] = quad.to[2] = 16 * mcpp::world::kUnitsPerModelUnit;
+        quad.face = static_cast<uint8_t>(face);
+        quad.cullface = static_cast<int8_t>(face);
+        quad.tintindex = -1;
+    }
+    append(quads.data(), quads.size() * sizeof(mcpp::world::BakedQuad));
+
+    append_u32s({0});                             // one texture, one block name
+    append_u32s({0});
+    append_u32s({0, 0});
+    const uint8_t flags[2] = {0, static_cast<uint8_t>(mcpp::world::BlockTable::kHasGeometry |
+                                                      mcpp::world::BlockTable::kFullCube)};
+    append(flags, sizeof(flags));
+    append(strings.data(), strings.size());
+
+    const auto path = std::filesystem::temp_directory_path() / "plodder-test-mesher.plbk";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(file.data()),
+                  static_cast<std::streamsize>(file.size()));
+    }
+
+    mcpp::world::BlockTable table;
+    check(table.open(path), "the mesher's table opens");
+    check(table.full_cube(1), "state 1 is a full cube");
+
+    mcpp::ByteBuffer uniform;
+    uniform.write_u8(0);
+    uniform.write_varint(1);
+    mcpp::ByteBuffer biomes;
+    biomes.write_u8(0);
+    biomes.write_varint(0);
+
+    mcpp::world::Chunk chunk;
+    mcpp::world::ChunkSection section;
+    section.non_air_count = 4096;
+    section.blocks = mcpp::world::PalettedContainer::read(uniform, 4096, 8);
+    section.biomes = mcpp::world::PalettedContainer::read(biomes, 64, 3);
+    chunk.sections.push_back(std::move(section));
+
+    const auto mesh = mcpp::world::mesh_chunk(chunk, table);
+
+    // Six faces of a 16x16 shell, with nothing above or below the one section.
+    check(mesh.quads_emitted == 6 * 16 * 16,
+          std::format("only the shell survives: {} of {}", mesh.quads_emitted, 6 * 16 * 16));
+    check(mesh.quads_culled == 4096 * 6 - 6 * 16 * 16, "every interior face is dropped");
+    check(mesh.triangles() == mesh.quads_emitted * 2, "each quad becomes two triangles");
+    check(mesh.vertices.size() == mesh.quads_emitted * 4, "each quad has four vertices");
+
+    std::filesystem::remove(path);
+}
+
 void test_packet_tables() {
     const auto* v774 = mcpp::proto::ids_for(774);
     const auto* v776 = mcpp::proto::ids_for(776);
@@ -346,6 +425,7 @@ int main() {
     test_translation_patterns();
     test_paletted_container();
     test_block_table();
+    test_mesher_culls_interiors();
     test_packet_tables();
 
     if (failures == 0) {

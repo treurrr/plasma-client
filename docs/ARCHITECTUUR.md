@@ -257,3 +257,39 @@ scherm te gooien, en het werkt ook op `llvmpipe` als er geen gpu is.
 Timestamp-queries meten de gpu-tijd in het frame zelf. Een 1280x720 frame met
 clear, driehoek en volledige terugkopie kost **0,31 ms** op de 4070, waarvan het
 grootste deel de terugkopie is die een echt frame niet doet.
+
+## Meshen
+
+De mesher maakt van een chunk plus de blokkentabel driehoeken. Een vlak met een
+`cullface` die naar een buurblok wijst dat een volle kubus is, wordt weggelaten.
+
+Gemeten op 329 chunks echte overworld:
+
+| | |
+|---|---|
+| quads over | 3.703.149 |
+| quads weggesneden | 51.961.629 (**93,3%**) |
+| driehoeken | 7.406.298 |
+| meshen | 2,08 ms per chunk |
+
+Die 2,08 ms was eerst **5,97 ms**. Het verschil zat vrijwel helemaal in
+`rotate_face`: die deed per quad drijvendekommawiskunde en daarna een lineaire
+zoektocht door zes richtingen, terwijl de rotatie bij verreweg de meeste blokken
+nul is. Kortsluiten bij rotatie nul, plus de zes buurblokken één keer per blok
+opzoeken in plaats van één keer per quad, scheelt bijna een factor drie.
+
+Dat 93,3% klopt is niet op gevoel vastgesteld. Een test bouwt een sectie van
+16x16x16 volle kubussen en eist exact 1536 overgebleven quads (zes kanten van
+16x16) en exact 24.576 - 1536 weggesneden. Een stille fout in de buur-indexering
+verandert dat getal meteen.
+
+### Wat hier nog niet goed is
+
+Twee dingen, allebei bewust nog open:
+
+1. **503 MB vertexdata voor 329 chunks.** Een vertex is nu 28 bytes met
+   `float`-posities. Dat moet naar 16 bytes met vaste-kommaposities per sectie,
+   wat ook per sectie tekenen en frustum-culling mogelijk maakt.
+2. **Chunkranden tellen als open.** Elke chunk emitteert daardoor zijn vier
+   zijwanden volledig, ook waar de buurchunk er direct tegenaan zit. Dat vraagt
+   meshen met kennis van de buren.

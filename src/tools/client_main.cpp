@@ -7,6 +7,7 @@
 #include "mcpp/gpu/offscreen.hpp"
 #include "mcpp/image_png.hpp"
 #include "mcpp/world/block_table.hpp"
+#include "mcpp/world/mesher.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -240,8 +241,16 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
                                  .debug_packets = std::getenv("PLODDER_DEBUG") != nullptr,
                                  .chunk_dump = std::getenv("PLODDER_CHUNK_DUMP")
                                      ? std::getenv("PLODDER_CHUNK_DUMP") : ""};
+    mcpp::world::BlockTable block_table;
+    const bool meshing = block_table.open(mcpp::world::BlockTable::default_path(protocol));
+
     size_t chunks = 0;
     size_t sections = 0;
+    size_t emitted = 0;
+    size_t culled = 0;
+    size_t triangles = 0;
+    size_t mesh_bytes = 0;
+    double mesh_ms = 0.0;
     std::set<int32_t> states;
     std::map<int32_t, size_t> histogram;
 
@@ -257,6 +266,16 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
                 for (size_t i = 0; i < section.blocks.size(); ++i) {
                     ++histogram[section.blocks.at(i)];
                 }
+            }
+            if (meshing) {
+                const auto start = std::chrono::steady_clock::now();
+                const auto mesh = mcpp::world::mesh_chunk(chunk, block_table);
+                mesh_ms += std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - start).count();
+                emitted += mesh.quads_emitted;
+                culled += mesh.quads_culled;
+                triangles += mesh.triangles();
+                mesh_bytes += mesh.bytes();
             }
             if (chunks % 32 == 0) {
                 print('#', std::format("{} chunks, {} gevulde secties, {} blokstaten, laatste ({},{})",
@@ -305,6 +324,17 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
     if (chunks > 0) {
         print('#', std::format("totaal {} chunks, {} gevulde secties, {} unieke blokstaten",
                                chunks, sections, states.size()));
+        if (meshing) {
+            const double total = static_cast<double>(emitted + culled);
+            print('#', std::format("mesh: {} quads over, {} weggesneden ({:.1f}%), {} driehoeken",
+                                   emitted, culled, total > 0 ? 100.0 * culled / total : 0.0,
+                                   triangles));
+            print('#', std::format("      {:.1f} MB vertexdata, {:.1f} ms meshen "
+                                   "({:.2f} ms per chunk)",
+                                   mesh_bytes / 1e6, mesh_ms, mesh_ms / chunks));
+        } else {
+            print('#', "geen blokkentabel geladen, dus niet gemesht");
+        }
         std::vector<std::pair<int32_t, size_t>> ranked(histogram.begin(), histogram.end());
         std::ranges::sort(ranked, [](const auto& a, const auto& b) { return a.second > b.second; });
         for (size_t i = 0; i < ranked.size() && i < 10; ++i) {

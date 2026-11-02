@@ -59,6 +59,7 @@ add_library(mcpp_net STATIC
     src/translations.cpp
     src/world/chunk.cpp
     src/world/block_table.cpp
+    src/world/mesher.cpp
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/image_png.cpp
