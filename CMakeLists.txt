@@ -47,6 +47,8 @@ endfunction()
 
 mcpp_shader(triangle.vert TriangleVert)
 mcpp_shader(triangle.frag TriangleFrag)
+mcpp_shader(world.vert WorldVert)
+mcpp_shader(world.frag WorldFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
 add_library(mcpp_net STATIC
@@ -62,6 +64,7 @@ add_library(mcpp_net STATIC
     src/world/mesher.cpp
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
+    src/gpu/world_renderer.cpp
     src/image_png.cpp
     src/proto/packet_ids_gen.cpp
 )

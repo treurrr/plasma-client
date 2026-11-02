@@ -5,6 +5,7 @@
 #include "mcpp/session.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/offscreen.hpp"
+#include "mcpp/gpu/world_renderer.hpp"
 #include "mcpp/image_png.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/mesher.hpp"
@@ -75,6 +76,192 @@ Address parse_address(const std::string& target) {
         address.port = static_cast<uint16_t>(std::stoi(target.substr(colon + 1)));
     }
     return address;
+}
+
+int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
+                 const std::string& view) {
+    using clock = std::chrono::steady_clock;
+    const auto ms = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+
+    const auto address = parse_address(target);
+    mcpp::world::BlockTable table;
+    if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "geen blokkentabel; bak er een met tools/bake_block_table.py\n";
+        return 1;
+    }
+
+    std::mutex guard;
+    std::vector<mcpp::world::Chunk> chunks;
+    std::atomic<bool> enough{false};
+
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    options.username = "PlodderShot";
+
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+    std::lock_guard lock(guard);
+    if (chunks.size() < chunk_limit) chunks.push_back(chunk);
+    if (chunks.size() >= chunk_limit) enough.store(true);
+    };
+
+    mcpp::Session session(options, events);
+    session.connect();
+    while (!enough.load()) {
+        try {
+            session.pump();
+        } catch (const mcpp::TimeoutError&) {
+            break;
+        }
+    }
+    session.close();
+    std::cout << std::format("- {} chunks opgehaald\n", chunks.size());
+    if (chunks.empty()) return 1;
+
+    int32_t min_cx = chunks.front().x;
+    int32_t max_cx = min_cx;
+    int32_t min_cz = chunks.front().z;
+    int32_t max_cz = min_cz;
+    for (const auto& chunk : chunks) {
+        min_cx = std::min(min_cx, chunk.x);
+        max_cx = std::max(max_cx, chunk.x);
+        min_cz = std::min(min_cz, chunk.z);
+        max_cz = std::max(max_cz, chunk.z);
+    }
+    const float centre_x = (min_cx + max_cx + 1) * 16.0f / 2.0f;
+    const float centre_z = (min_cz + max_cz + 1) * 16.0f / 2.0f;
+    const float extent = std::max(max_cx - min_cx + 1, max_cz - min_cz + 1) * 16.0f;
+    {
+        const auto& first = chunks.front();
+        std::string column;
+        for (int32_t y = static_cast<int32_t>(first.sections.size()) * 16 - 1; y >= 0; --y) {
+            const int32_t state = first.block_state(8, y, 8);
+            if (state != 0) {
+                column = std::format("hoogste blok bij (8,8) van chunk ({},{}): y={} staat={} {}",
+                                     first.x, first.z, y - 64, state, table.block_name(state));
+                break;
+            }
+        }
+        std::cout << "- " << column << '\n';
+        std::map<std::string, int> tops;
+        int lowest = 1000;
+        int highest = -1000;
+        for (int32_t lz = 0; lz < 16; ++lz) {
+            for (int32_t lx = 0; lx < 16; ++lx) {
+                for (int32_t y = static_cast<int32_t>(first.sections.size()) * 16 - 1; y >= 0; --y) {
+                    const int32_t state = first.block_state(lx, y, lz);
+                    if (state == 0) continue;
+                    ++tops[std::string(table.block_name(state))];
+                    lowest = std::min(lowest, y - 64);
+                    highest = std::max(highest, y - 64);
+                    break;
+                }
+            }
+        }
+        std::cout << std::format("- bovenste blok per kolom, y {} tot {}:\n", lowest, highest);
+        for (const auto& [name, count] : tops) {
+            std::cout << std::format("    {:>4}x  {}\n", count, name);
+        }
+    }
+    std::cout << std::format("- chunks beslaan x {}..{}, z {}..{} ({} blokken breed)\n",
+                             min_cx * 16, (max_cx + 1) * 16, min_cz * 16, (max_cz + 1) * 16,
+                             static_cast<int>(extent));
+
+    std::map<std::pair<int32_t, int32_t>, const mcpp::world::Chunk*> by_position;
+    for (const auto& chunk : chunks) by_position[{chunk.x, chunk.z}] = &chunk;
+    const auto find_chunk = [&](int32_t x, int32_t z) -> const mcpp::world::Chunk* {
+        auto it = by_position.find({x, z});
+        return it == by_position.end() ? nullptr : it->second;
+    };
+
+    mcpp::world::Mesh combined;
+    const auto before_mesh = clock::now();
+    for (const auto& chunk : chunks) {
+        const mcpp::world::Neighbours neighbours{
+            .west = find_chunk(chunk.x - 1, chunk.z),
+            .east = find_chunk(chunk.x + 1, chunk.z),
+            .north = find_chunk(chunk.x, chunk.z - 1),
+            .south = find_chunk(chunk.x, chunk.z + 1),
+        };
+        auto piece = mcpp::world::mesh_chunk(chunk, table, neighbours);
+        const auto base = static_cast<uint32_t>(combined.vertices.size());
+        const float offset_x = static_cast<float>(chunk.x * 16);
+        const float offset_z = static_cast<float>(chunk.z * 16);
+        for (auto vertex : piece.vertices) {
+            vertex.position[0] += offset_x;
+            vertex.position[2] += offset_z;
+            combined.vertices.push_back(vertex);
+        }
+        for (uint32_t index : piece.indices) combined.indices.push_back(base + index);
+        combined.quads_emitted += piece.quads_emitted;
+        combined.quads_culled += piece.quads_culled;
+    }
+    const auto after_mesh = clock::now();
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options gpu_options;
+    gpu_options.validation = true;
+    device.create(gpu_options);
+
+    mcpp::gpu::WorldRenderer renderer(device, 1600, 900);
+    renderer.upload(combined);
+
+    mcpp::gpu::Camera camera{};
+    if (view == "air") {
+        // Outside the patch and above everything, looking across the surface.
+        camera.eye[0] = centre_x - extent * 0.55f;
+        camera.eye[1] = 135.0f;
+        camera.eye[2] = centre_z - extent * 0.55f;
+        camera.target[0] = centre_x;
+        camera.target[1] = 62.0f;
+        camera.target[2] = centre_z;
+        camera.fov_degrees = 60.0f;
+    } else if (view == "eye") {
+        // Find the surface under the centre so the camera stands on the ground.
+        float ground = 64.0f;
+        for (const auto& chunk : chunks) {
+            if (chunk.x * 16 > centre_x || (chunk.x + 1) * 16 <= centre_x) continue;
+            if (chunk.z * 16 > centre_z || (chunk.z + 1) * 16 <= centre_z) continue;
+            for (int32_t y = static_cast<int32_t>(chunk.sections.size()) * 16 - 1; y >= 0; --y) {
+                const int32_t state = chunk.block_state(8, y, 8);
+                if (state != 0 && table.full_cube(state)) {
+                    ground = static_cast<float>(y - 64);
+                    break;
+                }
+            }
+            break;
+        }
+        camera.eye[0] = centre_x;
+        camera.eye[1] = ground + 20.0f;
+        camera.eye[2] = centre_z + 100.0f;
+        camera.target[0] = centre_x;
+        camera.target[1] = ground + 2.0f;
+        camera.target[2] = centre_z - 40.0f;
+        std::cout << std::format("- grond onder het midden op y={}\n", static_cast<int>(ground));
+    } else {
+        camera.eye[0] = centre_x + extent * 0.9f;
+        camera.eye[1] = 120.0f + extent * 0.45f;
+        camera.eye[2] = centre_z + extent * 0.9f;
+        camera.target[0] = centre_x;
+        camera.target[1] = 60.0f;
+        camera.target[2] = centre_z;
+    }
+
+    auto pixels = renderer.render(camera);
+    mcpp::write_png(out_path, 1600, 900, pixels);
+    device.save_pipeline_cache();
+
+    std::cout << std::format("{}\n", out_path);
+    std::cout << std::format("  {} chunks, {} driehoeken, {:.1f} MB vertexdata\n",
+                             chunks.size(), combined.triangles(), combined.bytes() / 1e6);
+    std::cout << std::format("  meshen {:.0f} ms, uploaden {:.0f} ms\n",
+                             ms(before_mesh, after_mesh), renderer.upload_ms());
+    std::cout << std::format("  gpu-tijd in het frame: {:.2f} ms\n", renderer.last_gpu_ms());
+    return 0;
 }
 
 int do_render(const std::string& out_path, uint32_t width, uint32_t height) {
@@ -254,34 +441,33 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
     std::set<int32_t> states;
     std::map<int32_t, size_t> histogram;
 
-    mcpp::SessionEvents events{
-        .on_status = [&](std::string_view line) { print('-', line); },
-        .on_chat = [&](std::string_view line) { print('|', line); },
-        .on_disconnect = [&](std::string_view line) { print('x', line); },
-        .on_chunk = [&](const mcpp::world::Chunk& chunk) {
-            ++chunks;
-            sections += chunk.non_empty_sections();
-            for (const auto& section : chunk.sections) {
-                for (int32_t state : section.blocks.palette()) states.insert(state);
-                for (size_t i = 0; i < section.blocks.size(); ++i) {
-                    ++histogram[section.blocks.at(i)];
-                }
+    mcpp::SessionEvents events;
+    events.on_status = [&](std::string_view line) { print('-', line); };
+    events.on_chat = [&](std::string_view line) { print('|', line); };
+    events.on_disconnect = [&](std::string_view line) { print('x', line); };
+    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+        ++chunks;
+        sections += chunk.non_empty_sections();
+        for (const auto& section : chunk.sections) {
+            for (int32_t state : section.blocks.palette()) states.insert(state);
+            for (size_t i = 0; i < section.blocks.size(); ++i) {
+                ++histogram[section.blocks.at(i)];
             }
-            if (meshing) {
-                const auto start = std::chrono::steady_clock::now();
-                const auto mesh = mcpp::world::mesh_chunk(chunk, block_table);
-                mesh_ms += std::chrono::duration<double, std::milli>(
-                               std::chrono::steady_clock::now() - start).count();
-                emitted += mesh.quads_emitted;
-                culled += mesh.quads_culled;
-                triangles += mesh.triangles();
-                mesh_bytes += mesh.bytes();
-            }
-            if (chunks % 32 == 0) {
-                print('#', std::format("{} chunks, {} gevulde secties, {} blokstaten, laatste ({},{})",
-                                       chunks, sections, states.size(), chunk.x, chunk.z));
-            }
-        },
+        }
+        if (meshing) {
+            const auto start = std::chrono::steady_clock::now();
+            const auto mesh = mcpp::world::mesh_chunk(chunk, block_table);
+            mesh_ms += std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - start).count();
+            emitted += mesh.quads_emitted;
+            culled += mesh.quads_culled;
+            triangles += mesh.triangles();
+            mesh_bytes += mesh.bytes();
+        }
+        if (chunks % 32 == 0) {
+            print('#', std::format("{} chunks, {} gevulde secties, {} blokstaten, laatste ({},{})",
+                                   chunks, sections, states.size(), chunk.x, chunk.z));
+        }
     };
 
     mcpp::Session session(options, events);
@@ -410,6 +596,12 @@ int main(int argc, char** argv) {
         if (command == "ping" && argc > 2) {
             return do_ping(argv[2]);
         }
+        if (command == "worldshot" && argc > 2) {
+            const std::string out = argc > 3 ? argv[3] : "world.png";
+            const size_t limit = argc > 4 ? std::stoul(argv[4]) : 120;
+            const std::string view = argc > 5 ? argv[5] : "wide";
+            return do_worldshot(argv[2], out, limit, view);
+        }
         if (command == "render") {
             const std::string out = argc > 2 ? argv[2] : "frame.png";
             const uint32_t width = argc > 3 ? static_cast<uint32_t>(std::stoul(argv[3])) : 1280;
@@ -438,6 +630,8 @@ int main(int argc, char** argv) {
             "  blocks [naam]       de voorgebakken blokkentabel\n"
             "  gpu                 welke gpu en welke features\n"
             "  render <uit.png> [b] [h]   een frame renderen en wegschrijven\n"
+            "  worldshot <host:poort> [uit.png] [chunks]\n"
+            "                      inloggen, chunks meshen en de wereld renderen\n"
             "  join <host:poort> [naam] [protocol]\n"
             "                      inloggen en in de play-state blijven\n"
             "\nrenderen volgt in mijlpaal 3.\n",

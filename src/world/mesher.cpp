@@ -71,19 +71,27 @@ int rotate_face(int face, uint8_t rotation_x, uint8_t rotation_y) {
 
 } // namespace
 
-Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, int32_t min_section_y) {
+Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& neighbours,
+                int32_t min_section_y) {
     Mesh mesh;
     mesh.vertices.reserve(1 << 16);
     mesh.indices.reserve(1 << 16);
     const auto section_count = static_cast<int32_t>(chunk.sections.size());
 
-    const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
-        if (x < 0 || x > 15 || z < 0 || z > 15) return -1;   // another chunk: treat as open
+    const auto state_in = [&](const Chunk& source, int32_t x, int32_t y, int32_t z) -> int32_t {
         const int32_t section = y / kSection;
-        if (y < 0 || section >= section_count) return -1;
+        if (y < 0 || section >= static_cast<int32_t>(source.sections.size())) return -1;
         const size_t index = static_cast<size_t>(y % kSection) * 256 +
                              static_cast<size_t>(z) * 16 + static_cast<size_t>(x);
-        return chunk.sections[static_cast<size_t>(section)].blocks.at(index);
+        return source.sections[static_cast<size_t>(section)].blocks.at(index);
+    };
+
+    const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
+        if (x < 0) return neighbours.west ? state_in(*neighbours.west, x + 16, y, z) : -1;
+        if (x > 15) return neighbours.east ? state_in(*neighbours.east, x - 16, y, z) : -1;
+        if (z < 0) return neighbours.north ? state_in(*neighbours.north, x, y, z + 16) : -1;
+        if (z > 15) return neighbours.south ? state_in(*neighbours.south, x, y, z - 16) : -1;
+        return state_in(chunk, x, y, z);
     };
 
     for (int32_t section = 0; section < section_count; ++section) {

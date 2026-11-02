@@ -28,9 +28,18 @@ struct Mesh {
     }
 };
 
+// Without these a chunk emits all four of its side walls, because every edge
+// block then looks like it borders open air.
+struct Neighbours {
+    const Chunk* west = nullptr;    // x - 1
+    const Chunk* east = nullptr;    // x + 1
+    const Chunk* north = nullptr;   // z - 1
+    const Chunk* south = nullptr;   // z + 1
+};
+
 // Positions are in blocks, relative to the chunk's own corner. A face whose
-// cullface points at a neighbouring full cube is dropped; chunk edges count as
-// open, so a border face is kept until the neighbour chunk arrives.
-Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, int32_t min_section_y = -4);
+// cullface points at a neighbouring full cube is dropped.
+Mesh mesh_chunk(const Chunk& chunk, const BlockTable& table, const Neighbours& neighbours = {},
+                int32_t min_section_y = -4);
 
 } // namespace mcpp::world

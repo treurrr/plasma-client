@@ -293,3 +293,37 @@ Twee dingen, allebei bewust nog open:
 2. **Chunkranden tellen als open.** Elke chunk emitteert daardoor zijn vier
    zijwanden volledig, ook waar de buurchunk er direct tegenaan zit. Dat vraagt
    meshen met kennis van de buren.
+
+## De wereld renderen, en de bug die er bijna doorheen kwam
+
+`plodder-client worldshot <server> <uit.png> [chunks] [zicht]` logt in, verzamelt
+chunks, mesht ze met hun buren, uploadt alles naar de gpu en schrijft een frame
+weg. Op 200 chunks: 1,9 miljoen driehoeken in **1,14 ms** gpu-tijd.
+
+Buren meegeven aan de mesher scheelde direct de helft: zonder kennis van de
+buurchunk emitteert elke chunk zijn vier zijwanden volledig.
+
+| | driehoeken | vertexdata | gpu-tijd |
+|---|---|---|---|
+| zonder buren | 2.675.158 | 182 MB | 1,75 ms |
+| met buren | 1.162.650 | 79 MB | 0,86 ms |
+
+### Waarom dit zonder plaatjes niet was gevonden
+
+Het eerste beeld toonde doorsnedes van het terrein in plaats van het oppervlak.
+Drie verklaringen leken plausibel en waren alle drie fout: verkeerde
+winding-volgorde (uitgesloten door culling uit te zetten: beeld bleef gelijk),
+chunkranden (uitgesloten: de fix halveerde de driehoeken maar veranderde het
+beeld niet), en een camera onder de grond.
+
+De echte oorzaak zat in de projectiematrix. Die leverde **standaard** diepte,
+near=0 en far=1, terwijl de depth buffer op 0 werd gewist en de test
+`VK_COMPARE_OP_GREATER` was. Daarmee wint elk fragment dat verder weg ligt:
+de client tekende de achterkant van de wereld.
+
+De matrix is nu echt omgekeerd - near=1, far=0 - wat bij die clear en die test
+hoort en bovendien de float-precisie legt waar je hem nodig hebt.
+
+Dit is de reden dat de eerste renderpad een PNG schrijft in plaats van een
+venster te openen. De test slaagde, er kwam een frame uit, de timings waren
+goed, en het was hartstikke fout. Alleen kijken vond het.
