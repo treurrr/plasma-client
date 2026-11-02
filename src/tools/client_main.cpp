@@ -146,30 +146,71 @@ std::vector<mcpp::world::Chunk> load_chunks(const Address& address, size_t limit
 
 // Unpacks every chunk once - a neighbour is read by four others - then meshes
 // every section of every chunk.
+// Runs body(i) for every i in [0, count) across the machine's threads. Meshing
+// is the one place where this client is allowed to be greedy with cores: it
+// happens off the frame, and every chunk is independent of every other.
+template <typename Body>
+void parallel_for(size_t count, Body&& body) {
+    const size_t hardware = std::max<size_t>(1, std::thread::hardware_concurrency());
+    const size_t workers = std::min(hardware, count);
+    if (workers <= 1) {
+        for (size_t i = 0; i < count; ++i) body(i);
+        return;
+    }
+
+    std::atomic<size_t> next{0};
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+    for (size_t w = 0; w < workers; ++w) {
+        threads.emplace_back([&] {
+            for (size_t i = next.fetch_add(1, std::memory_order_relaxed); i < count;
+                 i = next.fetch_add(1, std::memory_order_relaxed)) {
+                body(i);
+            }
+        });
+    }
+    for (auto& thread : threads) thread.join();
+}
+
 std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
                                                  const mcpp::world::BlockTable& table,
                                                  double* milliseconds) {
     const auto start = std::chrono::steady_clock::now();
 
-    std::map<std::pair<int32_t, int32_t>, mcpp::world::ChunkBlocks> unpacked;
-    for (const auto& chunk : chunks) {
-        unpacked.emplace(std::pair{chunk.x, chunk.z}, mcpp::world::ChunkBlocks(chunk));
+    // Unpack first, in parallel. The map is only built once every entry exists,
+    // so the meshing pass can read it from every thread without a lock.
+    std::vector<std::unique_ptr<mcpp::world::ChunkBlocks>> unpacked(chunks.size());
+    parallel_for(chunks.size(), [&](size_t i) {
+        unpacked[i] = std::make_unique<mcpp::world::ChunkBlocks>(chunks[i]);
+    });
+
+    std::map<std::pair<int32_t, int32_t>, const mcpp::world::ChunkBlocks*> by_position;
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        by_position.emplace(std::pair{chunks[i].x, chunks[i].z}, unpacked[i].get());
     }
     const auto find_blocks = [&](int32_t x, int32_t z) -> const mcpp::world::ChunkBlocks* {
-        auto it = unpacked.find({x, z});
-        return it == unpacked.end() ? nullptr : &it->second;
+        auto it = by_position.find({x, z});
+        return it == by_position.end() ? nullptr : it->second;
     };
 
-    std::vector<mcpp::world::SectionMesh> all;
-    for (const auto& chunk : chunks) {
+    std::vector<std::vector<mcpp::world::SectionMesh>> per_chunk(chunks.size());
+    parallel_for(chunks.size(), [&](size_t i) {
+        const auto& chunk = chunks[i];
         const mcpp::world::Neighbours neighbours{
             .west = find_blocks(chunk.x - 1, chunk.z),
             .east = find_blocks(chunk.x + 1, chunk.z),
             .north = find_blocks(chunk.x, chunk.z - 1),
             .south = find_blocks(chunk.x, chunk.z + 1),
         };
-        auto pieces = mcpp::world::mesh_sections(chunk, *find_blocks(chunk.x, chunk.z), table,
-                                                 neighbours);
+        per_chunk[i] = mcpp::world::mesh_sections(chunk, *unpacked[i], table, neighbours);
+    });
+
+    size_t total = 0;
+    for (const auto& pieces : per_chunk) total += pieces.size();
+
+    std::vector<mcpp::world::SectionMesh> all;
+    all.reserve(total);
+    for (auto& pieces : per_chunk) {
         all.insert(all.end(), std::make_move_iterator(pieces.begin()),
                    std::make_move_iterator(pieces.end()));
     }
