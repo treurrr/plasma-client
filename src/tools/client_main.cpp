@@ -3,8 +3,10 @@
 #include "mcpp/packet_io.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/session.hpp"
+#include "mcpp/world/block_table.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <format>
 #include <iostream>
@@ -69,6 +71,72 @@ Address parse_address(const std::string& target) {
         address.port = static_cast<uint16_t>(std::stoi(target.substr(colon + 1)));
     }
     return address;
+}
+
+int do_blocks(const std::string& query) {
+    using clock = std::chrono::steady_clock;
+
+    const auto path = mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol);
+    mcpp::world::BlockTable table;
+
+    const auto before_open = clock::now();
+    const bool opened = table.open(path);
+    const auto after_open = clock::now();
+
+    if (!opened) {
+        std::cerr << std::format("geen blokkentabel op {}\nbak er een met "
+                                 "tools/bake_block_table.py\n", path.string());
+        return 1;
+    }
+
+    const auto us = [](auto from, auto to) {
+        return std::chrono::duration_cast<std::chrono::microseconds>(to - from).count();
+    };
+
+    // mmap is lazy, so opening is not the whole cost: walk every state to force
+    // the pages the renderer will touch anyway.
+    size_t quads = 0;
+    size_t full_cubes = 0;
+    const auto before_walk = clock::now();
+    for (size_t state = 0; state < table.state_count(); ++state) {
+        quads += table.quads(static_cast<int32_t>(state)).size();
+        if (table.full_cube(static_cast<int32_t>(state))) ++full_cubes;
+    }
+    const auto after_walk = clock::now();
+
+    std::cout << std::format("{}\n  {:.2f} MB, protocol {}\n", path.string(),
+                             static_cast<double>(table.mapped_bytes()) / 1e6, table.protocol());
+    std::cout << std::format("  {} staten, {} quads, {} volle kubussen\n",
+                             table.state_count(), quads, full_cubes);
+    std::cout << std::format("  mmap {} us, hele tabel doorlopen {} us\n",
+                             us(before_open, after_open), us(before_walk, after_walk));
+
+    if (query.empty()) return 0;
+
+    size_t shown = 0;
+    for (size_t state = 0; state < table.state_count() && shown < 4; ++state) {
+        const auto id = static_cast<int32_t>(state);
+        const auto name = table.block_name(id);
+        if (name.find(query) == std::string_view::npos && std::to_string(state) != query) continue;
+
+        const auto geometry = table.quads(id);
+        std::cout << std::format("\nstaat {} {}  flags {:#04x}  {} quads{}\n", state, name,
+                                 table.flags(id), geometry.size(),
+                                 table.full_cube(id) ? "  (volle kubus)" : "");
+        for (const auto& quad : geometry) {
+            const auto units = [](int16_t v) {
+                return static_cast<double>(v) / mcpp::world::kUnitsPerModelUnit;
+            };
+            std::cout << std::format(
+                "  vlak {} cull {:>2}  van ({:g},{:g},{:g}) tot ({:g},{:g},{:g})  {}\n",
+                quad.face, quad.cullface,
+                units(quad.from[0]), units(quad.from[1]), units(quad.from[2]),
+                units(quad.to[0]), units(quad.to[1]), units(quad.to[2]),
+                table.texture_name(quad.texture));
+        }
+        ++shown;
+    }
+    return 0;
 }
 
 int do_join(const std::string& target, const std::string& username, int32_t protocol) {
@@ -225,6 +293,9 @@ int main(int argc, char** argv) {
         if (command == "ping" && argc > 2) {
             return do_ping(argv[2]);
         }
+        if (command == "blocks") {
+            return do_blocks(argc > 2 ? argv[2] : "");
+        }
         if (command == "join" && argc > 2) {
             const std::string username = argc > 3 ? argv[3] : "PlodderDev";
             const int32_t protocol = argc > 4 ? std::stoi(argv[4])
@@ -238,6 +309,7 @@ int main(int argc, char** argv) {
             "  features            welke functies aan staan\n"
             "  versions            ondersteunde protocolversies\n"
             "  ping <host:poort>   serverinfo opvragen\n"
+            "  blocks [naam]       de voorgebakken blokkentabel\n"
             "  join <host:poort> [naam] [protocol]\n"
             "                      inloggen en in de play-state blijven\n"
             "\nrenderen volgt in mijlpaal 3.\n",

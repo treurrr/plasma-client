@@ -2,10 +2,14 @@
 #include "mcpp/json.hpp"
 #include "mcpp/nbt.hpp"
 #include "mcpp/proto/packet_ids.hpp"
+#include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
 
 #include <cassert>
+#include <filesystem>
 #include <format>
+#include <fstream>
+#include <initializer_list>
 #include <map>
 #include <span>
 #include <iostream>
@@ -247,6 +251,78 @@ void test_paletted_container() {
     check(threw, "reading past the end is rejected");
 }
 
+// The reader indexes a mapping in place, so its section alignment has to match
+// the generator's byte for byte; build a minimal table and read it back.
+void test_block_table() {
+    using mcpp::world::BakedQuad;
+
+    const std::string block_name = "minecraft:test";
+    const std::string texture_name = "block/test";
+    std::vector<char> strings;
+    const uint32_t block_offset = 0;
+    strings.insert(strings.end(), block_name.begin(), block_name.end());
+    strings.push_back('\0');
+    const auto texture_offset = static_cast<uint32_t>(strings.size());
+    strings.insert(strings.end(), texture_name.begin(), texture_name.end());
+    strings.push_back('\0');
+
+    std::vector<uint8_t> file;
+    const auto append = [&](const void* data, size_t bytes) {
+        const auto* src = static_cast<const uint8_t*>(data);
+        file.insert(file.end(), src, src + bytes);
+        while (file.size() % 8 != 0) file.push_back(0);
+    };
+    const auto append_u32s = [&](std::initializer_list<uint32_t> values) {
+        append(std::data(values), values.size() * sizeof(uint32_t));
+    };
+
+    const char magic[4] = {'P', 'L', 'B', 'K'};
+    file.insert(file.end(), magic, magic + 4);
+    append_u32s({1, 774, 2, 1, 1, 1, static_cast<uint32_t>(strings.size())});
+
+    append_u32s({0, 1, 1});                       // quad offsets for two states
+
+    BakedQuad quad{};
+    quad.from[0] = 0; quad.from[1] = 0; quad.from[2] = 0;
+    quad.to[0] = 16 * mcpp::world::kUnitsPerModelUnit;
+    quad.to[1] = 16 * mcpp::world::kUnitsPerModelUnit;
+    quad.to[2] = 16 * mcpp::world::kUnitsPerModelUnit;
+    quad.texture = 0;
+    quad.face = 1;
+    quad.cullface = 1;
+    quad.tintindex = -1;
+    append(&quad, sizeof(quad));
+
+    append_u32s({texture_offset});
+    append_u32s({block_offset});
+    append_u32s({0, 0});                          // both states belong to block 0
+    const uint8_t flags[2] = {mcpp::world::BlockTable::kHasGeometry, 0};
+    append(flags, sizeof(flags));
+    append(strings.data(), strings.size());
+
+    const auto path = std::filesystem::temp_directory_path() / "plodder-test-blocks.plbk";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(file.data()),
+                  static_cast<std::streamsize>(file.size()));
+    }
+
+    mcpp::world::BlockTable table;
+    check(table.open(path), "the generated table opens");
+    check(table.protocol() == 774, "protocol survives the round trip");
+    check(table.state_count() == 2, "state count survives");
+    check(table.block_name(0) == "minecraft:test", "block names resolve through the string blob");
+    check(table.texture_name(0) == "block/test", "texture names resolve");
+    check(table.quads(0).size() == 1 && table.quads(1).empty(),
+          "the offset table slices quads per state");
+    check(table.quads(0)[0].to[1] == 16 * mcpp::world::kUnitsPerModelUnit,
+          "fixed-point coordinates survive");
+    check(table.quads(0).empty() == false && table.quads(99).empty(),
+          "an out-of-range state yields nothing instead of reading past the map");
+
+    std::filesystem::remove(path);
+}
+
 void test_packet_tables() {
     const auto* v774 = mcpp::proto::ids_for(774);
     const auto* v776 = mcpp::proto::ids_for(776);
@@ -269,6 +345,7 @@ int main() {
     test_nbt();
     test_translation_patterns();
     test_paletted_container();
+    test_block_table();
     test_packet_tables();
 
     if (failures == 0) {

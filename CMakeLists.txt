@@ -32,6 +32,7 @@ add_library(mcpp_net STATIC
     src/session.cpp
     src/translations.cpp
     src/world/chunk.cpp
+    src/world/block_table.cpp
     src/proto/packet_ids_gen.cpp
 )
 target_include_directories(mcpp_net PUBLIC include)

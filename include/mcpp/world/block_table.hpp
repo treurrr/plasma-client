@@ -1,0 +1,82 @@
+#pragma once
+#include <cstdint>
+#include <filesystem>
+#include <span>
+#include <string_view>
+
+namespace mcpp::world {
+
+// Coordinates are fixed-point: 256 per model unit, 16 model units per block.
+constexpr int32_t kUnitsPerModelUnit = 256;
+constexpr int32_t kUnitsPerBlock = kUnitsPerModelUnit * 16;
+
+#pragma pack(push, 1)
+struct BakedQuad {
+    int16_t from[3];
+    int16_t to[3];
+    int16_t uv[4];
+    uint16_t texture;
+    uint8_t face;
+    int8_t cullface;    // -1 when the face is never culled
+    int8_t tintindex;   // -1 when untinted
+    uint8_t uvlock;
+    uint8_t rotation_x; // quarter turns
+    uint8_t rotation_y;
+};
+#pragma pack(pop)
+static_assert(sizeof(BakedQuad) == 28, "the baked layout must match the generator");
+
+// Read-only view on a table built by tools/bake_block_table.py. Nothing is
+// parsed or copied at startup: the file is mapped and indexed in place.
+class BlockTable {
+public:
+    static constexpr uint8_t kNoModel = 1 << 0;
+    static constexpr uint8_t kHasGeometry = 1 << 1;
+    static constexpr uint8_t kFullCube = 1 << 2;
+
+    BlockTable() = default;
+    ~BlockTable();
+
+    BlockTable(const BlockTable&) = delete;
+    BlockTable& operator=(const BlockTable&) = delete;
+    BlockTable(BlockTable&& other) noexcept;
+    BlockTable& operator=(BlockTable&& other) noexcept;
+
+    // Throws ProtocolError when the file is present but not a usable table.
+    bool open(const std::filesystem::path& path);
+    void close();
+    bool is_open() const { return base_ != nullptr; }
+
+    int32_t protocol() const { return protocol_; }
+    size_t state_count() const { return state_count_; }
+    size_t quad_count() const { return quad_count_; }
+    size_t mapped_bytes() const { return size_; }
+
+    std::span<const BakedQuad> quads(int32_t state) const;
+    std::string_view block_name(int32_t state) const;
+    std::string_view texture_name(uint16_t texture) const;
+    uint8_t flags(int32_t state) const;
+    bool full_cube(int32_t state) const { return (flags(state) & kFullCube) != 0; }
+
+    static std::filesystem::path default_path(int32_t protocol);
+
+private:
+    const uint8_t* base_ = nullptr;
+    size_t size_ = 0;
+    int32_t protocol_ = 0;
+    size_t state_count_ = 0;
+    size_t quad_count_ = 0;
+    size_t texture_count_ = 0;
+    size_t block_count_ = 0;
+
+    const uint32_t* quad_offsets_ = nullptr;
+    const BakedQuad* quads_ = nullptr;
+    const uint32_t* texture_names_ = nullptr;
+    const uint32_t* block_names_ = nullptr;
+    const uint32_t* state_block_ = nullptr;
+    const uint8_t* state_flags_ = nullptr;
+    const char* strings_ = nullptr;
+    size_t string_bytes_ = 0;
+};
+
+} // namespace mcpp::world

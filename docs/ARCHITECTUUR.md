@@ -181,3 +181,40 @@ precies het soort fout dat je pas maanden later ziet. Drie groepen:
 - **Onvolgroeide gewassen.** `pitcher_crop` half=upper is leeg in stadium 0-2 en
   heeft 4 quads in 3-4. Dat is geen bug maar precies wat vanilla doet: de plant
   is nog niet hoog genoeg om in het bovenste blok te komen.
+
+## De voorgebakken blokkentabel
+
+Vanilla leest bij het opstarten 1168 blockstate-bestanden en 2390 modellen,
+lost overerving en textuurverwijzingen op, en bouwt daar objecten van. Dat is
+werk dat voor een vaste spelversie elke keer hetzelfde antwoord geeft, dus doen
+wij het één keer vooraf.
+
+`tools/bake_block_table.py` schrijft alles naar één bestand dat de client
+`mmap`'t en ter plekke indexeert. Geen JSON, geen allocaties, geen objectgraaf.
+
+```
+header        magic, versie, protocol, aantallen
+quad_offsets  per staat een index in de quad-array (CSR)
+quads         28 bytes per quad, vast formaat
+texturen      offsets in de stringblob
+bloknamen     offsets in de stringblob
+state_block   per staat welk blok het is
+state_flags   geen model / heeft geometrie / volle kubus
+strings       alle namen achter elkaar, nul-afgesloten
+```
+
+Gemeten op 774: **10,34 MB, 29.671 staten, 356.952 quads, 1096 texturen**. De
+`mmap` kost **20 µs** en de hele tabel doorlopen **60 µs**. Bakken kost 2,2
+seconden, maar dat is bouwtijd, niet opstarttijd.
+
+Coordinaten staan als `int16` in 1/256 model-eenheid. Over alle 356.952 quads is
+de grootste afrondfout **0,0019 model-eenheid = 0,00012 blok**: bij een blok van
+100 pixels op het scherm 0,012 pixel. Het bereik dat echt voorkomt is -8 tot 24
+model-eenheden, ruim binnen wat `int16` bij deze schaal aankan (-128 tot 128).
+
+De `full cube`-vlag is wat de mesher nodig heeft: 2457 staten zijn een volledige
+dichte kubus en mogen het aanliggende vlak van hun buur wegsnijden.
+
+Het bestand bevat alleen geometrie die uit de eigen installatie is afgeleid.
+Geen assets van Mojang in de repo, en `tools/bake_block_table.py` heeft een
+client-jar van de speler zelf nodig.
