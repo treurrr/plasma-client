@@ -457,3 +457,43 @@ plus vier getinte overlays - en viel daardoor buiten de boot, terwijl het net zo
 massief is als steen. Gewoon gras sneed dus nergens iets weg. De test kijkt nu
 per richting of er een quad is die het hele blok bedekt, in plaats van quads te
 tellen.
+
+## Per sectie meshen en frustum culling
+
+De mesher gaf eerst één buffer per chunk. Nu geeft hij er een per **sectie** van
+16x16x16, met posities ten opzichte van de hoek van die sectie en een eigen
+bounding box. Dat is de eenheid die de renderer kan overslaan, apart kan
+uploaden en los kan weggooien - een chunk is daar te grof voor, want die is 384
+blokken hoog en staat bijna nooit helemaal in beeld.
+
+De renderer pakt alle secties in één vertex- en één indexbuffer en tekent er per
+sectie uit met `vkCmdDrawIndexed(firstIndex, vertexOffset)`. De hoek van de
+sectie gaat als push constant mee, zodat dezelfde geometrie overal kan staan.
+
+Frustum culling test de bounding box tegen de vier zijvlakken van het
+beeldvolume, gehaald uit de gecombineerde matrix (Gribb-Hartmann). Een doos
+valt pas af als hij volledig achter een vlak ligt, dus de hoek die het verst
+voor dat vlak uit steekt beslist.
+
+Gemeten op 1920x1080, 200 chunks, 2,04 miljoen driehoeken:
+
+| | zonder | met |
+|---|---|---|
+| getekende driehoeken | 2.039.102 | 843.650 (58% minder) |
+| gemiddelde frametijd | 0,629 ms | **0,331 ms** |
+| fps | 1589 | **3017** |
+| 1% low | 1453 fps | **2414 fps** |
+
+### Waarom twee renders van dezelfde scene toch verschilden
+
+Het eerste plaatje na de omzetting verschilde op 0,134% van de pixels, in een
+wig aan de horizon. Dat zag eruit als culling die te veel wegnam.
+
+Het was het niet. Culling uitzetten gaf **exact hetzelfde verschil**, en twee
+runs van dezelfde binary ook: de server stuurt niet elke keer dezelfde eerste
+200 chunks, want de wereld is nog aan het genereren. Met en zonder culling is
+het beeld pixel-identiek.
+
+De les zit in het gereedschap: beelden uit verschillende runs vergelijken zegt
+niets zolang de invoer niet vastligt. Een vaste chunk-set op schijf hoort bij
+het benchmark-harnas.

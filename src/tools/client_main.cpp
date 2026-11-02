@@ -140,9 +140,10 @@ std::vector<mcpp::world::Chunk> load_chunks(const Address& address, size_t limit
 }
 
 // Unpacks every chunk once - a neighbour is read by four others - then meshes
-// them all and merges the result into one buffer.
-mcpp::world::Mesh mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
-                             const mcpp::world::BlockTable& table, double* milliseconds) {
+// every section of every chunk.
+std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
+                                                 const mcpp::world::BlockTable& table,
+                                                 double* milliseconds) {
     const auto start = std::chrono::steady_clock::now();
 
     std::map<std::pair<int32_t, int32_t>, mcpp::world::ChunkBlocks> unpacked;
@@ -154,7 +155,7 @@ mcpp::world::Mesh mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
         return it == unpacked.end() ? nullptr : &it->second;
     };
 
-    mcpp::world::Mesh combined;
+    std::vector<mcpp::world::SectionMesh> all;
     for (const auto& chunk : chunks) {
         const mcpp::world::Neighbours neighbours{
             .west = find_blocks(chunk.x - 1, chunk.z),
@@ -162,26 +163,32 @@ mcpp::world::Mesh mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
             .north = find_blocks(chunk.x, chunk.z - 1),
             .south = find_blocks(chunk.x, chunk.z + 1),
         };
-        auto piece = mcpp::world::mesh_chunk(chunk, *find_blocks(chunk.x, chunk.z), table,
-                                             neighbours);
-        const auto base = static_cast<uint32_t>(combined.vertices.size());
-        const float offset_x = static_cast<float>(chunk.x * 16);
-        const float offset_z = static_cast<float>(chunk.z * 16);
-        for (auto vertex : piece.vertices) {
-            vertex.position[0] += offset_x;
-            vertex.position[2] += offset_z;
-            combined.vertices.push_back(vertex);
-        }
-        for (uint32_t index : piece.indices) combined.indices.push_back(base + index);
-        combined.quads_emitted += piece.quads_emitted;
-        combined.quads_culled += piece.quads_culled;
+        auto pieces = mcpp::world::mesh_sections(chunk, *find_blocks(chunk.x, chunk.z), table,
+                                                 neighbours);
+        all.insert(all.end(), std::make_move_iterator(pieces.begin()),
+                   std::make_move_iterator(pieces.end()));
     }
 
     if (milliseconds) {
         *milliseconds = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - start).count();
     }
-    return combined;
+    return all;
+}
+
+// Totals across a set of section meshes, for reporting.
+struct MeshTotals {
+    size_t triangles = 0;
+    size_t bytes = 0;
+};
+
+MeshTotals totals_of(const std::vector<mcpp::world::SectionMesh>& sections) {
+    MeshTotals totals;
+    for (const auto& section : sections) {
+        totals.triangles += section.triangles();
+        totals.bytes += section.bytes();
+    }
+    return totals;
 }
 
 int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint32_t width,
@@ -259,8 +266,16 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
 
     const auto as_fps = [](double ms) { return ms > 0 ? 1000.0 / ms : 0.0; };
 
-    std::cout << std::format("{}x{}, {} chunks, {} driehoeken, {:.1f} MB vertexdata\n", width,
-                             height, chunks.size(), mesh.triangles(), mesh.bytes() / 1e6);
+    const auto totals = totals_of(mesh);
+    std::cout << std::format("{}x{}, {} chunks, {} secties, {} driehoeken, {:.1f} MB vertexdata\n",
+                             width, height, chunks.size(), renderer.section_count(),
+                             totals.triangles, totals.bytes / 1e6);
+    std::cout << std::format("in beeld: {} secties, {} driehoeken ({:.0f}% weggelaten)\n",
+                             renderer.drawn_sections(), renderer.drawn_triangles(),
+                             totals.triangles > 0
+                                 ? 100.0 * (1.0 - static_cast<double>(renderer.drawn_triangles()) /
+                                                      static_cast<double>(totals.triangles))
+                                 : 0.0);
     std::cout << std::format("gpu: {}\n", device.adapter().name);
     std::cout << std::format("meshen: {:.0f} ms ({:.2f} ms per chunk)\n", mesh_ms,
                              mesh_ms / static_cast<double>(chunks.size()));
@@ -457,8 +472,9 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     device.save_pipeline_cache();
 
     std::cout << std::format("{}\n", out_path);
+    const auto totals = totals_of(combined);
     std::cout << std::format("  {} chunks, {} driehoeken, {:.1f} MB vertexdata\n",
-                             chunks.size(), combined.triangles(), combined.bytes() / 1e6);
+                             chunks.size(), totals.triangles, totals.bytes / 1e6);
     std::cout << std::format("  meshen {:.0f} ms, uploaden {:.0f} ms\n",
                              mesh_ms, renderer.upload_ms());
     std::cout << std::format("  gpu-tijd in het frame: {:.2f} ms\n", renderer.last_gpu_ms());

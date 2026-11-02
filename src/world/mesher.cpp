@@ -1,5 +1,6 @@
 #include "mcpp/world/mesher.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -105,12 +106,10 @@ int32_t ChunkBlocks::at(int32_t x, int32_t y, int32_t z) const {
                 static_cast<size_t>(x)];
 }
 
-Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
-                const Neighbours& neighbours, int32_t min_section_y) {
-    Mesh mesh;
-    mesh.vertices.reserve(1 << 16);
-    mesh.indices.reserve(1 << 16);
-
+std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& blocks,
+                                       const BlockTable& table, const Neighbours& neighbours,
+                                       int32_t min_section_y) {
+    std::vector<SectionMesh> meshes;
     const auto section_count = static_cast<int32_t>(blocks.section_count());
 
     const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
@@ -135,6 +134,13 @@ Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable&
     for (int32_t section = 0; section < section_count; ++section) {
         if (chunk.sections[static_cast<size_t>(section)].non_air_count == 0) continue;
 
+        SectionMesh mesh;
+        mesh.origin[0] = chunk.x * kSection;
+        mesh.origin[1] = (section + min_section_y) * kSection;
+        mesh.origin[2] = chunk.z * kSection;
+        mesh.vertices.reserve(1 << 12);
+        mesh.indices.reserve(1 << 12);
+
         for (int32_t local_y = 0; local_y < kSection; ++local_y) {
             const int32_t y = section * kSection + local_y;
             for (int32_t z = 0; z < kSection; ++z) {
@@ -143,7 +149,7 @@ Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable&
                     if (state < 0) continue;
                     const auto quads = table.quads(state);
                     if (quads.empty()) continue;
-                    ++mesh.blocks_visited;
+
 
                     // A fluid also hides against its own kind, or an ocean
                     // would be full of faces between neighbouring water blocks.
@@ -181,7 +187,6 @@ Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable&
                         hidden[side] = neighbour >= 0 && table.fluid(neighbour);
                     }
 
-                    const float world_y = static_cast<float>(y + min_section_y * kSection);
 
                     for (const auto& quad : quads) {
                         if (quad.cullface >= 0) {
@@ -229,7 +234,7 @@ Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable&
 
                             Vertex vertex{};
                             vertex.position[0] = static_cast<float>(x) + local[0];
-                            vertex.position[1] = world_y + local[1];
+                            vertex.position[1] = static_cast<float>(local_y) + local[1];
                             vertex.position[2] = static_cast<float>(z) + local[2];
                             vertex.uv[0] = (quad.uv[0] + (quad.uv[2] - quad.uv[0]) *
                                                              kCornerUv[corner][0]) /
@@ -252,8 +257,44 @@ Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable&
                 }
             }
         }
+
+        if (mesh.indices.empty()) {
+            // Still count what was culled, so the totals stay honest.
+            if (!meshes.empty()) meshes.back().quads_culled += mesh.quads_culled;
+            continue;
+        }
+
+        for (int axis = 0; axis < 3; ++axis) {
+            mesh.bounds_min[axis] = mesh.vertices.front().position[axis];
+            mesh.bounds_max[axis] = mesh.bounds_min[axis];
+        }
+        for (const auto& vertex : mesh.vertices) {
+            for (int axis = 0; axis < 3; ++axis) {
+                mesh.bounds_min[axis] = std::min(mesh.bounds_min[axis], vertex.position[axis]);
+                mesh.bounds_max[axis] = std::max(mesh.bounds_max[axis], vertex.position[axis]);
+            }
+        }
+        meshes.push_back(std::move(mesh));
     }
-    return mesh;
+    return meshes;
+}
+
+Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
+                const Neighbours& neighbours, int32_t min_section_y) {
+    Mesh merged;
+    for (const auto& section : mesh_sections(chunk, blocks, table, neighbours, min_section_y)) {
+        const auto base = static_cast<uint32_t>(merged.vertices.size());
+        for (auto vertex : section.vertices) {
+            for (int axis = 0; axis < 3; ++axis) {
+                vertex.position[axis] += static_cast<float>(section.origin[axis]);
+            }
+            merged.vertices.push_back(vertex);
+        }
+        for (uint32_t index : section.indices) merged.indices.push_back(base + index);
+        merged.quads_emitted += section.quads_emitted;
+        merged.quads_culled += section.quads_culled;
+    }
+    return merged;
 }
 
 } // namespace mcpp::world

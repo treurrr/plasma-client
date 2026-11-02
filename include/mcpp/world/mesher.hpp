@@ -14,6 +14,25 @@ struct Vertex {
     uint32_t face;
 };
 
+// Geometry for one 16x16x16 section, with positions relative to its own corner.
+// Per section rather than per chunk because that is the unit the renderer can
+// cull, upload and throw away on its own.
+struct SectionMesh {
+    int32_t origin[3] = {0, 0, 0};
+    float bounds_min[3] = {0.0f, 0.0f, 0.0f};
+    float bounds_max[3] = {0.0f, 0.0f, 0.0f};
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+
+    size_t quads_emitted = 0;
+    size_t quads_culled = 0;
+
+    size_t triangles() const { return indices.size() / 3; }
+    size_t bytes() const {
+        return vertices.size() * sizeof(Vertex) + indices.size() * sizeof(uint32_t);
+    }
+};
+
 struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -53,8 +72,14 @@ struct Neighbours {
     const ChunkBlocks* south = nullptr;   // z + 1
 };
 
-// Positions are in blocks, relative to the chunk's own corner. A face whose
-// cullface points at a neighbouring full cube is dropped.
+// One mesh per non-empty section, with positions relative to that section's
+// corner. A face whose cullface points at a neighbouring full cube is dropped.
+std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& blocks,
+                                       const BlockTable& table, const Neighbours& neighbours = {},
+                                       int32_t min_section_y = -4);
+
+// The same geometry merged into one buffer, in world coordinates. Convenient
+// for a one-off render or a test; the renderer wants the sections.
 Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
                 const Neighbours& neighbours = {}, int32_t min_section_y = -4);
 

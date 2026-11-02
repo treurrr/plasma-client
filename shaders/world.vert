@@ -2,6 +2,7 @@
 
 layout(push_constant) uniform Push {
     mat4 view_projection;
+    vec4 origin;   // the section's corner in world space
 } push;
 
 layout(location = 0) in vec3 in_position;
@@ -17,7 +18,7 @@ layout(location = 2) out vec3 out_tint;
 const float kFaceShade[6] = float[](0.50, 1.00, 0.80, 0.80, 0.60, 0.60);
 
 void main() {
-    gl_Position = push.view_projection * vec4(in_position, 1.0);
+    gl_Position = push.view_projection * vec4(in_position + push.origin.xyz, 1.0);
 
     out_uv = vec3(in_uv, float(in_texture));
     uint face = in_face & 0xFFu;

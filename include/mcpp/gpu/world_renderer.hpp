@@ -28,6 +28,7 @@ public:
     WorldRenderer& operator=(const WorldRenderer&) = delete;
 
     void upload(const world::Mesh& mesh);
+    void upload(const std::vector<world::SectionMesh>& sections);
     std::vector<uint8_t> render(const Camera& camera);
 
     // Draws a frame without reading it back, which is what a frame costs
@@ -35,6 +36,9 @@ public:
     double draw(const Camera& camera);
 
     double last_gpu_ms() const { return last_gpu_ms_; }
+    size_t section_count() const { return sections_.size(); }
+    size_t drawn_sections() const { return drawn_sections_; }
+    size_t drawn_triangles() const { return drawn_triangles_; }
     double upload_ms() const { return upload_ms_; }
     size_t uploaded_bytes() const { return vertex_bytes_ + index_bytes_; }
     uint32_t index_count() const { return index_count_; }
@@ -42,6 +46,7 @@ public:
 private:
     void record_frame(VkCommandBuffer command, const Camera& camera, bool readback);
     double submit(VkCommandBuffer command);
+    void upload_merged(const world::Mesh& mesh);
     void create_targets();
     void create_atlas(const world::Atlas& atlas);
     void create_pipeline();
@@ -79,6 +84,21 @@ private:
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
     VkQueryPool timestamps_ = VK_NULL_HANDLE;
+
+    // One entry per section: where its geometry sits and where it is in the
+    // world, so a section outside the view can be skipped entirely.
+    struct Section {
+        float origin[3];
+        float bounds_min[3];
+        float bounds_max[3];
+        uint32_t first_index;
+        uint32_t index_count;
+        int32_t vertex_offset;
+    };
+    std::vector<Section> sections_;
+    bool culling_ = true;
+    size_t drawn_sections_ = 0;
+    size_t drawn_triangles_ = 0;
 
     uint32_t index_count_ = 0;
     size_t vertex_bytes_ = 0;

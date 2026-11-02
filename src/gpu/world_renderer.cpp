@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -91,6 +92,43 @@ struct Mat4 {
 
 struct PushConstants {
     Mat4 view_projection;
+    float origin[4];   // the section's corner in world space
+};
+
+// Gribb-Hartmann: each clip-space boundary is a sum or difference of two rows
+// of the combined matrix. Only the four sides are tested; near and far add
+// nothing here and the far plane sits beyond anything we upload.
+struct Frustum {
+    float planes[4][4];
+
+    explicit Frustum(const Mat4& m) {
+        const auto row = [&](int r, int c) { return m.m[c * 4 + r]; };
+        for (int i = 0; i < 4; ++i) {
+            const int axis = i / 2;
+            const float sign = (i % 2 == 0) ? 1.0f : -1.0f;
+            for (int c = 0; c < 4; ++c) {
+                planes[i][c] = row(3, c) + sign * row(axis, c);
+            }
+            const float length = std::sqrt(planes[i][0] * planes[i][0] +
+                                           planes[i][1] * planes[i][1] +
+                                           planes[i][2] * planes[i][2]);
+            if (length > 0.0f) {
+                for (int c = 0; c < 4; ++c) planes[i][c] /= length;
+            }
+        }
+    }
+
+    // A box is outside only when it lies entirely behind one plane, so the
+    // corner nearest the plane decides.
+    bool contains(const float low[3], const float high[3]) const {
+        for (const auto& plane : planes) {
+            const float nearest = plane[0] * (plane[0] >= 0.0f ? high[0] : low[0]) +
+                                  plane[1] * (plane[1] >= 0.0f ? high[1] : low[1]) +
+                                  plane[2] * (plane[2] >= 0.0f ? high[2] : low[2]) + plane[3];
+            if (nearest < 0.0f) return false;
+        }
+        return true;
+    }
 };
 
 void normalise(float v[3]) {
@@ -185,6 +223,10 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
     query.queryType = VK_QUERY_TYPE_TIMESTAMP;
     query.queryCount = 2;
     check(vkCreateQueryPool(device_.handle(), &query, nullptr, &timestamps_), "vkCreateQueryPool");
+
+    // Reading this once rather than per section per frame: a getenv in the
+    // draw loop is itself a measurable cost.
+    culling_ = std::getenv("PLODDER_NOCULL") == nullptr;
 
     create_targets();
     create_atlas(atlas);
@@ -530,10 +572,49 @@ void WorldRenderer::create_pipeline() {
     check(result, "vkCreateGraphicsPipelines");
 }
 
-void WorldRenderer::upload(const world::Mesh& mesh) {
+void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
     const auto start = std::chrono::steady_clock::now();
     destroy_mesh();
+    sections_.clear();
 
+    std::vector<world::Vertex> vertices;
+    std::vector<uint32_t> indices;
+    for (const auto& section : sections) {
+        if (section.indices.empty()) continue;
+
+        Section entry{};
+        for (int axis = 0; axis < 3; ++axis) {
+            entry.origin[axis] = static_cast<float>(section.origin[axis]);
+            entry.bounds_min[axis] = entry.origin[axis] + section.bounds_min[axis];
+            entry.bounds_max[axis] = entry.origin[axis] + section.bounds_max[axis];
+        }
+        entry.first_index = static_cast<uint32_t>(indices.size());
+        entry.index_count = static_cast<uint32_t>(section.indices.size());
+        entry.vertex_offset = static_cast<int32_t>(vertices.size());
+        sections_.push_back(entry);
+
+        vertices.insert(vertices.end(), section.vertices.begin(), section.vertices.end());
+        indices.insert(indices.end(), section.indices.begin(), section.indices.end());
+    }
+
+    world::Mesh merged;
+    merged.vertices = std::move(vertices);
+    merged.indices = std::move(indices);
+    upload_merged(merged);
+    upload_ms_ = std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - start).count();
+}
+
+void WorldRenderer::upload(const world::Mesh& mesh) {
+    sections_.clear();
+    const auto start = std::chrono::steady_clock::now();
+    destroy_mesh();
+    upload_merged(mesh);
+    upload_ms_ = std::chrono::duration<double, std::milli>(
+                     std::chrono::steady_clock::now() - start).count();
+}
+
+void WorldRenderer::upload_merged(const world::Mesh& mesh) {
     vertex_bytes_ = mesh.vertices.size() * sizeof(world::Vertex);
     index_bytes_ = mesh.indices.size() * sizeof(uint32_t);
     index_count_ = static_cast<uint32_t>(mesh.indices.size());
@@ -593,9 +674,6 @@ void WorldRenderer::upload(const world::Mesh& mesh) {
     vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
     vkDestroyBuffer(device_.handle(), staging.buffer, nullptr);
     vkFreeMemory(device_.handle(), staging.memory, nullptr);
-
-    upload_ms_ = std::chrono::duration<double, std::milli>(
-                     std::chrono::steady_clock::now() - start).count();
 }
 
 void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback) {
@@ -647,14 +725,38 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         PushConstants push{};
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
-        vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
                                 &descriptor_set_, 0, nullptr);
 
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
+
+        drawn_sections_ = 0;
+        drawn_triangles_ = 0;
+
+        if (sections_.empty()) {
+            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                               &push);
+            vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
+            drawn_triangles_ = index_count_ / 3;
+        } else {
+            const Frustum frustum(push.view_projection);
+            for (const auto& section : sections_) {
+                if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) {
+                    continue;
+                }
+                push.origin[0] = section.origin[0];
+                push.origin[1] = section.origin[1];
+                push.origin[2] = section.origin[2];
+                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                                   &push);
+                vkCmdDrawIndexed(command, section.index_count, 1, section.first_index,
+                                 section.vertex_offset, 0);
+                ++drawn_sections_;
+                drawn_triangles_ += section.index_count / 3;
+            }
+        }
     }
     vkCmdEndRendering(command);
 
@@ -786,14 +888,38 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera) {
         PushConstants push{};
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
-        vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
                                 &descriptor_set_, 0, nullptr);
 
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
+
+        drawn_sections_ = 0;
+        drawn_triangles_ = 0;
+
+        if (sections_.empty()) {
+            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                               &push);
+            vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
+            drawn_triangles_ = index_count_ / 3;
+        } else {
+            const Frustum frustum(push.view_projection);
+            for (const auto& section : sections_) {
+                if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) {
+                    continue;
+                }
+                push.origin[0] = section.origin[0];
+                push.origin[1] = section.origin[1];
+                push.origin[2] = section.origin[2];
+                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                                   &push);
+                vkCmdDrawIndexed(command, section.index_count, 1, section.first_index,
+                                 section.vertex_offset, 0);
+                ++drawn_sections_;
+                drawn_triangles_ += section.index_count / 3;
+            }
+        }
     }
     vkCmdEndRendering(command);
 
