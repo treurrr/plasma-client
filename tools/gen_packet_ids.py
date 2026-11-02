@@ -51,6 +51,11 @@ CURATED = {
         "block_update": "block_update", "section_blocks_update": "section_blocks_update",
         "set_chunk_cache_center": "set_chunk_cache_center",
         "set_chunk_cache_radius": "set_chunk_cache_radius",
+        "add_entity": "add_entity", "remove_entities": "remove_entities",
+        "move_entity_pos": "move_entity_pos", "move_entity_pos_rot": "move_entity_pos_rot",
+        "move_entity_rot": "move_entity_rot",
+        "entity_position_sync": "entity_position_sync",
+        "player_info_update": "player_info_update", "player_info_remove": "player_info_remove",
     }),
     "play_sb": ("play", "serverbound", {
         "keep_alive": "keep_alive", "pong": "pong", "chat": "chat",

@@ -7,6 +7,8 @@
 #include "mcpp/translations.hpp"
 #include "mcpp/world/chunk.hpp"
 
+#include <array>
+#include <map>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -46,6 +48,11 @@ struct SessionEvents {
     // Where the server says we are. It decides, not us: starting anywhere else
     // makes the first movement packet look like a teleport.
     std::function<void(double, double, double, float, float)> on_position;
+    // Other things in the world. type is the registry id from the server's own
+    // report; we do not pretend to know what it means yet.
+    std::function<void(int32_t, int32_t, double, double, double)> on_entity_add;
+    std::function<void(int32_t, double, double, double)> on_entity_move;
+    std::function<void(int32_t)> on_entity_remove;
 };
 
 // Offline mode only: a server in online-mode sends an encryption request, which
@@ -58,6 +65,7 @@ public:
     bool pump();
     // Lets a render loop drain whatever arrived without blocking on an idle socket.
     bool has_data() const;
+    size_t entity_count() const { return entities_.size(); }
     void close();
     // One tick of being a player rather than a viewer. Vanilla wants the tick
     // marker before the position, or it ignores the movement entirely.
@@ -93,6 +101,8 @@ private:
     std::string profile_name_;
     std::string profile_uuid_;
     int32_t entity_id_ = -1;
+    std::map<int32_t, std::array<double, 3>> entities_;
+    void track_entity(int32_t id, double x, double y, double z);
 };
 
 } // namespace mcpp

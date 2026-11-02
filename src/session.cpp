@@ -335,6 +335,53 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         status("server sent us back to configuration");
         return true;
     }
+    if (packet.id == cb.add_entity) {
+        const int32_t id = in.read_varint();
+        in.read_i64();   // uuid
+        in.read_i64();
+        const int32_t type = in.read_varint();
+        const double x = in.read_f64();
+        const double y = in.read_f64();
+        const double z = in.read_f64();
+        if (events_.on_entity_add) events_.on_entity_add(id, type, x, y, z);
+        track_entity(id, x, y, z);
+        return true;
+    }
+    if (packet.id == cb.entity_position_sync) {
+        const int32_t id = in.read_varint();
+        const double x = in.read_f64();
+        const double y = in.read_f64();
+        const double z = in.read_f64();
+        track_entity(id, x, y, z);
+        if (events_.on_entity_move) events_.on_entity_move(id, x, y, z);
+        return true;
+    }
+    if (packet.id == cb.move_entity_pos || packet.id == cb.move_entity_pos_rot) {
+        // Deltas are in 1/4096 of a block, relative to where we last saw it.
+        const int32_t id = in.read_varint();
+        const double dx = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+        const double dy = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+        const double dz = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+        auto it = entities_.find(id);
+        if (it != entities_.end()) {
+            it->second[0] += dx;
+            it->second[1] += dy;
+            it->second[2] += dz;
+            if (events_.on_entity_move) {
+                events_.on_entity_move(id, it->second[0], it->second[1], it->second[2]);
+            }
+        }
+        return true;
+    }
+    if (packet.id == cb.remove_entities) {
+        const int32_t count = in.read_varint();
+        for (int32_t i = 0; i < count; ++i) {
+            const int32_t id = in.read_varint();
+            entities_.erase(id);
+            if (events_.on_entity_remove) events_.on_entity_remove(id);
+        }
+        return true;
+    }
     if (packet.id == cb.disconnect) {
         fail(std::format("server closed the connection: {}", read_component(in, lookup_)));
     }
@@ -354,6 +401,10 @@ void Session::connect() {
     handshake();
     run_login();
     begin_configuration();
+}
+
+void Session::track_entity(int32_t id, double x, double y, double z) {
+    entities_[id] = {x, y, z};
 }
 
 bool Session::has_data() const { return connection_.socket().readable(); }

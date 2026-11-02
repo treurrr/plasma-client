@@ -34,7 +34,9 @@ struct PacketIds {
             start_configuration, player_position, custom_payload, set_health, respawn, game_event,
             level_chunk_with_light, chunk_batch_start, chunk_batch_finished, forget_level_chunk,
             light_update, block_update, section_blocks_update, set_chunk_cache_center,
-            set_chunk_cache_radius;
+            set_chunk_cache_radius, add_entity, remove_entities, move_entity_pos,
+            move_entity_pos_rot, move_entity_rot, entity_position_sync, player_info_update,
+            player_info_remove;
     } play_cb;
 
     struct PlayServerbound {
