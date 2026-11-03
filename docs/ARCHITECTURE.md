@@ -68,12 +68,20 @@ packet_io       framing and zlib compression
 json / nbt      text components in both forms
 translations    Minecraft's language file, %s and %N$s
 proto/          one generated ID table per version
+status          the server-list ping, which needs no session
+assets/         the game's own files, from the player's launcher
 session         the state machine: handshake -> login -> configuration -> play
 features        what the player can switch on and off
+client/         the interactive client: one frame loop, one file per area
 ```
 
 Only `session` knows about versions. The layers below it are version-free; the
 layer above it (the renderer, milestone 3) will be too.
+
+The play state is split by area: `session.cpp` holds the connection, login and
+configuration, and each of world, entities, player, ui, sound and data handles
+its own packets in `session_<area>.cpp`. The interactive client is split the
+same way under `src/client/`. `docs/CONVENTIONS.md` says what goes where.
 
 ## What the session does
 
