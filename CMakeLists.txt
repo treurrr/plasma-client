@@ -112,6 +112,8 @@ add_library(mcpp_net STATIC
     ${MCPP_WINDOW_SOURCES}
     src/image_png.cpp
     src/proto/packet_ids_gen.cpp
+    src/proto/components.cpp
+    src/proto/metadata.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)

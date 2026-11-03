@@ -2,6 +2,7 @@
 #include "mcpp/auth.hpp"
 #include "mcpp/packet_io.hpp"
 #include "mcpp/nbt.hpp"
+#include "mcpp/proto/metadata.hpp"
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/registries.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -84,6 +85,8 @@ struct Entity {
     float head_yaw = 0.0f;
     int32_t data = 0;   // means something different for every type that uses it
     bool on_ground = false;
+    // What set_entity_data said, merged over every update since add_entity.
+    proto::Metadata metadata;
 };
 
 // A potion effect on something, as the server last described it. Duration is
@@ -184,6 +187,7 @@ struct ItemStack {
     int32_t id = 0;
     int32_t count = 0;
     bool readable = true;
+    proto::Components components;
 };
 
 // The player's own inventory, in the order the server sends it: a crafting
