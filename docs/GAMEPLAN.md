@@ -21,8 +21,11 @@ notice what they lost. Everything below serves that.
 
 1. **Port ledger.** Vanilla's code next to ours, method by method (`tools/port_ledger.py`). Every
    piece of work starts from it.
-2. **The vanilla base.** Work through what a player meets in the first five minutes, in ledger
-   order: breaking blocks (crack overlay, particles, timing), the hand and held items, item icons
+2. **The vanilla base.** First the title screen, because it is the first thing anyone sees and
+   the current one looks cheap: vanilla's TitleScreen translated whole, with the rotating
+   panorama and its blur, the logo, the splash text, every button and the version line, checked
+   pixel for pixel against a vanilla screenshot at the same size and gui scale. Then what a player
+   meets in the first five minutes, in ledger order: breaking blocks (crack overlay, particles, timing), the hand and held items, item icons
    in every inventory, crafting, block shapes and hitboxes, texture mipmaps, ambient occlusion and
    smooth lighting, the title, multiplayer, pause, options and death screens.
 3. **Playable from a launcher, on real servers.** Sign-in, a play button, the server list.
