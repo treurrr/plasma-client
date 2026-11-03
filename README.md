@@ -15,8 +15,12 @@ with the client.
 It joins a real server, opens a window, and lets you walk through the world it
 streams. Chat works both ways, movement is reported to the server, and chunks
 arriving while you play are meshed on a worker and appended to the gpu rather
-than rebuilding everything. There is no singleplayer, no entities and no
-interface yet.
+than rebuilding everything. A heads-up display reports what the frame actually
+cost, and a feature menu lists what the client has. Entities are tracked as the
+server reports them but not drawn, the menu shows state rather than changing it,
+there is no singleplayer, and joining still needs a token from elsewhere: the
+encryption handshake is implemented, the Microsoft sign-in that precedes it is
+not.
 
 Measured on an RTX 4070 Laptop with 16 threads, 1920x1080, 200 chunks of
 overworld, 2.06 million triangles, 862k of them drawn after culling:
