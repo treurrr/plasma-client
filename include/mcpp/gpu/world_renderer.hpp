@@ -1,5 +1,6 @@
 #pragma once
 #include "mcpp/gpu/device.hpp"
+#include "mcpp/gpu/span_allocator.hpp"
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/mesher.hpp"
 
@@ -57,6 +58,10 @@ public:
     void forget(int32_t chunk_x, int32_t chunk_z);
     size_t vertex_capacity() const { return vertex_capacity_; }
     size_t appended_sections() const { return sections_.size(); }
+    // How the streaming buffers stand: room in use, and how many separate free
+    // pieces it is spread over, which is what decides whether a big chunk fits.
+    const SpanAllocator& vertex_room() const { return vertex_spans_; }
+    const SpanAllocator& index_room() const { return index_spans_; }
     bool out_of_vertex_room() const { return out_of_vertex_room_; }
     // Recorded into the same image after the world pass, so an interface can
     // be read back with the frame it belongs to.
@@ -180,8 +185,26 @@ private:
         // The opaque indices come first; the rest are blended afterwards.
         uint32_t opaque_count;
         int32_t vertex_offset;
+        uint32_t vertex_count;
     };
     std::vector<Section> sections_;
+
+    // Room in the two streaming buffers, counted in vertices and in indices.
+    SpanAllocator vertex_spans_;
+    SpanAllocator index_spans_;
+    // Room let go of is held back a few frames before it is handed out again:
+    // a frame still in flight may be reading from it.
+    struct Releasing {
+        size_t vertex_offset;
+        size_t vertex_count;
+        size_t first_index;
+        size_t index_count;
+        uint64_t free_after;
+    };
+    std::vector<Releasing> releasing_;
+    uint64_t frames_recorded_ = 0;
+    template <typename Drop> void drop_sections(Drop&& drop);
+    void hand_back_released();
     bool culling_ = true;
     size_t drawn_sections_ = 0;
     size_t drawn_triangles_ = 0;

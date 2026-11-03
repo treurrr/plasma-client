@@ -350,6 +350,87 @@ MeshTotals totals_of(const std::vector<mcpp::world::SectionMesh>& sections) {
     return totals;
 }
 
+// Loads the same chunks, draws them, forgets them, and loads them again, many
+// times over, in a buffer too small to hold more than a few rounds without
+// handing room back. A client that walks around for an hour does exactly
+// this; the buffer has to come out of it no fuller than it went in.
+int do_churn(const std::string& target, size_t chunk_limit, int rounds) {
+    mcpp::world::BlockTable table;
+    mcpp::world::Atlas atlas;
+    const auto protocol = mcpp::protocol::kTargetProtocol;
+    if (!table.open(mcpp::world::BlockTable::default_path(protocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(protocol))) {
+        std::cerr << "block table or atlas missing\n";
+        return 1;
+    }
+    const auto chunks = load_chunks(parse_address(target), chunk_limit, true);
+    if (chunks.empty()) return 1;
+    double mesh_ms = 0.0;
+    const auto pieces = mesh_world(chunks, table, &mesh_ms);
+    size_t vertex_bytes = 0;
+    size_t index_bytes = 0;
+    for (const auto& piece : pieces) {
+        vertex_bytes += piece.vertices.size() * sizeof(mcpp::world::Vertex);
+        index_bytes += piece.indices.size() * sizeof(uint32_t);
+    }
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options options;
+    device.create(options);
+    mcpp::gpu::WorldRenderer renderer(device, 320, 180, atlas);
+    // Room for two and a half copies of the world: enough to churn through if
+    // room comes back, nowhere near enough for the rounds if it does not.
+    renderer.reserve(vertex_bytes * 5 / 2, index_bytes * 5 / 2);
+
+    mcpp::gpu::Camera camera{};
+    camera.eye[1] = 120.0f;
+    camera.target[0] = 1.0f;
+    camera.target[1] = 100.0f;
+
+    std::cout << std::format("- {} chunks, {:.1f} MB of geometry, buffer {:.1f} MB\n", chunks.size(),
+                             (vertex_bytes + index_bytes) / 1e6,
+                             (vertex_bytes + index_bytes) * 2.5 / 1e6);
+    // Every other round forgets a different, scattered half and loads it back,
+    // which is what walking does: chunks leave from between ones that stay,
+    // and the room they leave is in pieces, not at the end.
+    if (!renderer.append(pieces)) {
+        std::cout << "- the first load does not fit\n";
+        return 1;
+    }
+    for (int round = 0; round < rounds; ++round) {
+        const int parity = round % 2;
+        std::vector<mcpp::world::SectionMesh> half;
+        for (const auto& chunk : chunks) {
+            if (((chunk.x + chunk.z) & 1) != parity) continue;
+            renderer.forget(chunk.x, chunk.z);
+        }
+        for (int frame = 0; frame < 4; ++frame) renderer.draw(camera);
+        for (const auto& piece : pieces) {
+            if ((((piece.origin[0] >> 4) + (piece.origin[2] >> 4)) & 1) == parity) {
+                half.push_back(piece);
+            }
+        }
+        // Back in a different order from the one they left in, so a big
+        // section meets a small hole first: that is how room really splinters.
+        if (round % 3 != 0) std::ranges::reverse(half);
+        if (round % 3 == 2) std::ranges::rotate(half, half.begin() + half.size() / 3);
+        if (!renderer.append(half)) {
+            std::cout << std::format("- round {}: out of room\n", round);
+            return 1;
+        }
+        for (int frame = 0; frame < 4; ++frame) renderer.draw(camera);
+        if (round % 10 == 0 || round == rounds - 1) {
+            const auto& room = renderer.vertex_room();
+            std::cout << std::format(
+                "- round {}: free room in {} piece(s), largest {:.0f}% of the buffer\n", round,
+                room.spans(), 100.0 * static_cast<double>(room.largest_free()) /
+                                  static_cast<double>(room.capacity()));
+        }
+    }
+    std::cout << std::format("- {} rounds of load, draw, forget with nothing lost\n", rounds);
+    return 0;
+}
+
 int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint32_t width,
              uint32_t height) {
 
@@ -2430,6 +2511,10 @@ int main(int argc, char** argv) {
             const uint32_t width = argc > 3 ? static_cast<uint32_t>(std::stoul(argv[3])) : 1280;
             const uint32_t height = argc > 4 ? static_cast<uint32_t>(std::stoul(argv[4])) : 720;
             return do_render(out, width, height);
+        }
+        if (command == "churn" && argc > 2) {
+            return do_churn(argv[2], argc > 3 ? std::stoul(argv[3]) : 64,
+                            argc > 4 ? std::stoi(argv[4]) : 40);
         }
         if (command == "digtest" && argc > 2) {
             return do_digtest(argv[2]);

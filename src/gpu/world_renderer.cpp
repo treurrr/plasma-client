@@ -766,6 +766,9 @@ void WorldRenderer::reserve(size_t vertex_capacity, size_t index_capacity) {
     index_count_ = 0;
     vertex_capacity_ = vertex_capacity;
     index_capacity_ = index_capacity;
+    vertex_spans_.reset(vertex_capacity_ / sizeof(world::Vertex));
+    index_spans_.reset(index_capacity_ / sizeof(uint32_t));
+    releasing_.clear();
 
     auto vertex = make_buffer(device_, vertex_capacity_,
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -779,40 +782,54 @@ void WorldRenderer::reserve(size_t vertex_capacity, size_t index_capacity) {
     index_memory_ = index.memory;
 }
 
+template <typename Drop> void WorldRenderer::drop_sections(Drop&& drop) {
+    // Two frames can be in flight, so room is not reused until a third has
+    // been recorded after it was let go.
+    constexpr uint64_t kFramesBeforeReuse = 3;
+    std::erase_if(sections_, [&](const Section& entry) {
+        if (!drop(entry)) return false;
+        releasing_.push_back({static_cast<size_t>(entry.vertex_offset), entry.vertex_count,
+                              entry.first_index, entry.index_count,
+                              frames_recorded_ + kFramesBeforeReuse});
+        return true;
+    });
+}
+
+void WorldRenderer::hand_back_released() {
+    std::erase_if(releasing_, [&](const Releasing& span) {
+        if (span.free_after > frames_recorded_) return false;
+        vertex_spans_.release(span.vertex_offset, span.vertex_count);
+        index_spans_.release(span.first_index, span.index_count);
+        return true;
+    });
+}
+
 void WorldRenderer::forget(int32_t chunk_x, int32_t chunk_z) {
     const auto x = static_cast<float>(chunk_x * 16);
     const auto z = static_cast<float>(chunk_z * 16);
-    for (auto& entry : sections_) {
-        if (entry.origin[0] == x && entry.origin[2] == z) {
-            entry.index_count = 0;
-            entry.opaque_count = 0;
-        }
-    }
+    drop_sections([&](const Section& entry) {
+        return entry.origin[0] == x && entry.origin[2] == z;
+    });
 }
 
 bool WorldRenderer::replace(const std::vector<world::SectionMesh>& sections) {
-    // Whatever stood at these origins stops being drawn first, so a section
-    // that meshes to nothing - the last block in it broken - disappears.
-    for (const auto& section : sections) {
-        for (auto& entry : sections_) {
-            if (static_cast<int32_t>(entry.origin[0]) == section.origin[0] &&
-                static_cast<int32_t>(entry.origin[1]) == section.origin[1] &&
-                static_cast<int32_t>(entry.origin[2]) == section.origin[2]) {
-                entry.index_count = 0;
-                entry.opaque_count = 0;
-            }
-        }
-    }
+    // Whatever stood at these origins goes first, so a section that meshes to
+    // nothing - the last block in it broken - disappears.
+    drop_sections([&](const Section& entry) {
+        return std::ranges::any_of(sections, [&](const world::SectionMesh& section) {
+            return static_cast<int32_t>(entry.origin[0]) == section.origin[0] &&
+                   static_cast<int32_t>(entry.origin[1]) == section.origin[1] &&
+                   static_cast<int32_t>(entry.origin[2]) == section.origin[2];
+        });
+    });
     return append(sections);
 }
 
 bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
     if (vertex_capacity_ == 0) return false;
+    hand_back_released();
 
     const size_t first_section = sections_.size();
-    const size_t vertex_start = vertex_bytes_;
-    const size_t index_start = index_bytes_;
-
     std::vector<size_t> source;
     source.reserve(sections.size());
     size_t vertex_added = 0;
@@ -821,8 +838,23 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
         const auto& section = sections[i];
         if (section.indices.empty()) continue;
 
-        const size_t vertex_offset = (vertex_start + vertex_added) / sizeof(world::Vertex);
-        const size_t index_offset = (index_start + index_added) / sizeof(uint32_t);
+        const auto vertex_offset = vertex_spans_.allocate(section.vertices.size());
+        const auto index_offset =
+            vertex_offset ? index_spans_.allocate(section.indices.size()) : std::nullopt;
+        if (!vertex_offset || !index_offset) {
+            // Out of room: give back what this batch took, and let the caller
+            // decide what to drop.
+            if (vertex_offset) vertex_spans_.release(*vertex_offset, section.vertices.size());
+            for (size_t taken = first_section; taken < sections_.size(); ++taken) {
+                vertex_spans_.release(static_cast<size_t>(sections_[taken].vertex_offset),
+                                      sections_[taken].vertex_count);
+                index_spans_.release(sections_[taken].first_index,
+                                     sections_[taken].index_count);
+            }
+            sections_.resize(first_section);
+            out_of_vertex_room_ = !vertex_offset;
+            return false;
+        }
 
         Section entry{};
         for (int axis = 0; axis < 3; ++axis) {
@@ -830,10 +862,11 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
             entry.bounds_min[axis] = entry.origin[axis] + section.bounds_min[axis];
             entry.bounds_max[axis] = entry.origin[axis] + section.bounds_max[axis];
         }
-        entry.first_index = static_cast<uint32_t>(index_offset);
+        entry.first_index = static_cast<uint32_t>(*index_offset);
         entry.index_count = static_cast<uint32_t>(section.indices.size());
         entry.opaque_count = static_cast<uint32_t>(section.opaque_indices);
-        entry.vertex_offset = static_cast<int32_t>(vertex_offset);
+        entry.vertex_offset = static_cast<int32_t>(*vertex_offset);
+        entry.vertex_count = static_cast<uint32_t>(section.vertices.size());
         sections_.push_back(entry);
         source.push_back(i);
 
@@ -842,12 +875,6 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
     }
 
     if (source.empty()) return true;
-    if (vertex_start + vertex_added > vertex_capacity_ ||
-        index_start + index_added > index_capacity_) {
-        sections_.resize(first_section);   // out of room; the caller decides what to drop
-        out_of_vertex_room_ = vertex_start + vertex_added > vertex_capacity_;
-        return false;
-    }
 
     const size_t needed = vertex_added + index_added;
     if (needed > append_staging_bytes_) {
@@ -868,18 +895,35 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
               "vkMapMemory");
     }
 
+    // Packed tight in staging, then scattered: one copy region per section
+    // per buffer, each landing wherever the allocator found room for it.
+    std::vector<VkBufferCopy> vertex_copies(source.size());
+    std::vector<VkBufferCopy> index_copies(source.size());
+    {
+        size_t vertex_at = 0;
+        size_t index_at = vertex_added;
+        for (size_t slot = 0; slot < source.size(); ++slot) {
+            const auto& section = sections[source[slot]];
+            const auto& entry = sections_[first_section + slot];
+            const size_t vertex_size = section.vertices.size() * sizeof(world::Vertex);
+            const size_t index_size = section.indices.size() * sizeof(uint32_t);
+            vertex_copies[slot] = {vertex_at,
+                                   static_cast<size_t>(entry.vertex_offset) * sizeof(world::Vertex),
+                                   vertex_size};
+            index_copies[slot] = {index_at,
+                                  static_cast<size_t>(entry.first_index) * sizeof(uint32_t),
+                                  index_size};
+            vertex_at += vertex_size;
+            index_at += index_size;
+        }
+    }
     auto* base = static_cast<uint8_t*>(append_mapped_);
     parallel_for(source.size(), [&](size_t slot) {
         const auto& section = sections[source[slot]];
-        const auto& entry = sections_[first_section + slot];
-        const size_t vertex_offset =
-            static_cast<size_t>(entry.vertex_offset) * sizeof(world::Vertex) - vertex_start;
-        const size_t index_offset =
-            static_cast<size_t>(entry.first_index) * sizeof(uint32_t) - index_start;
-        std::memcpy(base + vertex_offset, section.vertices.data(),
-                    section.vertices.size() * sizeof(world::Vertex));
-        std::memcpy(base + vertex_added + index_offset, section.indices.data(),
-                    section.indices.size() * sizeof(uint32_t));
+        std::memcpy(base + vertex_copies[slot].srcOffset, section.vertices.data(),
+                    vertex_copies[slot].size);
+        std::memcpy(base + index_copies[slot].srcOffset, section.indices.data(),
+                    index_copies[slot].size);
     });
 
     check(vkResetCommandBuffer(frame_command_, 0), "vkResetCommandBuffer");
@@ -887,10 +931,10 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(frame_command_, &begin), "vkBeginCommandBuffer");
-    VkBufferCopy vertex_copy{0, vertex_start, vertex_added};
-    vkCmdCopyBuffer(frame_command_, append_staging_, vertex_buffer_, 1, &vertex_copy);
-    VkBufferCopy index_copy{vertex_added, index_start, index_added};
-    vkCmdCopyBuffer(frame_command_, append_staging_, index_buffer_, 1, &index_copy);
+    vkCmdCopyBuffer(frame_command_, append_staging_, vertex_buffer_,
+                     static_cast<uint32_t>(vertex_copies.size()), vertex_copies.data());
+    vkCmdCopyBuffer(frame_command_, append_staging_, index_buffer_,
+                     static_cast<uint32_t>(index_copies.size()), index_copies.data());
     check(vkEndCommandBuffer(frame_command_), "vkEndCommandBuffer");
 
     VkCommandBufferSubmitInfo command_submit{};
@@ -905,9 +949,9 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
     check(vkWaitForFences(device_.handle(), 1, &frame_fence_, VK_TRUE, UINT64_MAX),
           "vkWaitForFences");
 
-    vertex_bytes_ += vertex_added;
-    index_bytes_ += index_added;
-    index_count_ = static_cast<uint32_t>(index_bytes_ / sizeof(uint32_t));
+    vertex_bytes_ = vertex_spans_.used() * sizeof(world::Vertex);
+    index_bytes_ = index_spans_.used() * sizeof(uint32_t);
+    index_count_ = static_cast<uint32_t>(index_spans_.used());
     return true;
 }
 
@@ -1157,6 +1201,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
 
 void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback,
                                  bool leave_transfer_src) {
+    ++frames_recorded_;
     vkCmdResetQueryPool(command, timestamps_, 0, 2);
     vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestamps_, 0);
 

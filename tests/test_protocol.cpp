@@ -5,6 +5,7 @@
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
+#include "mcpp/gpu/span_allocator.hpp"
 #include "mcpp/world/light.hpp"
 #include "mcpp/world/mesher.hpp"
 #include "mcpp/world/physics.hpp"
@@ -703,6 +704,33 @@ void test_light_engine() {
     std::filesystem::remove(path);
 }
 
+// The world's buffers are handed out and taken back for as long as the player
+// moves. Freed room has to be found again and merged, or a long session ends
+// with plenty of room in total and none of it in one piece.
+void test_span_allocator() {
+    mcpp::gpu::SpanAllocator spans;
+    spans.reset(100);
+    const auto a = spans.allocate(30);
+    const auto b = spans.allocate(30);
+    const auto c = spans.allocate(30);
+    check(a == 0u && b == 30u && c == 60u, "spans are handed out front to back");
+    check(!spans.allocate(20).has_value(), "and run out when only ten are left");
+
+    spans.release(30, 30);
+    check(spans.allocate(25) == 30u, "a freed span is found again");
+    spans.release(30, 25);
+
+    // Free both neighbours of the middle span, then the middle one: all three
+    // must come back as a single span, not three that each fit nothing.
+    spans.release(0, 30);
+    spans.release(60, 30);
+    check(spans.spans() == 1 && spans.largest_free() == 100,
+          std::format("freed neighbours merge into one span ({} spans, largest {})",
+                      spans.spans(), spans.largest_free()));
+    check(spans.used() == 0, "and nothing is counted as used");
+    check(spans.allocate(100) == 0u, "so the whole buffer fits again");
+}
+
 int main() {
     test_varint_encoding();
     test_varlong_and_numbers();
@@ -714,6 +742,7 @@ int main() {
     test_block_table();
     test_mesher_culls_interiors();
     test_light_engine();
+    test_span_allocator();
     test_physics_stands_and_stops();
     test_packet_tables();
     test_server_hash();
