@@ -1,0 +1,42 @@
+Recorded worlds
+===============
+
+A recording is every packet a server sent from configuration onwards, as it
+arrived. Played back, the same handlers see the same packets, so a picture of
+a recording is the same picture every time, whatever the server does next.
+
+The recordings themselves are not in the repository: they are server output,
+made locally. Only this file is.
+
+Naming
+------
+
+One recording per block, named after its area and what it shows:
+
+    <area>-<what>.plrc
+
+    world-nether.plrc      entities-lobby.plrc     data-inventory.plrc
+    world-end.plrc         sound-anvil.plrc
+
+The areas are the ones in docs/CONVENTIONS.md: world, entities, player, ui,
+sound, data. Recordings are append-only: a recording that is wrong gets a new
+name, it is never overwritten, so a test that used it keeps meaning what it
+meant. spawn-200.plrc and glass.plrc predate this rule and keep their names.
+
+Making one
+----------
+
+    plasma-client record <host>[:port] corpus/<area>-<what>.plrc [chunks]
+
+It records until that many chunks (200 by default) have arrived and two
+seconds more, so the light and entities that follow them are in it too.
+
+Using one
+---------
+
+worldshot, hudshot and menushot take replay:<file> in place of a server:
+
+    plasma-client worldshot replay:corpus/spawn-200.plrc out.png 329
+
+A new command that reads a world should do the same; SessionOptions::replay
+is all it takes.

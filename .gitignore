@@ -1,4 +1,5 @@
 build/
+build-*/
 build-rel/
 build-dev/
 compile_commands.json
@@ -14,4 +15,5 @@ __pycache__/
 *.pyc
 
 # Recorded worlds: server output, made locally with `plasma-client record`.
-/corpus/
+/corpus/*
+!/corpus/README
