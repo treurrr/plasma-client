@@ -25,5 +25,5 @@ void main() {
                           0.0, 1.0);
         colour = mix(colour, push.sky.rgb, fog * fog);
     }
-    out_color = vec4(colour, 1.0);
+    out_color = vec4(colour, texel.a);
 }

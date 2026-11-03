@@ -89,6 +89,7 @@ private:
     void create_targets();
     void create_atlas(const world::Atlas& atlas);
     void create_pipeline();
+    void draw_geometry(VkCommandBuffer command, struct PushConstants& push);
     void destroy_mesh();
 
     Device& device_;
@@ -121,6 +122,7 @@ private:
     uint32_t atlas_layers_ = 0;
 
     VkPipeline pipeline_ = VK_NULL_HANDLE;
+    VkPipeline blended_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
     // Allocated once. A command buffer and a fence per frame were costing more
@@ -137,6 +139,8 @@ private:
         float bounds_max[3];
         uint32_t first_index;
         uint32_t index_count;
+        // The opaque indices come first; the rest are blended afterwards.
+        uint32_t opaque_count;
         int32_t vertex_offset;
     };
     std::vector<Section> sections_;
@@ -145,6 +149,8 @@ private:
     size_t drawn_triangles_ = 0;
 
     uint32_t index_count_ = 0;
+    uint32_t opaque_index_count_ = 0;
+    std::vector<const Section*> visible_;
     bool out_of_vertex_room_ = false;
     size_t vertex_capacity_ = 0;
     size_t index_capacity_ = 0;

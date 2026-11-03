@@ -132,13 +132,6 @@ struct Mat4 {
     float m[16];
 };
 
-struct PushConstants {
-    Mat4 view_projection;
-    float origin[4];   // the section's corner in world space
-    float eye[4];      // camera in world space, w is where the fog starts
-    float sky[4];      // what the fog fades into, w is where it finishes
-};
-
 // Gribb-Hartmann: each clip-space boundary is a sum or difference of two rows
 // of the combined matrix. Only the four sides are tested; near and far add
 // nothing here and the far plane sits beyond anything we upload.
@@ -248,6 +241,14 @@ VkShaderModule make_module(VkDevice device, std::span<const uint32_t> words) {
 }
 
 } // namespace
+
+// Outside the anonymous namespace so a member function can take one.
+struct PushConstants {
+    Mat4 view_projection;
+    float origin[4];   // the section's corner in world space
+    float eye[4];      // camera in world space, w is where the fog starts
+    float sky[4];      // what the fog fades into, w is where it finishes
+};
 
 WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
                              const world::Atlas& atlas)
@@ -622,8 +623,22 @@ void WorldRenderer::create_pipeline() {
     create.pDynamicState = &dynamic;
     create.layout = layout_;
 
-    const VkResult result = vkCreateGraphicsPipelines(device_.handle(), device_.pipeline_cache(), 1,
-                                                      &create, nullptr, &pipeline_);
+    VkResult result = vkCreateGraphicsPipelines(device_.handle(), device_.pipeline_cache(), 1,
+                                                &create, nullptr, &pipeline_);
+    if (result == VK_SUCCESS) {
+        // Water and glass: blended, and writing no depth, or the surface would
+        // hide whatever is behind it in the same pass.
+        blend_attachment.blendEnable = VK_TRUE;
+        blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+        blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        depth.depthWriteEnable = VK_FALSE;
+        result = vkCreateGraphicsPipelines(device_.handle(), device_.pipeline_cache(), 1, &create,
+                                           nullptr, &blended_pipeline_);
+    }
     vkDestroyShaderModule(device_.handle(), vertex, nullptr);
     vkDestroyShaderModule(device_.handle(), fragment, nullptr);
     check(result, "vkCreateGraphicsPipelines");
@@ -654,6 +669,7 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
         }
         entry.first_index = static_cast<uint32_t>(index_total);
         entry.index_count = static_cast<uint32_t>(section.indices.size());
+        entry.opaque_count = static_cast<uint32_t>(section.opaque_indices);
         entry.vertex_offset = static_cast<int32_t>(vertex_total);
         sections_.push_back(entry);
         source.push_back(i);
@@ -720,6 +736,7 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
         }
         entry.first_index = static_cast<uint32_t>(index_offset);
         entry.index_count = static_cast<uint32_t>(section.indices.size());
+        entry.opaque_count = static_cast<uint32_t>(section.opaque_indices);
         entry.vertex_offset = static_cast<int32_t>(vertex_offset);
         sections_.push_back(entry);
         source.push_back(i);
@@ -890,6 +907,7 @@ void WorldRenderer::upload_merged(const world::Mesh& mesh) {
     vertex_bytes_ = mesh.vertices.size() * sizeof(world::Vertex);
     index_bytes_ = mesh.indices.size() * sizeof(uint32_t);
     index_count_ = static_cast<uint32_t>(mesh.indices.size());
+    opaque_index_count_ = static_cast<uint32_t>(mesh.opaque_indices);
     if (index_count_ == 0) return;
 
     const auto t0 = std::chrono::steady_clock::now();
@@ -958,6 +976,83 @@ void WorldRenderer::upload_merged(const world::Mesh& mesh) {
     upload_alloc_ms_ = ms(t0, t1);
     upload_copy_ms_ = ms(t1, t2);
     upload_gpu_ms_ = ms(t2, t3);
+}
+
+// Two passes over the same buffers: everything solid first, then whatever has
+// to be blended, drawn from the back forwards so the water in front does not
+// erase the water behind it.
+void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push) {
+    const auto send = [&](const float origin[3]) {
+        push.origin[0] = origin[0];
+        push.origin[1] = origin[1];
+        push.origin[2] = origin[2];
+        vkCmdPushConstants(command, layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           sizeof(push), &push);
+    };
+
+    drawn_sections_ = 0;
+    drawn_triangles_ = 0;
+
+    if (sections_.empty()) {
+        const float none[3] = {0.0f, 0.0f, 0.0f};
+        send(none);
+        if (opaque_index_count_ > 0) {
+            vkCmdDrawIndexed(command, opaque_index_count_, 1, 0, 0, 0);
+        }
+        if (index_count_ > opaque_index_count_) {
+            vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
+            vkCmdDrawIndexed(command, index_count_ - opaque_index_count_, 1,
+                             opaque_index_count_, 0, 0);
+            vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+        }
+        drawn_triangles_ = index_count_ / 3;
+        return;
+    }
+
+    const Frustum frustum(push.view_projection);
+    visible_.clear();
+    for (const auto& section : sections_) {
+        if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) continue;
+        visible_.push_back(&section);
+        if (section.opaque_count == 0) continue;
+        send(section.origin);
+        vkCmdDrawIndexed(command, section.opaque_count, 1, section.first_index,
+                         section.vertex_offset, 0);
+        ++drawn_sections_;
+        drawn_triangles_ += section.opaque_count / 3;
+    }
+
+    bool any_blended = false;
+    for (const auto* section : visible_) {
+        if (section->index_count > section->opaque_count) {
+            any_blended = true;
+            break;
+        }
+    }
+    if (!any_blended) return;
+
+    const float eye[3] = {push.eye[0], push.eye[1], push.eye[2]};
+    std::ranges::sort(visible_, [&](const Section* a, const Section* b) {
+        const auto distance = [&](const Section* s) {
+            const float dx = (s->bounds_min[0] + s->bounds_max[0]) * 0.5f - eye[0];
+            const float dy = (s->bounds_min[1] + s->bounds_max[1]) * 0.5f - eye[1];
+            const float dz = (s->bounds_min[2] + s->bounds_max[2]) * 0.5f - eye[2];
+            return dx * dx + dy * dy + dz * dz;
+        };
+        return distance(a) > distance(b);
+    });
+
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
+    for (const auto* section : visible_) {
+        const uint32_t count = section->index_count - section->opaque_count;
+        if (count == 0) continue;
+        send(section->origin);
+        vkCmdDrawIndexed(command, count, 1, section->first_index + section->opaque_count,
+                         section->vertex_offset, 0);
+        drawn_triangles_ += count / 3;
+    }
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 }
 
 void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback) {
@@ -1030,33 +1125,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
 
-        drawn_sections_ = 0;
-        drawn_triangles_ = 0;
-
-        if (sections_.empty()) {
-            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
-                               &push);
-            vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
-            drawn_triangles_ = index_count_ / 3;
-        } else {
-            const Frustum frustum(push.view_projection);
-            for (const auto& section : sections_) {
-                if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) {
-                    continue;
-                }
-                push.origin[0] = section.origin[0];
-                push.origin[1] = section.origin[1];
-                push.origin[2] = section.origin[2];
-                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
-                                   &push);
-                vkCmdDrawIndexed(command, section.index_count, 1, section.first_index,
-                                 section.vertex_offset, 0);
-                ++drawn_sections_;
-                drawn_triangles_ += section.index_count / 3;
-            }
-        }
+        draw_geometry(command, push);
     }
     vkCmdEndRendering(command);
 
@@ -1225,33 +1294,7 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
 
-        drawn_sections_ = 0;
-        drawn_triangles_ = 0;
-
-        if (sections_.empty()) {
-            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
-                               &push);
-            vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
-            drawn_triangles_ = index_count_ / 3;
-        } else {
-            const Frustum frustum(push.view_projection);
-            for (const auto& section : sections_) {
-                if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) {
-                    continue;
-                }
-                push.origin[0] = section.origin[0];
-                push.origin[1] = section.origin[1];
-                push.origin[2] = section.origin[2];
-                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
-                                   &push);
-                vkCmdDrawIndexed(command, section.index_count, 1, section.first_index,
-                                 section.vertex_offset, 0);
-                ++drawn_sections_;
-                drawn_triangles_ += section.index_count / 3;
-            }
-        }
+        draw_geometry(command, push);
     }
     vkCmdEndRendering(command);
 
@@ -1354,6 +1397,7 @@ WorldRenderer::~WorldRenderer() {
     vkDeviceWaitIdle(device_.handle());
     destroy_mesh();
     vkDestroyPipeline(device_.handle(), pipeline_, nullptr);
+    vkDestroyPipeline(device_.handle(), blended_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_.handle(), layout_, nullptr);
     vkDestroyDescriptorPool(device_.handle(), descriptor_pool_, nullptr);
     vkDestroyDescriptorSetLayout(device_.handle(), set_layout_, nullptr);

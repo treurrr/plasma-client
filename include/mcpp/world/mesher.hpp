@@ -39,7 +39,11 @@ struct SectionMesh {
     float bounds_min[3] = {0.0f, 0.0f, 0.0f};
     float bounds_max[3] = {0.0f, 0.0f, 0.0f};
     std::vector<Vertex> vertices;
+    // Opaque first, then translucent. Blending has to happen after everything
+    // solid has been drawn, so the two are one buffer with a split rather than
+    // two buffers.
     std::vector<uint32_t> indices;
+    size_t opaque_indices = 0;
 
     size_t quads_emitted = 0;
     size_t quads_culled = 0;
@@ -53,6 +57,7 @@ struct SectionMesh {
 struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    size_t opaque_indices = 0;
 
     size_t quads_emitted = 0;
     size_t quads_culled = 0;

@@ -209,6 +209,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
         mesh.origin[2] = chunk.z * kSection;
         mesh.vertices.reserve(1 << 12);
         mesh.indices.reserve(1 << 12);
+        std::vector<uint32_t> blended;
 
         for (int32_t local_y = 0; local_y < kSection; ++local_y) {
             for (int32_t z = 0; z < kSection; ++z) {
@@ -356,13 +357,18 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             mesh.vertices.push_back(vertex);
                         }
 
-                        mesh.indices.insert(mesh.indices.end(),
-                                            {base, base + 1, base + 2, base, base + 2, base + 3});
+                        auto& into = (quad.flags & kQuadTranslucent) != 0 ? blended
+                                                                          : mesh.indices;
+                        into.insert(into.end(),
+                                    {base, base + 1, base + 2, base, base + 2, base + 3});
                         ++mesh.quads_emitted;
                     }
                 }
             }
         }
+
+        mesh.opaque_indices = mesh.indices.size();
+        mesh.indices.insert(mesh.indices.end(), blended.begin(), blended.end());
 
         if (mesh.indices.empty()) {
             // Still count what was culled, so the totals stay honest.
@@ -393,16 +399,22 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
                 const Neighbours& neighbours, int32_t min_section_y) {
     Mesh merged;
+    std::vector<uint32_t> blended;
     for (const auto& section : mesh_sections(chunk, blocks, table, neighbours, min_section_y)) {
         const auto base = static_cast<uint32_t>(merged.vertices.size());
         // The merged form keeps section-local positions; only the renderer's
         // section path knows where each section sits.
         merged.vertices.insert(merged.vertices.end(), section.vertices.begin(),
                                section.vertices.end());
-        for (uint32_t index : section.indices) merged.indices.push_back(base + index);
+        for (size_t i = 0; i < section.indices.size(); ++i) {
+            auto& into = i < section.opaque_indices ? merged.indices : blended;
+            into.push_back(base + section.indices[i]);
+        }
         merged.quads_emitted += section.quads_emitted;
         merged.quads_culled += section.quads_culled;
     }
+    merged.opaque_indices = merged.indices.size();
+    merged.indices.insert(merged.indices.end(), blended.begin(), blended.end());
     return merged;
 }
 

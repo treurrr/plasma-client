@@ -33,6 +33,7 @@ FLAG_FLUID = 1 << 4
 QUAD_UVLOCK = 1 << 0
 QUAD_NO_SHADE = 1 << 1
 QUAD_NO_AO = 1 << 2
+QUAD_TRANSLUCENT = 1 << 3
 
 # A model only says a face is tinted, never which tint. Which one is a property
 # of the block, the way the game decides it: grass and foliage read different
@@ -172,6 +173,20 @@ def main(args):
             texture_name_offsets.append(intern(path))
         return textures[path]
 
+    # A texture with fractional alpha - water, ice, stained glass - has to be
+    # blended, not cut out, and blending has to happen after everything solid.
+    translucent_textures = {}
+
+    def translucent(path):
+        if path not in translucent_textures:
+            try:
+                with Image.open(io.BytesIO(assets.zip.read(f"assets/minecraft/textures/{path}.png"))) as image:
+                    alpha = image.convert("RGBA").getchannel("A").getextrema()
+                translucent_textures[path] = 0 < alpha[0] < 255 or 0 < alpha[1] < 255
+            except KeyError:
+                translucent_textures[path] = False
+        return translucent_textures[path]
+
     quad_blob = bytearray()
     quad_offsets = [0]
     state_block = []
@@ -197,7 +212,8 @@ def main(args):
                 tint_kind(name, tint),
                 ((1 if q["uvlock"] else 0) |
                  (0 if q.get("shade", True) else QUAD_NO_SHADE) |
-                 (0 if q.get("ambientocclusion", True) else QUAD_NO_AO)),
+                 (0 if q.get("ambientocclusion", True) else QUAD_NO_AO) |
+                 (QUAD_TRANSLUCENT if translucent(q["texture"]) else 0)),
                 (q["rotation"][0] // 90) % 4,
                 (q["rotation"][1] // 90) % 4,
             ))
