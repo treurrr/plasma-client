@@ -3,6 +3,7 @@
 #include "mcpp/ui/widgets.hpp"
 #include "mcpp/ui/world.hpp"
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -53,7 +54,7 @@ public:
 
 protected:
     World* world() const;
-    ContainerMenu* menu() const;
+    virtual ContainerMenu* menu() const;
     void render_contents(GuiGraphics& gfx, double mx, double my);
     void render_carried_item(GuiGraphics& gfx, double mx, double my);
     void render_tooltip(GuiGraphics& gfx, double mx, double my);
@@ -164,6 +165,91 @@ private:
     SpriteButton* book_button_ = nullptr;
     float x_mouse_ = 0.0f;
     float y_mouse_ = 0.0f;
+};
+
+// The creative tabs as the game builds them, baked by tools/bake_creative.py.
+struct CreativeTab {
+    enum class Type : uint8_t { Category, Inventory, Hotbar, Search };
+    std::string key;
+    std::string title;          // translation key
+    std::string background;     // "container/creative_inventory/tab_items"
+    Type type = Type::Category;
+    bool top = true;
+    int column = 0;
+    bool aligned_right = false;
+    bool show_title = true;
+    bool can_scroll = true;
+    int32_t icon = 0;
+    std::vector<ItemStack> items;
+    // A stack's own name where it differs from its item's: enchanted books,
+    // potions, paintings.
+    std::vector<std::string> names;
+};
+
+struct CreativeTabs {
+    std::vector<CreativeTab> tabs;
+    std::vector<ItemStack> search;
+    std::vector<std::string> search_names;
+    bool load(const std::filesystem::path& path, const ItemTable& items);
+    static std::filesystem::path default_path(int32_t protocol);
+};
+
+class CreativeModeInventoryScreen : public AbstractContainerScreen {
+public:
+    CreativeModeInventoryScreen(const CreativeTabs* tabs, bool operator_tab);
+    void init() override;
+    void tick() override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
+    bool mouse_clicked(double mx, double my, int button) override;
+    bool mouse_released(double mx, double my, int button) override;
+    bool mouse_dragged(double mx, double my, int button, double dx, double dy) override;
+    bool mouse_scrolled(double mx, double my, double dx, double dy) override;
+    bool key_pressed(const KeyEvent& event) override;
+    bool key_released(const KeyEvent& event) override;
+    bool char_typed(uint32_t code, int mods) override;
+
+    size_t selected() const { return selected_; }
+    void select_tab(size_t tab);
+    float scroll_offset() const { return scroll_; }
+
+protected:
+    ContainerMenu* menu() const override;
+    void render_labels(GuiGraphics& gfx) override;
+    void render_bg(GuiGraphics& gfx, double mx, double my) override;
+    bool has_clicked_outside(double mx, double my, int left, int top) const override;
+    void slot_clicked(const ScreenSlot* slot, int index, int button, ClickType type) override;
+
+private:
+    const CreativeTab& tab() const { return tabs_->tabs[selected_]; }
+    bool shown(const CreativeTab& tab) const;
+    int tab_x(const CreativeTab& tab) const;
+    int tab_y(const CreativeTab& tab) const;
+    bool tab_clicked(const CreativeTab& tab, double x, double y) const;
+    void render_tab_button(GuiGraphics& gfx, const CreativeTab& tab);
+    bool inside_scrollbar(double mx, double my) const;
+    bool can_scroll() const;
+    int row_count() const;
+    int row_for_scroll(float scroll) const;
+    void scroll_to(float scroll);
+    void refresh_search_results();
+    void sync_creative_slots(const std::vector<std::pair<int16_t, ItemStack>>& changed);
+    std::vector<std::vector<Run>> creative_tooltip(const GuiGraphics& gfx, const ItemStack& stack,
+                                                   int picker_index) const;
+
+    const CreativeTabs* tabs_;
+    bool operator_tab_;
+    size_t selected_ = 0;
+    float scroll_ = 0.0f;
+    bool scrolling_ = false;
+    bool ignore_text_input_ = false;
+    mutable bool has_clicked_outside_ = false;
+    std::unique_ptr<EditBox> search_;
+    std::vector<ItemStack> items_;
+    std::vector<std::string> item_names_;
+    // The picker's own menu: 45 slots of the tab, then the hotbar.
+    mutable ContainerMenu picker_;
+    std::vector<ScreenSlot> picker_slots_;
+    std::vector<ScreenSlot> inventory_slots_;
 };
 
 } // namespace mcpp::ui

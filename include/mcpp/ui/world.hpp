@@ -51,6 +51,9 @@ struct World {
     std::function<void(GuiGraphics&, int x0, int y0, int x1, int y1, int size, float y_offset,
                        float mouse_x, float mouse_y)>
         draw_player;
+    // Creative: the cursor and the slots are the client's to say; this hands
+    // the menu's current state to the game without a click packet.
+    std::function<void()> commit;
     RecipeBookView recipe_book;
     std::function<void(bool open, bool filtering)> recipe_book_changed;
     // The translated name an item shows, with its rarity colour.

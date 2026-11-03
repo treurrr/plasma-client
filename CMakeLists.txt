@@ -121,6 +121,7 @@ add_library(mcpp_net STATIC
     src/ui/container.cpp
     src/ui/screens/container_screen.cpp
     src/ui/screens/registry.cpp
+    src/ui/screens/creative_screen.cpp
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp

@@ -4,6 +4,7 @@
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/ui/container_screen.hpp"
 #include "mcpp/ui/menu.hpp"
+#include "mcpp/ui/screens.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -108,6 +109,12 @@ void screens_start(Game& game) {
     world.creative_set = [&game](int16_t slot, const mcpp::ItemStack& stack) {
         game.session->send_creative_slot(slot, stack);
     };
+    world.commit = [&game]() {
+        auto& menu = game.screens.menu;
+        std::array<mcpp::ItemStack, mcpp::Inventory::kSlots> slots{};
+        for (size_t i = 0; i < slots.size() && i < menu.slots.size(); ++i) slots[i] = menu.slots[i];
+        game.session->predict_inventory(slots, menu.carried);
+    };
     manager.platform.get_clipboard = [&window]() { return window.clipboard(); };
     manager.platform.set_clipboard = [&window](const std::string& text) {
         window.set_clipboard(text);
@@ -142,7 +149,12 @@ void screens_input(Game& game) {
         if (manager.current() == nullptr) {
             if (event.type == Type::Key && event.action == GLFW_PRESS && !window.typing() &&
                 !screens.menu_open && bound(game, "key.inventory", event.key)) {
-                open_screen(game, std::make_shared<mcpp::ui::InventoryScreen>());
+                if (game.session->vitals().game_mode == 1) {
+                    open_screen(game, std::make_shared<mcpp::ui::CreativeModeInventoryScreen>(
+                                          &mcpp::ui::creative_tabs(), false));
+                } else {
+                    open_screen(game, std::make_shared<mcpp::ui::InventoryScreen>());
+                }
             }
             continue;
         }

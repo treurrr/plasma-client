@@ -16,4 +16,8 @@ struct ScreenName {
 };
 const std::vector<ScreenName>& screen_names();
 
+struct CreativeTabs;
+// The creative tabs baked by tools/bake_creative.py, read once.
+const CreativeTabs& creative_tabs();
+
 } // namespace mcpp::ui
