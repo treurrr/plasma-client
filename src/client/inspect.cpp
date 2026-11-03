@@ -74,11 +74,17 @@ int inspect(const std::string& target, const std::string& username, double secon
         options.host = address.host;
         options.port = address.port;
     }
-    options.username = username;
+    std::string name = username;
+    if (options.replay.empty()) options.profile = signed_in_profile(name);
+    options.username = name;
     options.record = record;
     std::optional<std::chrono::steady_clock::time_point> in_world;
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    // Light is the renderer's; inspect skips it whole rather than leave it half read.
+    events.world.on_light_update = [](int32_t, int32_t, mcpp::ByteBuffer& light) {
+        light.read_bytes(light.remaining());
+    };
     events.player.on_position = [&](double, double, double, float, float) {
         if (!in_world) in_world = std::chrono::steady_clock::now();
     };

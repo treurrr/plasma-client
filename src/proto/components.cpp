@@ -270,6 +270,7 @@ std::string link(Node& node, const std::map<std::string_view, const Node*, std::
             }
             node.cases.push_back(std::move(cases));
         }
+        if (node.cases.empty()) return std::format("no registry {}", node.argument);
     }
     return {};
 }
