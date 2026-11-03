@@ -84,7 +84,40 @@ struct Entity {
     float head_yaw = 0.0f;
     int32_t data = 0;   // means something different for every type that uses it
     bool on_ground = false;
+    // What it rides and what rides it, by network id; -1 for nothing.
+    int32_t vehicle = -1;
+    std::vector<int32_t> passengers;
+    int32_t leashed_to = -1;
 };
+
+// One line of the player list. The list is what turns a player entity's uuid
+// into a name and a skin: add_entity carries neither.
+struct PlayerInfo {
+    struct Property {
+        std::string name;
+        std::string value;
+        std::string signature;
+    };
+    std::string uuid;
+    std::string name;
+    // "textures" holds the skin: base64 of a JSON document naming its url.
+    std::vector<Property> properties;
+    bool chat_session = false;
+    int32_t game_mode = 0;
+    bool listed = false;
+    int32_t latency = 0;
+    std::string display_name;   // empty when the server set none
+    int32_t list_priority = 0;
+    bool show_hat = true;
+
+    const Property* property(std::string_view wanted) const {
+        for (const auto& p : properties) if (p.name == wanted) return &p;
+        return nullptr;
+    }
+};
+
+// The uuid of an entity in the form the player list uses.
+std::string uuid_string(const uint64_t uuid[2]);
 
 // A potion effect on something, as the server last described it. Duration is
 // in ticks, -1 for one that never runs out.
@@ -156,6 +189,17 @@ struct SessionEvents {
         std::function<void(const Entity&)> on_add;
         std::function<void(const Entity&)> on_move;
         std::function<void(int32_t)> on_remove;
+        // A player joined the list or a line of it changed; and one left it.
+        std::function<void(const PlayerInfo&)> on_player_info;
+        std::function<void(std::string_view)> on_player_remove;
+        // One status byte: hurt, death, a totem, a sheep eating, sixty-odd more.
+        std::function<void(int32_t, uint8_t)> on_event;
+        // An arm swing, a wake-up, a critical hit's sparks.
+        std::function<void(int32_t, uint8_t)> on_animate;
+        // The red flash, with the direction the hit came from.
+        std::function<void(int32_t, float)> on_hurt;
+        // Who rides whom changed; the entity is the vehicle.
+        std::function<void(const Entity&)> on_passengers;
     } entities;
 
     struct Player {
@@ -242,6 +286,18 @@ public:
     const std::map<int32_t, Entity>& entities() const { return entities_.entities; }
     // What the server says our latency is, or -1 before it has said.
     int32_t ping_ms() const { return entities_.ping_ms; }
+    // Everyone on the player list, by uuid, listed or not.
+    const std::map<std::string, PlayerInfo, std::less<>>& players() const {
+        return entities_.players;
+    }
+    const PlayerInfo* player(std::string_view uuid) const {
+        const auto found = entities_.players.find(uuid);
+        return found == entities_.players.end() ? nullptr : &found->second;
+    }
+    // The movement keys and sneak, as a held state rather than a press: the
+    // server decides from these whether the player is crouching. Bits in the
+    // game's order: forward, back, left, right, jump, sneak, sprint.
+    void send_input_state(uint8_t keys);
     // What the server put on an entity, ours included; empty for one it has
     // said nothing about.
     const std::map<int32_t, MobEffect>& effects(int32_t entity) const;
@@ -332,6 +388,7 @@ private:
         bool in_bundle = false;
         bool player_list_broken = false;
         int32_t ping_ms = -1;
+        std::map<std::string, PlayerInfo, std::less<>> players;
     };
     EntityState entities_;
     void read_player_list(ByteBuffer& in);
