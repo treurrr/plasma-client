@@ -81,11 +81,11 @@ int32_t SoundIndex::total_weight(std::string_view event) const {
 }
 
 std::optional<ResolvedSound> SoundIndex::pick(std::string_view event,
-                                              LegacyRandom& random) const {
+                                              jmath::LegacyRandom& random) const {
     return pick(event, random, 0);
 }
 
-std::optional<ResolvedSound> SoundIndex::pick(std::string_view event, LegacyRandom& random,
+std::optional<ResolvedSound> SoundIndex::pick(std::string_view event, jmath::LegacyRandom& random,
                                               int depth) const {
     const auto* definition = find(event);
     const int32_t total = total_weight(event);

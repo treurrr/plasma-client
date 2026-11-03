@@ -1,7 +1,7 @@
 #pragma once
 #include "audio/categories.hpp"
 #include "audio/mixer.hpp"
-#include "audio/random.hpp"
+#include "mcpp/jmath.hpp"
 #include "audio/sounds.hpp"
 
 #include <array>
@@ -84,7 +84,7 @@ public:
     Mixer& mixer() { return mixer_; }
 
     // The packet's seed, or the client's own random for sounds it makes itself.
-    uint64_t play(const PlayRequest& request, LegacyRandom& random);
+    uint64_t play(const PlayRequest& request, jmath::LegacyRandom& random);
     uint64_t play(const PlayRequest& request);
     // An empty event stops every event; no category stops every category.
     void stop(std::optional<Category> category, std::string_view event);
@@ -128,7 +128,7 @@ private:
     FileSource files_;
     Mixer mixer_;
     Listener listener_;
-    LegacyRandom own_random_{0};
+    jmath::LegacyRandom own_random_{0};
     std::map<std::string, std::shared_ptr<const Pcm>, std::less<>> cache_;
     std::map<uint64_t, Active> voices_;
     double time_ = 0.0;

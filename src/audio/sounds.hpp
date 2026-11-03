@@ -1,5 +1,5 @@
 #pragma once
-#include "audio/random.hpp"
+#include "mcpp/jmath.hpp"
 
 #include <map>
 #include <optional>
@@ -55,10 +55,10 @@ public:
     // Picks a variant the way the weights say, one draw per level, following
     // event references to the file they end in. Nothing when the event is not
     // defined, which is what intentionally_empty is.
-    std::optional<ResolvedSound> pick(std::string_view event, LegacyRandom& random) const;
+    std::optional<ResolvedSound> pick(std::string_view event, jmath::LegacyRandom& random) const;
 
 private:
-    std::optional<ResolvedSound> pick(std::string_view event, LegacyRandom& random,
+    std::optional<ResolvedSound> pick(std::string_view event, jmath::LegacyRandom& random,
                                       int depth) const;
     std::map<std::string, SoundEventDefinition, std::less<>> events_;
 };

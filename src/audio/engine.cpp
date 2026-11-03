@@ -35,7 +35,7 @@ std::shared_ptr<const Pcm> SoundEngine::load(const std::string& file) {
 
 uint64_t SoundEngine::play(const PlayRequest& request) { return play(request, own_random_); }
 
-uint64_t SoundEngine::play(const PlayRequest& request, LegacyRandom& random) {
+uint64_t SoundEngine::play(const PlayRequest& request, jmath::LegacyRandom& random) {
     Active voice;
     voice.request = request;
     const auto sound = index_.pick(request.event, random);

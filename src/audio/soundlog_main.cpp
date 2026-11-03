@@ -250,7 +250,7 @@ int do_replay(const std::string& file, bool realtime) {
 
     std::map<std::pair<int32_t, int32_t>, mcpp::world::Chunk> world;
     std::map<int32_t, mcpp::Entity> entities;
-    mcpp::audio::LegacyRandom client_random(1);
+    mcpp::jmath::LegacyRandom client_random(1);
     mcpp::Session* session_ptr = nullptr;
     double now = 0.0;
 
@@ -340,7 +340,7 @@ int do_replay(const std::string& file, bool realtime) {
                                  now, cue.entity >= 0 ? "sound_entity" : "sound", cue.event,
                                  request.x, request.y, request.z, cue.volume, cue.pitch, cue.seed,
                                  cue.entity >= 0 ? std::format(" entity {}", cue.entity) : "");
-        mcpp::audio::LegacyRandom seeded(cue.seed);
+        mcpp::jmath::LegacyRandom seeded(cue.seed);
         engine.play(request, seeded);
     };
     events.sound.on_stop = [&](int32_t category, std::string_view name) {

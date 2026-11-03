@@ -4,7 +4,7 @@
 #include "audio/engine.hpp"
 #include "audio/footsteps.hpp"
 #include "audio/mixer.hpp"
-#include "audio/random.hpp"
+#include "mcpp/jmath.hpp"
 #include "audio/sounds.hpp"
 
 #include "mcpp/assets/object_store.hpp"
@@ -21,6 +21,7 @@
 namespace {
 
 using namespace mcpp::audio;
+namespace jmath = mcpp::jmath;
 
 int failures = 0;
 
@@ -58,11 +59,11 @@ void test_random_matches_java() {
     };
     for (const auto& row : rows) {
         for (int i = 0; i < 11; ++i) {
-            LegacyRandom random(row.seed);
+            jmath::LegacyRandom random(row.seed);
             check(random.next_int(bounds[i]) == row.by_bound[i],
                   std::format("nextInt({}) for seed {}", bounds[i], row.seed));
         }
-        LegacyRandom random(row.seed);
+        jmath::LegacyRandom random(row.seed);
         check(random.next_int(1 << 30) >= 0, "a power of two bound stays in range");
         random.set_seed(row.seed);
         check(random.next(32) == row.next_int, std::format("nextInt() for seed {}", row.seed));
@@ -105,7 +106,7 @@ void test_sounds_json() {
           "attenuation, stream and preload");
     check(index.find("intentionally_empty") == nullptr, "an undefined event is not there");
 
-    LegacyRandom random(0);
+    jmath::LegacyRandom random(0);
     check(!index.pick("block.empty", random).has_value(), "an empty event plays nothing");
     random.set_seed(0);
     check(!index.pick("intentionally_empty", random).has_value(), "nor does a missing one");
@@ -120,18 +121,18 @@ void test_sounds_json() {
                  {7046029254386353131LL, "minecraft/sounds/step/stone1.ogg"},
                  {-1, "minecraft/sounds/step/stone2.ogg"}};
     for (const auto& pick : picks) {
-        LegacyRandom seeded(pick.seed);
+        jmath::LegacyRandom seeded(pick.seed);
         const auto sound = index.pick("block.test.step", seeded);
         check(sound && sound->file == pick.file, std::format("weighted pick for seed {}", pick.seed));
     }
 
-    LegacyRandom seeded(7046029254386353131LL);
+    jmath::LegacyRandom seeded(7046029254386353131LL);
     const auto alias = index.pick("block.test.alias", seeded);
     check(alias && alias->event == "block.test.alias", "an alias plays under its own name");
     check(alias && near(alias->pitch, 0.5) && !alias->file.empty(),
           "an alias multiplies into what it points at");
 
-    LegacyRandom other(1);
+    jmath::LegacyRandom other(1);
     const auto song = index.pick("music.test", other);
     check(song && song->file == "other/sounds/music/song.ogg" && song->stream,
           "a namespace picks the file's directory");
@@ -273,7 +274,7 @@ void test_engine_on_assets() {
     request.z = 0.0;
     request.volume = 1.0f;
     request.pitch = 1.0f;
-    LegacyRandom random(5);
+    jmath::LegacyRandom random(5);
     const auto id = engine.play(request, random);
     check(id != 0 && !lines.empty() && lines.back().what == "start", "the anvil starts");
     if (!lines.empty()) {
