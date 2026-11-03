@@ -1,0 +1,4 @@
+namespace mcpp::audio {
+extern const char* const kBlockSoundsText;
+const char* const kBlockSoundsText = R"plasma(@MCPP_BLOCK_SOUNDS@)plasma";
+} // namespace mcpp::audio

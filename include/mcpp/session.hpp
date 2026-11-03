@@ -170,6 +170,28 @@ struct SessionEvents {
     } ui;
 
     struct Sound {
+        // A sound the server plays: at a place, or on an entity it follows.
+        // The event is the registry's name, or the one the server wrote out
+        // inline with its own range; the seed picks the variant.
+        struct Cue {
+            std::string event;
+            bool has_fixed_range = false;
+            float fixed_range = 0.0f;
+            int32_t category = 0;
+            int32_t entity = -1;   // -1 for one at a place
+            double x = 0.0;
+            double y = 0.0;
+            double z = 0.0;
+            float volume = 1.0f;
+            float pitch = 1.0f;
+            int64_t seed = 0;
+        };
+        std::function<void(const Cue&)> on_sound;
+        // Category -1 and an empty name each mean all of them.
+        std::function<void(int32_t, std::string_view)> on_stop;
+        // The numbered effects the client plays from its own tables: a block
+        // breaking, an anvil landing, a record starting. Particles hang here too.
+        std::function<void(int32_t, int32_t, int32_t, int32_t, int32_t, bool)> on_level_event;
     } sound;
 
     struct Data {
