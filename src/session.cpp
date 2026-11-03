@@ -345,6 +345,13 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
             status("first chunk packet written out raw");
         }
         auto chunk = world::read_chunk(in);
+        // The packet should end exactly here. Anything left over means the
+        // light format moved and we are reading the next chunk wrong.
+        if (in.remaining() != 0 && !light_format_warned_) {
+            light_format_warned_ = true;
+            status(std::format("{} bytes left after a chunk: the light format has changed",
+                               in.remaining()));
+        }
         if (events_.on_chunk) events_.on_chunk(chunk);
         return true;
     }

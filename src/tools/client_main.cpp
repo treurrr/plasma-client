@@ -764,8 +764,11 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         for (int32_t y = static_cast<int32_t>(first.sections.size()) * 16 - 1; y >= 0; --y) {
             const int32_t state = first.block_state(8, y, 8);
             if (state != 0) {
-                column = std::format("highest block at (8,8) of chunk ({},{}): y={} state={} {}",
-                                     first.x, first.z, y - 64, state, table.block_name(state));
+                column = std::format("highest block at (8,8) of chunk ({},{}): y={} state={} {}"
+                                     ", sky light {} above it and {} ten blocks under it",
+                                     first.x, first.z, y - 64, state, table.block_name(state),
+                                     first.sky_light_at(8, y + 1, 8),
+                                     first.sky_light_at(8, y - 10, 8));
                 break;
             }
         }

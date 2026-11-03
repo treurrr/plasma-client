@@ -82,6 +82,67 @@ int32_t Chunk::block_state(int32_t local_x, int32_t y_index, int32_t local_z) co
     return sections[section].blocks.at(index);
 }
 
+uint8_t LightLayer::at(size_t slot, int32_t local_x, int32_t y, int32_t local_z) const {
+    if (slot >= sections.size() || sections[slot].empty()) return 0;
+    const size_t index = static_cast<size_t>(y) * 256 + static_cast<size_t>(local_z) * 16 +
+                         static_cast<size_t>(local_x);
+    const uint8_t packed = sections[slot][index >> 1];
+    return (index & 1) != 0 ? static_cast<uint8_t>(packed >> 4) : static_cast<uint8_t>(packed & 0x0F);
+}
+
+uint8_t Chunk::sky_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const {
+    if (local_x < 0 || local_x > 15 || local_z < 0 || local_z > 15) return 15;
+    if (y_index < 0 || y_index >= static_cast<int32_t>(sections.size()) * 16) return 15;
+    return sky_light.at(static_cast<size_t>(y_index / 16) + 1, local_x, y_index % 16, local_z);
+}
+
+uint8_t Chunk::block_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const {
+    if (local_x < 0 || local_x > 15 || local_z < 0 || local_z > 15) return 0;
+    if (y_index < 0 || y_index >= static_cast<int32_t>(sections.size()) * 16) return 0;
+    return block_light.at(static_cast<size_t>(y_index / 16) + 1, local_x, y_index % 16, local_z);
+}
+
+namespace {
+
+std::vector<uint64_t> read_bitset(ByteBuffer& in) {
+    const int32_t count = in.read_varint();
+    if (count < 0 || count > 64) throw ProtocolError("implausible light bitset");
+    std::vector<uint64_t> words;
+    words.reserve(static_cast<size_t>(count));
+    for (int32_t i = 0; i < count; ++i) words.push_back(static_cast<uint64_t>(in.read_i64()));
+    return words;
+}
+
+bool bit(const std::vector<uint64_t>& words, size_t index) {
+    const size_t word = index >> 6;
+    return word < words.size() && ((words[word] >> (index & 63)) & 1) != 0;
+}
+
+// Arrays arrive in mask order, one per set bit, so they are matched to slots by
+// walking the mask rather than by any index in the packet.
+LightLayer read_light_layer(ByteBuffer& in, const std::vector<uint64_t>& present, size_t slots) {
+    LightLayer layer;
+    layer.sections.resize(slots);
+    const int32_t count = in.read_varint();
+    if (count < 0) throw ProtocolError("negative light array count");
+    int32_t taken = 0;
+    for (size_t slot = 0; slot < slots && taken < count; ++slot) {
+        if (!bit(present, slot)) continue;
+        const int32_t length = in.read_varint();
+        if (length != 2048) throw ProtocolError("light array is not 2048 bytes");
+        layer.sections[slot] = in.read_bytes(2048);
+        ++taken;
+    }
+    for (; taken < count; ++taken) {
+        const int32_t length = in.read_varint();
+        if (length < 0) throw ProtocolError("negative light array length");
+        in.read_bytes(static_cast<size_t>(length));
+    }
+    return layer;
+}
+
+} // namespace
+
 Chunk read_chunk(ByteBuffer& in) {
     Chunk chunk;
     chunk.x = in.read_i32();
@@ -120,6 +181,14 @@ Chunk read_chunk(ByteBuffer& in) {
         nbt::read_network_tag(in);
         chunk.block_entities.push_back(entity);
     }
+
+    const auto sky_mask = read_bitset(in);
+    const auto block_mask = read_bitset(in);
+    read_bitset(in);   // empty sky sections, which are zero anyway
+    read_bitset(in);   // empty block sections
+    const size_t slots = chunk.sections.size() + 2;
+    chunk.sky_light = read_light_layer(in, sky_mask, slots);
+    chunk.block_light = read_light_layer(in, block_mask, slots);
     return chunk;
 }
 

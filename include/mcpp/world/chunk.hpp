@@ -41,17 +41,32 @@ struct BlockEntity {
     int32_t type = 0;
 };
 
+// Half a byte per block, as the server sends it: 4096 nibbles for a section.
+// One slot per light section, which is the world sections plus one below and
+// one above. An empty slot means the server said the whole section was dark.
+struct LightLayer {
+    std::vector<std::vector<uint8_t>> sections;
+    uint8_t at(size_t slot, int32_t local_x, int32_t y, int32_t local_z) const;
+};
+
 struct Chunk {
     int32_t x = 0;
     int32_t z = 0;
     std::vector<ChunkSection> sections;
     std::vector<BlockEntity> block_entities;
+    LightLayer sky_light;
+    LightLayer block_light;
 
     size_t non_empty_sections() const;
     int32_t block_state(int32_t local_x, int32_t y_index, int32_t local_z) const;
+    // Light as the game stores it, 0 to 15. Outside the chunk, sky light is
+    // full and block light is none, which is what an unloaded neighbour should
+    // look like rather than a black wall.
+    uint8_t sky_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const;
+    uint8_t block_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const;
 };
 
-// Reads a level_chunk_with_light payload up to the light data, which is skipped.
+// Reads a level_chunk_with_light payload, light included.
 Chunk read_chunk(ByteBuffer& in);
 
 } // namespace mcpp::world

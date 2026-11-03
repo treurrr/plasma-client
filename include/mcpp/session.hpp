@@ -80,6 +80,7 @@ public:
     int32_t entity_id() const { return entity_id_; }
 
 private:
+    bool light_format_warned_ = false;
     void handshake();
     void run_login();
     void begin_configuration();
