@@ -56,6 +56,9 @@ public:
     uint32_t grass(size_t index, const Colormaps& maps) const;
     uint32_t foliage(size_t index, const Colormaps& maps) const;
     uint32_t water(size_t index) const;
+    // The game computes this one rather than storing it: a colder biome gets a
+    // deeper, bluer sky.
+    uint32_t sky(size_t index) const;
 
 private:
     std::vector<Biome> biomes_;

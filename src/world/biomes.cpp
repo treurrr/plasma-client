@@ -3,6 +3,7 @@
 #include "mcpp/image_png.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -33,6 +34,41 @@ uint32_t BiomeTable::foliage(size_t index, const Colormaps& maps) const {
     if (biome == nullptr) return kDefaultFoliage;
     if (biome->fixed_foliage) return biome->foliage;
     return maps.foliage(biome->temperature, biome->downfall);
+}
+
+namespace {
+
+uint32_t from_hsv(float hue, float saturation, float value) {
+    const float sector = std::fmod(hue * 6.0f, 6.0f);
+    const int step = static_cast<int>(sector);
+    const float fraction = sector - static_cast<float>(step);
+    const float p = value * (1.0f - saturation);
+    const float q = value * (1.0f - saturation * fraction);
+    const float u = value * (1.0f - saturation * (1.0f - fraction));
+    float rgb[3]{};
+    switch (step) {
+    case 0: rgb[0] = value; rgb[1] = u; rgb[2] = p; break;
+    case 1: rgb[0] = q; rgb[1] = value; rgb[2] = p; break;
+    case 2: rgb[0] = p; rgb[1] = value; rgb[2] = u; break;
+    case 3: rgb[0] = p; rgb[1] = q; rgb[2] = value; break;
+    case 4: rgb[0] = u; rgb[1] = p; rgb[2] = value; break;
+    default: rgb[0] = value; rgb[1] = p; rgb[2] = q; break;
+    }
+    uint32_t out = 0;
+    for (const float channel : rgb) {
+        out = (out << 8) | static_cast<uint32_t>(std::lround(std::clamp(channel, 0.0f, 1.0f) *
+                                                             255.0f));
+    }
+    return out;
+}
+
+} // namespace
+
+uint32_t BiomeTable::sky(size_t index) const {
+    const Biome* biome = at(index);
+    const float temperature = biome != nullptr ? biome->temperature : 0.8f;
+    const float shade = std::clamp(temperature / 3.0f, -1.0f, 1.0f);
+    return from_hsv(0.62222222f - shade * 0.05f, 0.5f + shade * 0.1f, 1.0f);
 }
 
 uint32_t BiomeTable::water(size_t index) const {

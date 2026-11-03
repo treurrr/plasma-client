@@ -47,7 +47,9 @@ void main() {
         float cover = step(0.5, texture(clouds, where / (kBlocksPerTexel * 256.0)).r);
         // Clouds thin out with distance instead of tiling to the horizon.
         float near = 1.0 - smoothstep(sky.zenith.w * 0.4, sky.zenith.w, travel);
-        colour = mix(colour, vec3(0.92, 0.94, 0.97), cover * near * 0.9);
+        // Seen from below the deck is its underside: seven tenths of white,
+        // laid over the sky at the alpha the game uses.
+        colour = mix(colour, vec3(0.7), cover * near * 0.8);
     }
 
     out_colour = vec4(colour, 1.0);

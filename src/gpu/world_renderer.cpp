@@ -53,11 +53,6 @@ void parallel_for(size_t count, Body&& body) {
 // conversion it would not undo.
 constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
-// The sky the world is cleared to, and the colour distance fades into.
-constexpr float kSky[3] = {0.45f, 0.62f, 0.86f};
-
-// Straight up is a deeper blue than the band the land fades into.
-constexpr float kSkyZenith[3] = {0.35f, 0.55f, 0.93f};
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 void check(VkResult result, std::string_view what) {
@@ -1136,7 +1131,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue.color = {{kSky[0], kSky[1], kSky[2], 1.0f}};
+    color.clearValue.color = {{fog_[0], fog_[1], fog_[2], 1.0f}};
 
     VkRenderingAttachmentInfo depth_attachment{};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -1155,7 +1150,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     rendering.pDepthAttachment = &depth_attachment;
 
     vkCmdBeginRendering(command, &rendering);
-    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, kSkyZenith, kSky);
+    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, zenith_, fog_);
     if (index_count_ > 0) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width_),
@@ -1169,9 +1164,9 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         push.eye[1] = camera.eye[1];
         push.eye[2] = camera.eye[2];
         push.eye[3] = camera.fog_start;
-        push.sky[0] = kSky[0];
-        push.sky[1] = kSky[1];
-        push.sky[2] = kSky[2];
+        push.sky[0] = fog_[0];
+        push.sky[1] = fog_[1];
+        push.sky[2] = fog_[2];
         push.sky[3] = camera.fog_end;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
@@ -1270,6 +1265,26 @@ double WorldRenderer::draw(const Camera& camera) {
     return last_gpu_ms_;
 }
 
+void WorldRenderer::set_sky_colours(uint32_t zenith, uint32_t fog) {
+    const auto unpack = [](uint32_t packed, float out[3]) {
+        out[0] = static_cast<float>((packed >> 16) & 0xFF) / 255.0f;
+        out[1] = static_cast<float>((packed >> 8) & 0xFF) / 255.0f;
+        out[2] = static_cast<float>(packed & 0xFF) / 255.0f;
+    };
+    unpack(zenith, zenith_);
+    unpack(fog, fog_);
+}
+
+void WorldRenderer::set_biome_colours(std::span<const uint32_t> colours) {
+    if (biome_colours_ == nullptr) return;
+    const size_t slots = std::min<size_t>(colours.size() / 4, kBiomeSlots);
+    for (size_t i = 0; i < slots; ++i) {
+        for (size_t channel = 0; channel < 4; ++channel) {
+            biome_colours_[i * 4 + channel] = colours[i * 4 + channel];
+        }
+    }
+}
+
 VkFormat WorldRenderer::colour_format() const { return kColorFormat; }
 
 std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& overlay) {
@@ -1305,7 +1320,7 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue.color = {{kSky[0], kSky[1], kSky[2], 1.0f}};
+    color.clearValue.color = {{fog_[0], fog_[1], fog_[2], 1.0f}};
 
     VkRenderingAttachmentInfo depth_attachment{};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -1324,7 +1339,7 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
     rendering.pDepthAttachment = &depth_attachment;
 
     vkCmdBeginRendering(command, &rendering);
-    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, kSkyZenith, kSky);
+    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, zenith_, fog_);
     if (index_count_ > 0) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width_),
@@ -1338,9 +1353,9 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
         push.eye[1] = camera.eye[1];
         push.eye[2] = camera.eye[2];
         push.eye[3] = camera.fog_start;
-        push.sky[0] = kSky[0];
-        push.sky[1] = kSky[1];
-        push.sky[2] = kSky[2];
+        push.sky[0] = fog_[0];
+        push.sky[1] = fog_[1];
+        push.sky[2] = fog_[2];
         push.sky[3] = camera.fog_end;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));

@@ -22,9 +22,11 @@ void main() {
     if (texel.a < 0.1) discard;
     vec3 colour = texel.rgb * in_tint * in_shade * in_light;
     if (push.sky.w > 0.0) {
+        // Linear, the way the game fades, and starting far out rather than
+        // halfway: a squared curve pulls the middle distance into the haze.
         float fog = clamp((in_distance - push.eye.w) / max(push.sky.w - push.eye.w, 1.0),
                           0.0, 1.0);
-        colour = mix(colour, push.sky.rgb, fog * fog);
+        colour = mix(colour, push.sky.rgb, fog);
     }
     out_color = vec4(colour, texel.a);
 }

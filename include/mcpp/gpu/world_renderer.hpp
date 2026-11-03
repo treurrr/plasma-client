@@ -65,6 +65,10 @@ public:
     // 0xRRGGBB, in the order the server listed the biomes.
     static constexpr uint32_t kBiomeSlots = 256;
     void set_biome_colours(std::span<const uint32_t> colours);
+    // The blue straight up and the pale blue the land fades into, both
+    // 0xRRGGBB. The game works them out from the biome rather than picking
+    // them, so the client does the same.
+    void set_sky_colours(uint32_t zenith, uint32_t fog);
     void record_present(VkCommandBuffer command, const Camera& camera);
     VkFormat colour_format() const;
     VkImage color_image() const { return color_; }
@@ -99,6 +103,8 @@ private:
 
     Device& device_;
     const Sky* sky_ = nullptr;
+    float zenith_[3] = {0.4745f, 0.6549f, 1.0f};
+    float fog_[3] = {0.7529f, 0.8471f, 1.0f};
     uint32_t width_;
     uint32_t height_;
 

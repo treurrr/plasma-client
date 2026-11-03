@@ -1068,7 +1068,8 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     }
 
     // Fog that reaches exactly as far as the world we loaded, so the edge of
-    // the loaded area fades into the sky instead of ending in mid-air.
+    // the loaded area fades into the sky instead of ending in mid-air. The
+    // game keeps it to the last stretch of the view, not half of it.
     {
         float reach = 0.0f;
         for (const float corner_x : {min_cx * 16.0f, (max_cx + 1) * 16.0f}) {
@@ -1078,8 +1079,17 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                 reach = std::max(reach, std::sqrt(dx * dx + dz * dz));
             }
         }
-        camera.fog_end = reach * 0.92f;
-        camera.fog_start = reach * 0.45f;
+        camera.fog_end = reach;
+        camera.fog_start = reach * 0.85f;
+    }
+
+    // The sky follows the biome the camera stands in, the way the game works
+    // it out from that biome's temperature.
+    if (!session.biomes().empty() && !chunks.empty()) {
+        const auto& here = chunks.front();
+        const int32_t biome = here.biome_at(8, 64 + 64, 8);
+        renderer.set_sky_colours(session.biomes().sky(static_cast<size_t>(std::max(biome, 0))),
+                                 0xC0D8FFu);
     }
 
     mcpp::gpu::WorldRenderer::Overlay overlay;
