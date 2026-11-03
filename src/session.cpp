@@ -47,7 +47,6 @@ std::optional<uint32_t> read_colour(const nbt::Value& value) {
     return rgb & 0xFFFFFFu;
 }
 
-constexpr int32_t kNextStateLogin = 2;
 constexpr int kIdleTimeoutMs = 40000;      // keep-alives arrive every 15s
 
 void write_nil_uuid(ByteBuffer& out) {
@@ -106,8 +105,8 @@ void Session::handshake() {
     out.write_varint(options_.protocol);
     out.write_string(options_.host);
     out.write_u16(options_.port);
-    out.write_varint(kNextStateLogin);
-    send(0x00, out);
+    out.write_varint(intent_);
+    send(ids_->handshake_sb.intention, out);
 
     state_ = SessionState::Login;
     status(std::format("connected to {}:{} as protocol {}", options_.host, options_.port,
@@ -217,12 +216,15 @@ void Session::send_client_information() {
 void Session::begin_configuration() {
     state_ = SessionState::Configuration;
     connection_.socket().set_receive_timeout(kIdleTimeoutMs);
+    send_brand();
     send_client_information();
 }
 
 bool Session::handle_configuration(PacketConnection::Packet& packet) {
     const auto& cb = ids_->config_cb;
     auto& in = packet.data;
+
+    if (handle_data_common(packet, true)) return true;
 
     if (packet.id == cb.keep_alive) {
         ByteBuffer out;

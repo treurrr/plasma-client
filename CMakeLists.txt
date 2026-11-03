@@ -126,6 +126,11 @@ add_library(mcpp_net STATIC
     src/ui/widgets.cpp
     src/ui/server_list.cpp
     src/proto/packet_ids_gen.cpp
+    src/proto/components.cpp
+    src/proto/components_gen.cpp
+    src/proto/metadata.cpp
+    src/proto/metadata_gen.cpp
+    src/proto/commands.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)
@@ -150,7 +155,7 @@ if(glfw3_FOUND)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
     src/client/common.cpp src/client/screenshot.cpp
-    src/client/clicktest.cpp ${MCPP_PLAY_SOURCES})
+    src/client/clicktest.cpp src/client/inspect.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
@@ -173,6 +178,7 @@ mcpp_test(packet_ids)
 mcpp_test(assets)
 mcpp_test(ui)
 mcpp_test(jmath)
+mcpp_test(data)
 
 # The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it
 # with the game's own code. One line per probe.
@@ -183,3 +189,4 @@ function(mcpp_probe name)
 endfunction()
 
 mcpp_probe(jmath_probe)
+mcpp_probe(codec_probe)

@@ -6,10 +6,14 @@ Usage: bake_all.py <client.jar> <reports/blocks.json> <protocol> [out-dir]
 Out come block geometry, the texture array, the colour maps biome tints are
 looked up in, the sky, items, the gui, the built-in registries and the language.
 All of it is read from the installation the player already owns; none of it is
-committed here or shipped.
+committed here or shipped. The tables only the game's code knows (entity sizes
+and the like) come from exporters compiled against the remapped client jar,
+~/mc-reference/<version>/client-named.jar or $PLASMA_REFERENCE_JAR, and are
+skipped, saying so, without it or a JDK.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -26,6 +30,22 @@ def default_directory():
 def run(script, *args):
     print(f"-- {script}")
     subprocess.run([sys.executable, str(TOOLS / script), *map(str, args)], check=True)
+
+
+def ask_the_game(script, *args):
+    """A bake that runs an exporter against the remapped client jar, skipped
+    with the reason when that jar or a JDK is not there."""
+    sys.path.insert(0, str(TOOLS / "oracle"))
+    from run import reference_jar
+    if not reference_jar().is_file():
+        print(f"-- {script} skipped: no {reference_jar()} (run ~/mc-reference/decompile.sh "
+              "or set PLASMA_REFERENCE_JAR)")
+        return False
+    if not (shutil.which("javac") and shutil.which("java")):
+        print(f"-- {script} skipped: no JDK (javac and java) on the PATH")
+        return False
+    run(script, *args)
+    return True
 
 
 def main(args):
@@ -45,6 +65,7 @@ def main(args):
         out / f"items-{protocol}.plit")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu",
         Path(report).parent / "registries.json", Path(report).parent / "items.json")
+    ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")
     # The registries the client has built in, in id order: what an attribute,
     # an effect or an entity type number means.
     registries = json.loads((Path(report).parent / "registries.json").read_text())

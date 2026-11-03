@@ -5,25 +5,18 @@
 namespace mcpp {
 namespace {
 
-// One stack off the wire. Data components carry a body whose shape depends on
-// the component type, and those shapes are not in the reports, so a stack that
-// has any is read as far as its id and count and then gives up: `readable`
-// tells the caller that everything after this point in the packet is lost.
-ItemStack read_slot(ByteBuffer& in, bool& readable) {
-    ItemStack stack;
-    const int32_t count = in.read_varint();
-    if (count <= 0) return stack;
-    stack.count = count;
-    stack.id = in.read_varint();
-    const int32_t added = in.read_varint();
-    const int32_t removed = in.read_varint();
-    if (added != 0) {
-        stack.readable = false;
+// One stack off the wire. A component whose layout is wrong or missing loses
+// the rest of the packet with it: `readable` and `problem` say so.
+ItemStack read_slot(ByteBuffer& in, int32_t protocol, bool& readable, std::string& problem) {
+    try {
+        return proto::read_item_stack(in, protocol);
+    } catch (const ProtocolError& error) {
         readable = false;
+        problem = error.what();
+        ItemStack stack;
+        stack.readable = false;
         return stack;
     }
-    for (int32_t i = 0; i < removed; ++i) in.read_varint();
-    return stack;
 }
 
 int64_t pack_position(int32_t x, int32_t y, int32_t z) {
@@ -124,16 +117,24 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         const int32_t state = in.read_varint();
         if (container == 0) player_.container_state = state;
         const int32_t count = in.read_varint();
-        if (container != 0 || count < 0) return true;   // only our own inventory for now
+        if (count < 0) return true;
+        // Every container is read whole; only our own inventory is kept for now.
+        const bool ours = container == 0;
         bool readable = true;
+        std::string problem;
         for (int32_t i = 0; i < count && readable; ++i) {
-            const ItemStack stack = read_slot(in, readable);
-            if (i < static_cast<int32_t>(Inventory::kSlots)) player_.inventory.slots[i] = stack;
+            const ItemStack stack = read_slot(in, options_.protocol, readable, problem);
+            if (ours && i < static_cast<int32_t>(Inventory::kSlots)) {
+                player_.inventory.slots[i] = stack;
+            }
         }
-        if (readable) player_.inventory.carried = read_slot(in, readable);
+        if (readable) {
+            const ItemStack carried = read_slot(in, options_.protocol, readable, problem);
+            if (ours) player_.inventory.carried = carried;
+        }
         if (!readable && !player_.slot_format_warned) {
             player_.slot_format_warned = true;
-            status("an item carries data components; the slots after it are not read");
+            status(std::format("the slots after this one are not read: {}", problem));
         }
         return true;
     }
@@ -143,7 +144,12 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         if (container == 0) player_.container_state = state;
         const auto slot = static_cast<int16_t>(in.read_u16());
         bool readable = true;
-        const ItemStack stack = read_slot(in, readable);
+        std::string problem;
+        const ItemStack stack = read_slot(in, options_.protocol, readable, problem);
+        if (!readable && !player_.slot_format_warned) {
+            player_.slot_format_warned = true;
+            status(std::format("a slot is not read: {}", problem));
+        }
         if (container == 0 && slot >= 0 && slot < static_cast<int32_t>(Inventory::kSlots)) {
             player_.inventory.slots[slot] = stack;
         }
