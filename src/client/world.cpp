@@ -195,8 +195,25 @@ void world_bind(Game& game, mcpp::SessionEvents& events) {
         {
             std::lock_guard lock(area.world_guard);
             const auto found = area.world.find({chunk_x, chunk_z});
-            if (found == area.world.end()) return;
-            mcpp::world::read_light_into(in, found->second);
+            if (found != area.world.end()) {
+                mcpp::world::read_light_into(in, found->second);
+            } else {
+                // Light for a chunk the mesher has not handed over yet still
+                // belongs to it; light for one we do not hold is read past.
+                std::lock_guard pending_lock(area.guard);
+                mcpp::world::Chunk* waiting = nullptr;
+                for (auto* list : {&area.pending, &area.chunks}) {
+                    for (auto& chunk : *list) {
+                        if (chunk.x == chunk_x && chunk.z == chunk_z) waiting = &chunk;
+                    }
+                }
+                if (waiting != nullptr) {
+                    mcpp::world::read_light_into(in, *waiting);
+                } else {
+                    in.read_bytes(in.remaining());
+                }
+                return;
+            }
         }
         std::lock_guard lock(area.dirty_guard);
         area.dirty.insert({chunk_x, chunk_z});

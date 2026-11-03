@@ -220,7 +220,11 @@ bool Session::handle_world(PacketConnection::Packet& packet) {
     if (packet.id == cb.light_update) {
         const int32_t chunk_x = in.read_varint();
         const int32_t chunk_z = in.read_varint();
-        if (events_.world.on_light_update) events_.world.on_light_update(chunk_x, chunk_z, in);
+        if (events_.world.on_light_update) {
+            events_.world.on_light_update(chunk_x, chunk_z, in);
+        } else {
+            in.read_bytes(in.remaining());
+        }
         return true;
     }
     if (packet.id == cb.block_update) {
