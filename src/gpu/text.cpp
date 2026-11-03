@@ -15,6 +15,10 @@
 namespace mcpp::gpu {
 namespace {
 
+bool encodes_srgb(VkFormat format) {
+    return format == VK_FORMAT_R8G8B8A8_SRGB || format == VK_FORMAT_B8G8R8A8_SRGB;
+}
+
 void check(VkResult result, std::string_view what) {
     if (result != VK_SUCCESS) {
         throw ProtocolError(std::format("{} failed with VkResult {}", what,
@@ -85,6 +89,9 @@ void transition(VkCommandBuffer command, VkImage image, VkImageAspectFlags aspec
 
 struct PushConstants {
     float inverse_size[2];
+    // An sRGB attachment encodes what the shader writes, so colours written as
+    // sRGB bytes have to be linearised first or everything comes out washed.
+    float linearise;
 };
 
 VkShaderModule make_module(VkDevice device, std::span<const uint32_t> words) {
@@ -101,7 +108,7 @@ VkShaderModule make_module(VkDevice device, std::span<const uint32_t> words) {
 
 TextRenderer::TextRenderer(Device& device, const std::filesystem::path& font,
                            VkFormat colour_format)
-    : device_(device) {
+    : device_(device), linearise_(encodes_srgb(colour_format)) {
     std::ifstream input(font, std::ios::binary | std::ios::ate);
     if (!input) throw ProtocolError(std::format("cannot open font {}", font.string()));
     const auto size = input.tellg();
@@ -115,15 +122,20 @@ TextRenderer::TextRenderer(Device& device, const std::filesystem::path& font,
         return uint32_t{bytes[at]} | (uint32_t{bytes[at + 1]} << 8) |
                (uint32_t{bytes[at + 2]} << 16) | (uint32_t{bytes[at + 3]} << 24);
     };
-    if (std::memcmp(bytes.data(), "PLFT", 4) != 0 || read32(4) != 1 || read32(20) != 95) {
+    if (std::memcmp(bytes.data(), "PLFT", 4) != 0 || read32(4) != 2) {
         throw ProtocolError("unsupported font format");
     }
+    pixel_size_ = read32(8);
     line_height_ = read32(12);
+    const uint32_t records = read32(20);
     atlas_width_ = read32(24);
     atlas_height_ = read32(28);
-    constexpr size_t bitmap = 32 + 95 * 14;
+    styles_ = read32(32);
+    icons_ = read32(36);
+    const size_t bitmap = 40 + size_t{records} * 14;
     const uint64_t pixels = uint64_t{atlas_width_} * atlas_height_;
-    if (read32(8) == 0 || line_height_ == 0 || atlas_width_ == 0 || atlas_height_ == 0 ||
+    if (pixel_size_ == 0 || line_height_ == 0 || atlas_width_ == 0 || atlas_height_ == 0 ||
+        styles_ == 0 || records != styles_ * 95 + icons_ ||
         bytes.size() < bitmap || pixels != bytes.size() - bitmap) {
         throw ProtocolError("invalid font dimensions");
     }
@@ -131,8 +143,9 @@ TextRenderer::TextRenderer(Device& device, const std::filesystem::path& font,
         return std::bit_cast<int16_t>(static_cast<uint16_t>(
             uint16_t{bytes[at]} | (uint16_t{bytes[at + 1]} << 8)));
     };
+    glyphs_.resize(records);
     for (size_t i = 0; i < glyphs_.size(); ++i) {
-        const size_t at = 32 + i * 14;
+        const size_t at = 40 + i * 14;
         auto& glyph = glyphs_[i];
         glyph = {read16(at), read16(at + 2), read16(at + 4), read16(at + 6),
                  read16(at + 8), read16(at + 10), read16(at + 12)};
@@ -445,39 +458,62 @@ void TextRenderer::fill(float x, float y, float w, float h, uint32_t rgba) {
     mapped_[vertex_count_++] = {{x, y + h}, {u, v}, rgba};
 }
 
-void TextRenderer::draw(std::string_view text, float x, float y, float scale, uint32_t rgba) {
+void TextRenderer::push(const Glyph& glyph, float x, float y, float scale, uint32_t rgba) {
+    if (vertex_count_ + 6 > kVertexCapacity || glyph.w == 0 || glyph.h == 0) return;
+    const float left = x + static_cast<float>(glyph.bearing_x) * scale;
+    const float top = y + static_cast<float>(glyph.bearing_y) * scale;
+    const float right = left + static_cast<float>(glyph.w) * scale;
+    const float bottom = top + static_cast<float>(glyph.h) * scale;
+    const float u0 = static_cast<float>(glyph.x) / static_cast<float>(atlas_width_);
+    const float v0 = static_cast<float>(glyph.y) / static_cast<float>(atlas_height_);
+    const float u1 = static_cast<float>(glyph.x + glyph.w) / static_cast<float>(atlas_width_);
+    const float v1 = static_cast<float>(glyph.y + glyph.h) / static_cast<float>(atlas_height_);
+    mapped_[vertex_count_++] = {{left, top}, {u0, v0}, rgba};
+    mapped_[vertex_count_++] = {{right, top}, {u1, v0}, rgba};
+    mapped_[vertex_count_++] = {{right, bottom}, {u1, v1}, rgba};
+    mapped_[vertex_count_++] = {{left, top}, {u0, v0}, rgba};
+    mapped_[vertex_count_++] = {{right, bottom}, {u1, v1}, rgba};
+    mapped_[vertex_count_++] = {{left, bottom}, {u0, v1}, rgba};
+}
+
+void TextRenderer::draw(std::string_view text, float x, float y, float scale, uint32_t rgba,
+                        Style style) {
+    const size_t base = static_cast<size_t>(style) % styles_ * 95;
     for (unsigned char code : text) {
         if (code < 32 || code > 126) continue;
-        if (vertex_count_ + 6 > kVertexCapacity) return;
-        const auto& glyph = glyphs_[code - 32];
-        const float left = x + static_cast<float>(glyph.bearing_x) * scale;
-        const float top = y + static_cast<float>(glyph.bearing_y) * scale;
-        const float right = left + static_cast<float>(glyph.w) * scale;
-        const float bottom = top + static_cast<float>(glyph.h) * scale;
-        const float u0 = static_cast<float>(glyph.x) / static_cast<float>(atlas_width_);
-        const float v0 = static_cast<float>(glyph.y) / static_cast<float>(atlas_height_);
-        const float u1 = static_cast<float>(glyph.x + glyph.w) / static_cast<float>(atlas_width_);
-        const float v1 = static_cast<float>(glyph.y + glyph.h) / static_cast<float>(atlas_height_);
-        mapped_[vertex_count_++] = {{left, top}, {u0, v0}, rgba};
-        mapped_[vertex_count_++] = {{right, top}, {u1, v0}, rgba};
-        mapped_[vertex_count_++] = {{right, bottom}, {u1, v1}, rgba};
-        mapped_[vertex_count_++] = {{left, top}, {u0, v0}, rgba};
-        mapped_[vertex_count_++] = {{right, bottom}, {u1, v1}, rgba};
-        mapped_[vertex_count_++] = {{left, bottom}, {u0, v1}, rgba};
+        const auto& glyph = glyphs_[base + code - 32];
+        push(glyph, x, y, scale, rgba);
         x += static_cast<float>(glyph.advance) * scale;
     }
 }
 
-float TextRenderer::width(std::string_view text, float scale) const {
+void TextRenderer::icon(Icon which, float x, float y, float size, uint32_t rgba) {
+    const size_t index = styles_ * 95 + static_cast<size_t>(which);
+    if (index >= glyphs_.size()) return;
+    push(glyphs_[index], x, y, size / static_cast<float>(pixel_size_), rgba);
+}
+
+float TextRenderer::icon_width(Icon which, float size) const {
+    const size_t index = styles_ * 95 + static_cast<size_t>(which);
+    if (index >= glyphs_.size()) return 0.0f;
+    return static_cast<float>(glyphs_[index].advance) * size / static_cast<float>(pixel_size_);
+}
+
+float TextRenderer::width(std::string_view text, float scale, Style style) const {
+    const size_t base = static_cast<size_t>(style) % styles_ * 95;
     float out = 0.0f;
     for (unsigned char code : text) {
-        if (code >= 32 && code <= 126) out += static_cast<float>(glyphs_[code - 32].advance);
+        if (code >= 32 && code <= 126) out += static_cast<float>(glyphs_[base + code - 32].advance);
     }
     return out * scale;
 }
 
 float TextRenderer::line_height(float scale) const {
     return static_cast<float>(line_height_) * scale;
+}
+
+float TextRenderer::scale_for(float pixels) const {
+    return pixels / static_cast<float>(pixel_size_);
 }
 
 void TextRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t height) {
@@ -489,7 +525,8 @@ void TextRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t heig
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &scissor);
     const PushConstants push{{1.0f / static_cast<float>(width),
-                              1.0f / static_cast<float>(height)}};
+                              1.0f / static_cast<float>(height)},
+                             linearise_ ? 1.0f : 0.0f};
     vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
                             &descriptor_set_, 0, nullptr);

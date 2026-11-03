@@ -64,6 +64,8 @@ mcpp_shader(world.vert WorldVert)
 mcpp_shader(world.frag WorldFrag)
 mcpp_shader(text.vert TextVert)
 mcpp_shader(text.frag TextFrag)
+mcpp_shader(ui.vert UiVert)
+mcpp_shader(ui.frag UiFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
 if(glfw3_FOUND)
@@ -88,6 +90,7 @@ add_library(mcpp_net STATIC
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
     src/gpu/text.cpp
+    src/gpu/ui.cpp
     ${MCPP_WINDOW_SOURCES}
     src/image_png.cpp
     src/proto/packet_ids_gen.cpp
@@ -103,7 +106,7 @@ else()
 endif()
 mcpp_defaults(mcpp_net)
 
-add_executable(plasma-client src/tools/client_main.cpp src/features.cpp)
+add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
 

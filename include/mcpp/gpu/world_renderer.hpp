@@ -4,6 +4,7 @@
 #include "mcpp/world/mesher.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace mcpp::gpu {
@@ -38,7 +39,10 @@ public:
     size_t vertex_capacity() const { return vertex_capacity_; }
     size_t appended_sections() const { return sections_.size(); }
     bool out_of_vertex_room() const { return out_of_vertex_room_; }
-    std::vector<uint8_t> render(const Camera& camera);
+    // Recorded into the same image after the world pass, so an interface can
+    // be read back with the frame it belongs to.
+    using Overlay = std::function<void(VkCommandBuffer, uint32_t, uint32_t)>;
+    std::vector<uint8_t> render(const Camera& camera, const Overlay& overlay = {});
 
     // Draws a frame without reading it back, which is what a frame costs
     // in a running client; the readback alone is several milliseconds.
@@ -47,6 +51,7 @@ public:
     // Records a frame and leaves the colour image in TRANSFER_SRC_OPTIMAL, so a
     // window can blit it into a swapchain image in the same submission.
     void record_present(VkCommandBuffer command, const Camera& camera);
+    VkFormat colour_format() const;
     VkImage color_image() const { return color_; }
     uint32_t width() const { return width_; }
     uint32_t height() const { return height_; }

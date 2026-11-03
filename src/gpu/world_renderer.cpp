@@ -1116,7 +1116,9 @@ double WorldRenderer::draw(const Camera& camera) {
     return last_gpu_ms_;
 }
 
-std::vector<uint8_t> WorldRenderer::render(const Camera& camera) {
+VkFormat WorldRenderer::colour_format() const { return kColorFormat; }
+
+std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& overlay) {
     VkCommandBufferAllocateInfo allocate{};
     allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocate.commandPool = pool_;
@@ -1213,6 +1215,38 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera) {
         }
     }
     vkCmdEndRendering(command);
+
+    if (overlay) {
+        VkMemoryBarrier2 wait{};
+        wait.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        wait.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        wait.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        wait.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        wait.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &wait;
+        vkCmdPipelineBarrier2(command, &dependency);
+
+        VkRenderingAttachmentInfo over{};
+        over.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        over.imageView = color_view_;
+        over.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        over.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        over.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        VkRenderingInfo pass{};
+        pass.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        pass.renderArea = {{0, 0}, {width_, height_}};
+        pass.layerCount = 1;
+        pass.colorAttachmentCount = 1;
+        pass.pColorAttachments = &over;
+        vkCmdBeginRendering(command, &pass);
+        overlay(command, width_, height_);
+        vkCmdEndRendering(command);
+    }
 
     transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

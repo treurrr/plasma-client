@@ -1,4 +1,6 @@
 #include "mcpp/features.hpp"
+#include "mcpp/gpu/ui.hpp"
+#include "mcpp/ui/menu.hpp"
 #include "mcpp/json.hpp"
 #include "mcpp/packet_io.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -25,6 +27,7 @@
 #include <format>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <numeric>
 #include <algorithm>
 #include <map>
@@ -760,7 +763,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
 #endif
 
 int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
-                 const std::string& view) {
+                 const std::string& view, bool with_menu) {
     const auto address = parse_address(target);
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
@@ -931,7 +934,49 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         camera.target[2] = centre_z;
     }
 
-    auto pixels = renderer.render(camera);
+    mcpp::gpu::WorldRenderer::Overlay overlay;
+    std::optional<mcpp::gpu::TextRenderer> text;
+    std::optional<mcpp::gpu::UiRenderer> quads;
+    if (with_menu) {
+        // A frame rate the scene actually reaches, measured here rather than
+        // written into the picture.
+        const auto before = std::chrono::steady_clock::now();
+        constexpr int kWarm = 120;
+        for (int i = 0; i < kWarm; ++i) renderer.draw(camera);
+        const double per_frame = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - before).count() / kWarm;
+
+        auto& registry = mcpp::features::Registry::instance();
+        registry.lock(mcpp::features::Id::Hitboxes, "ranked policy");
+
+        text.emplace(device, mcpp::gpu::TextRenderer::default_font_path(),
+                     renderer.colour_format());
+        quads.emplace(device, renderer.colour_format());
+
+        mcpp::ui::MenuState state;
+        state.server = address.host;
+        state.fps = static_cast<int>(1000.0 / std::max(per_frame, 0.001));
+        state.ping_ms = 1;
+        state.cps_left = 0;
+        state.cps_right = 0;
+        state.x = camera.eye[0];
+        state.y = camera.eye[1];
+        state.z = camera.eye[2];
+        state.yaw = -135.0f;
+
+        quads->begin();
+        text->begin();
+        mcpp::ui::draw_menu(*quads, *text, static_cast<float>(shot_width),
+                            static_cast<float>(shot_height), state);
+        overlay = [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
+            quads->record(command, w, h);
+            text->record(command, w, h);
+        };
+        std::cout << std::format("- {:.0f} fps measured over {} frames; hitboxes locked to "
+                                 "show the server lock\n", 1000.0 / per_frame, kWarm);
+    }
+
+    auto pixels = renderer.render(camera, overlay);
     mcpp::write_png(out_path, shot_width, shot_height, pixels);
     device.save_pipeline_cache();
 
@@ -1455,11 +1500,11 @@ int main(int argc, char** argv) {
             return 1;
 #endif
         }
-        if (command == "worldshot" && argc > 2) {
+        if ((command == "worldshot" || command == "menushot") && argc > 2) {
             const std::string out = argc > 3 ? argv[3] : "world.png";
             const size_t limit = argc > 4 ? std::stoul(argv[4]) : 120;
             const std::string view = argc > 5 ? argv[5] : "wide";
-            return do_worldshot(argv[2], out, limit, view);
+            return do_worldshot(argv[2], out, limit, view, command == "menushot");
         }
         if (command == "render") {
             const std::string out = argc > 2 ? argv[2] : "frame.png";
