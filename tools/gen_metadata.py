@@ -43,6 +43,12 @@ TYPES = {
     "Humanoid Arm": "HumanoidArm",
 }
 
+# Where the page's serializer is not the one the server writes, checked against
+# set_entity_data's own serializer ids: (section, field position) -> type.
+CORRECTIONS = {
+    ("Avatar", 0): "HumanoidArm",
+}
+
 STOP = {"the", "a", "an", "of", "if", "is", "this", "that", "used", "to", "for", "in"}
 
 
@@ -95,7 +101,7 @@ def sections(text):
                 if after.startswith("|"):
                     meaning = re.sub(r'^\|(?:\s*(?:colspan|rowspan)="\d+"\s*\|)?', "", after).strip()
                     break
-            fields.append((TYPES[kind.group(1)], meaning))
+            fields.append((CORRECTIONS.get((title, len(fields)), TYPES[kind.group(1)]), meaning))
         out[title] = (inherit.group(2).strip() if inherit.group(2) else None, fields)
     return out
 

@@ -35,7 +35,8 @@ Value read_properties(ByteBuffer& in, std::string_view parser) {
         static constexpr std::string_view kKinds[] = {"single_word", "quotable_phrase",
                                                       "greedy_phrase"};
         const int32_t kind = in.read_varint();
-        return Value{int64_t{kind}, kind >= 0 && kind < 3 ? kKinds[kind] : std::string_view{}};
+        return Value{int64_t{kind}, Value::Note::Label,
+                     kind >= 0 && kind < 3 ? kKinds[kind] : std::string_view{}};
     }
     if (parser == "minecraft:entity" || parser == "minecraft:score_holder") {
         return Value{int64_t{in.read_u8()}};

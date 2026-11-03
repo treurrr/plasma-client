@@ -8,6 +8,7 @@
 #
 #   varint varlong byte ubyte short int long float double bool string
 #   identifier nbt component uuid position slot     one wire value
+#   optvarint                a varint: 0 is none, else the value plus one
 #   bytes                    a varint length, then that many bytes
 #   -                        nothing at all
 #   {name:L name:L}          the fields in order
@@ -33,7 +34,7 @@ type potion_effect = {effect:id(minecraft:mob_effect) details:@effect_details}
 type firework_explosion = {shape:enum(small_ball,large_ball,star,creeper,burst) colors:list(int) fade_colors:list(int) trail:bool twinkle:bool}
 type consume_effect = switch(minecraft:consume_effect_type){apply_effects:{effects:list(@potion_effect) probability:float} remove_effects:{effects:idset(minecraft:mob_effect)} teleport_randomly:{diameter:float} play_sound:{sound:@sound}}
 type property = {name:string match:oneof(range:{min:opt(string) max:opt(string)}, exact:{value:string})}
-type block_predicate = {blocks:opt(idset(minecraft:block)) properties:opt(list(@property)) nbt:opt(nbt) components:list(typed_component) partial:list({type:id(minecraft:data_component_predicate_type) predicate:nbt})}
+type block_predicate = {blocks:opt(idset(minecraft:block)) properties:opt(list(@property)) nbt:opt(nbt) components:list(typed_component) partial:list({type:oneof(component:id(minecraft:data_component_type), predicate:id(minecraft:data_component_predicate_type)) predicate:nbt})}
 type enchantment_level = {enchantment:id(minecraft:enchantment) level:varint}
 type attribute_display = oneof(default:-, hidden:-, override:{text:component})
 type trim_material = {asset:string overrides:list({material:identifier asset:string}) description:component}
@@ -41,10 +42,10 @@ type trim_pattern = {asset:identifier description:component decal:bool}
 type instrument = {sound:@sound use_duration:float range:float description:component}
 type jukebox_song = {sound:@sound description:component length:float comparator:varint}
 type banner_pattern = {asset:identifier translation_key:string}
-type painting_variant = {width:int height:int asset:identifier title:opt(component) author:opt(component)}
+type painting_variant = {width:varint height:varint asset:identifier title:opt(component) author:opt(component)}
 type profile_property = {name:string value:string signature:opt(string)}
 type game_profile = {uuid:uuid name:string properties:list(@profile_property)}
-type resolvable_profile = {profile:oneof(partial:{name:opt(string) uuid:opt(uuid) properties:list(@profile_property)}, complete:@game_profile) body:opt(identifier) cape:opt(identifier) elytra:opt(identifier) model:opt(enum(wide,slim))}
+type resolvable_profile = {profile:oneof(partial:{name:opt(string) uuid:opt(uuid) properties:list(@profile_property)}, complete:@game_profile) body:opt(identifier) cape:opt(identifier) elytra:opt(identifier) model:opt(oneof(wide:-, slim:-))}
 type kinetic_condition = {max_duration:varint min_speed:float min_relative_speed:float}
 type filtered_string = {raw:string filtered:opt(string)}
 type filtered_component = {raw:component filtered:opt(component)}
@@ -55,9 +56,9 @@ type recipe_display = switch(minecraft:recipe_display){crafting_shapeless:{ingre
 
 # Packets, named after the report without minecraft:.
 type update_recipes = {property_sets:list({id:identifier items:list(id(minecraft:item))}) stonecutter:list({ingredient:idset(minecraft:item) display:@slot_display})}
-type recipe_book_add = {entries:list({id:varint display:@recipe_display group:varint category:id(minecraft:recipe_book_category) ingredients:opt(list(idset(minecraft:item))) flags:byte}) replace:bool}
+type recipe_book_add = {entries:list({id:varint display:@recipe_display group:optvarint category:id(minecraft:recipe_book_category) ingredients:opt(list(idset(minecraft:item))) flags:byte}) replace:bool}
 type recipe_book_settings = {crafting_open:bool crafting_filtering:bool furnace_open:bool furnace_filtering:bool blast_furnace_open:bool blast_furnace_filtering:bool smoker_open:bool smoker_filtering:bool}
-type server_links = list({label:oneof(custom:component, builtin:enum(bug_report,community_guidelines,support,status,feedback,community,website,forums,news,announcements)) url:string})
+type server_links = list({label:oneof(custom:component, builtin:enum(report_bug,community_guidelines,support,status,feedback,community,website,forums,news,announcements)) url:string})
 type custom_report_details = list({title:string description:string})
 type server_data = {motd:component icon:opt(bytes)}
 
@@ -85,7 +86,7 @@ minecraft:creative_slot_lock -
 minecraft:enchantment_glint_override bool
 minecraft:intangible_projectile nbt
 minecraft:food {nutrition:varint saturation:float can_always_eat:bool}
-minecraft:consumable {seconds:float animation:enum(none,eat,drink,block,bow,spear,crossbow,spyglass,toot_horn,brush,bundle) sound:@sound particles:bool effects:list(@consume_effect)}
+minecraft:consumable {seconds:float animation:enum(none,eat,drink,block,bow,trident,crossbow,spyglass,toot_horn,brush,bundle,spear) sound:@sound particles:bool effects:list(@consume_effect)}
 minecraft:use_remainder slot
 minecraft:use_cooldown {seconds:float group:opt(identifier)}
 minecraft:damage_resistant {types:identifier}
@@ -147,7 +148,7 @@ minecraft:wolf/collar @dye_color
 minecraft:fox/variant enum(red,snow)
 minecraft:salmon/size enum(small,medium,large)
 minecraft:parrot/variant enum(red_blue,blue,green,yellow_blue,gray)
-minecraft:tropical_fish/pattern enum(kob,sunstreak,snooper,dasher,brinely,spotty,flopper,stripey,glitter,blockfish,betty,clayfish)
+minecraft:tropical_fish/pattern enum(kob=0,flopper=1,sunstreak=256,stripey=257,snooper=512,glitter=513,dasher=768,blockfish=769,brinely=1024,betty=1025,spotty=1280,clayfish=1281)
 minecraft:tropical_fish/base_color @dye_color
 minecraft:tropical_fish/pattern_color @dye_color
 minecraft:mooshroom/variant enum(red,brown)

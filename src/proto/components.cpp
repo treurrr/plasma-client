@@ -70,8 +70,8 @@ namespace {
 
 struct Node {
     enum class Kind : uint8_t {
-        Unit, Bool, Byte, UByte, Short, Int, Long, VarInt, VarLong, Float, Double, String,
-        Bytes, Nbt, Uuid, Position, Slot, TypedComponent, Ref, List, Optional, Enum, Id, IdOr, IdSet,
+        Unit, Bool, Byte, UByte, Short, Int, Long, VarInt, OptVarInt, VarLong, Float, Double, String,
+        Bytes, Nbt, Text, Uuid, Position, Slot, TypedComponent, Ref, List, Optional, Enum, Id, IdOr, IdSet,
         Record, OneOf, Switch,
     };
     Kind kind = Kind::Unit;
@@ -169,9 +169,9 @@ private:
         const std::string_view name = word();
         static const std::map<std::string_view, K> primitives = {
             {"bool", K::Bool}, {"byte", K::Byte}, {"ubyte", K::UByte}, {"short", K::Short},
-            {"int", K::Int}, {"long", K::Long}, {"varint", K::VarInt}, {"varlong", K::VarLong},
+            {"int", K::Int}, {"long", K::Long}, {"varint", K::VarInt}, {"optvarint", K::OptVarInt}, {"varlong", K::VarLong},
             {"float", K::Float}, {"double", K::Double}, {"string", K::String},
-            {"identifier", K::String}, {"bytes", K::Bytes}, {"nbt", K::Nbt}, {"component", K::Nbt}, {"uuid", K::Uuid},
+            {"identifier", K::String}, {"bytes", K::Bytes}, {"nbt", K::Nbt}, {"component", K::Text}, {"uuid", K::Uuid},
             {"position", K::Position}, {"slot", K::Slot}, {"typed_component", K::TypedComponent},
         };
         if (const auto found = primitives.find(name); found != primitives.end()) {
@@ -303,6 +303,10 @@ Value decode(const Node& node, ByteBuffer& in, int32_t protocol, int depth) {
     case K::Int: return Value{int64_t{in.read_i32()}};
     case K::Long: return Value{in.read_i64()};
     case K::VarInt: return Value{int64_t{in.read_varint()}};
+    case K::OptVarInt: {
+        const int32_t raw = in.read_varint();
+        return raw == 0 ? Value{} : Value{int64_t{raw} - 1};
+    }
     case K::VarLong: return Value{in.read_varlong()};
     case K::Float: return Value{static_cast<double>(in.read_f32())};
     case K::Double: return Value{in.read_f64()};
@@ -312,6 +316,7 @@ Value decode(const Node& node, ByteBuffer& in, int32_t protocol, int depth) {
         return Value{std::string(bytes.begin(), bytes.end())};
     }
     case K::Nbt: return Value{nbt::read_network_tag(in)};
+    case K::Text: return Value{nbt::read_network_tag(in), Value::Note::Text, {}};
     case K::Uuid: return Value{uuid_text(in)};
     case K::Position: return Value{unpack_position(in.read_i64())};
     case K::Slot:
@@ -320,7 +325,7 @@ Value decode(const Node& node, ByteBuffer& in, int32_t protocol, int depth) {
     case K::TypedComponent: {
         const int32_t type = in.read_varint();
         Value::Record record;
-        record.push_back({"type", Value{int64_t{type}, component_name(type, protocol)}});
+        record.push_back({"type", Value{int64_t{type}, Value::Note::Label, component_name(type, protocol)}});
         record.push_back({"value", read_component(in, type, protocol)});
         return Value{std::move(record)};
     }
@@ -342,25 +347,27 @@ Value decode(const Node& node, ByteBuffer& in, int32_t protocol, int depth) {
     case K::Enum: {
         const int64_t value = in.read_varint();
         for (const auto& [number, label] : node.labels) {
-            if (number == value) return Value{value, label};
+            if (number == value) return Value{value, Value::Note::Label, label};
         }
         return Value{value};
     }
-    case K::Id: return Value{int64_t{in.read_varint()}, node.argument};
+    case K::Id: return Value{int64_t{in.read_varint()}, Value::Note::Registry, node.argument};
     case K::IdOr: {
         const int32_t id = in.read_varint();
         if (id == 0) return decode_part(node, in, protocol, depth);
-        return Value{int64_t{id - 1}, node.argument};
+        return Value{int64_t{id - 1}, Value::Note::Registry, node.argument};
     }
     case K::IdSet: {
         const int32_t kind = in.read_varint();
-        if (kind == 0) return Value{"#" + in.read_string(), node.argument};
+        if (kind == 0) return Value{"#" + in.read_string(), Value::Note::Registry, node.argument};
         if (kind < 0 || static_cast<size_t>(kind - 1) > in.remaining()) {
             throw ProtocolError(std::format("an id set of {}", kind - 1));
         }
         Value::List ids;
-        for (int32_t i = 1; i < kind; ++i) ids.push_back(Value{int64_t{in.read_varint()}, node.argument});
-        return Value{std::move(ids), node.argument};
+        for (int32_t i = 1; i < kind; ++i) {
+            ids.push_back(Value{int64_t{in.read_varint()}, Value::Note::Registry, node.argument});
+        }
+        return Value{std::move(ids), Value::Note::Registry, node.argument};
     }
     case K::Record: {
         Value::Record record;
@@ -391,7 +398,7 @@ Value decode(const Node& node, ByteBuffer& in, int32_t protocol, int depth) {
         std::string_view bare = entry;
         if (bare.starts_with("minecraft:")) bare.remove_prefix(10);
         Value::Record record;
-        record.push_back({"type", Value{int64_t{id}, entry}});
+        record.push_back({"type", Value{int64_t{id}, Value::Note::Label, entry}});
         for (const auto& [name, part] : node.parts) {
             if (name != bare) continue;
             if (part->kind == K::Record) {
@@ -479,6 +486,37 @@ namespace {
 void describe_into(std::string& out, const Value& value, const RegistryLookup& name_of,
                    const nbt::TranslateLookup& lookup, int depth);
 
+void describe_nbt(std::string& out, const nbt::Value& value, int depth) {
+    if (depth > kMaxDepth) {
+        out += "...";
+    } else if (const auto* compound = value.as_compound()) {
+        out += '{';
+        bool first = true;
+        for (const auto& [key, inner] : *compound) {
+            if (!first) out += ',';
+            first = false;
+            out += key + ':';
+            describe_nbt(out, inner, depth + 1);
+        }
+        out += '}';
+    } else if (const auto* list = value.as_list()) {
+        out += '[';
+        for (size_t k = 0; k < list->size(); ++k) {
+            if (k != 0) out += ',';
+            describe_nbt(out, (*list)[k], depth + 1);
+        }
+        out += ']';
+    } else if (const auto* text = value.as_string()) {
+        out += std::format("\"{}\"", *text);
+    } else if (const auto number = value.as_int()) {
+        out += std::to_string(*number);
+    } else if (const auto real = value.as_double()) {
+        out += std::format("{}", *real);
+    } else {
+        out += "[array]";
+    }
+}
+
 void describe_stack(std::string& out, const ItemStack& stack, const RegistryLookup& name_of,
                     const nbt::TranslateLookup& lookup, int depth) {
     if (stack.count <= 0) {
@@ -523,12 +561,11 @@ void describe_into(std::string& out, const Value& value, const RegistryLookup& n
     } else if (const auto* b = std::get_if<bool>(&storage)) {
         out += *b ? "true" : "false";
     } else if (const auto* i = std::get_if<int64_t>(&storage)) {
-        const std::string_view note = value.note();
-        if (note.find(':') != std::string_view::npos) {
-            const std::string name = name_of ? name_of(note, *i) : std::string{};
-            out += name.empty() ? std::to_string(*i) : name;
+        if (!value.registry().empty()) {
+            const std::string name = name_of ? name_of(value.registry(), *i) : std::string{};
+            out += name.empty() ? std::format("{}#{}", value.registry(), *i) : name;
         } else {
-            out += note.empty() ? std::to_string(*i) : std::string(note);
+            out += value.label().empty() ? std::to_string(*i) : std::string(value.label());
         }
     } else if (const auto* d = std::get_if<double>(&storage)) {
         out += std::format("{}", *d);
@@ -539,7 +576,11 @@ void describe_into(std::string& out, const Value& value, const RegistryLookup& n
             out += std::format("\"{}\"", *s);
         }
     } else if (const auto* n = std::get_if<nbt::Value>(&storage)) {
-        out += std::format("'{}'", nbt::component_to_text(*n, lookup));
+        if (value.note_kind() == Value::Note::Text) {
+            out += std::format("'{}'", nbt::component_to_text(*n, lookup));
+        } else {
+            describe_nbt(out, *n, depth);
+        }
     } else if (const auto* p = std::get_if<BlockPos>(&storage)) {
         out += std::format("({}, {}, {})", p->x, p->y, p->z);
     } else if (const auto* list = std::get_if<Value::List>(&storage)) {

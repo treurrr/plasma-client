@@ -36,7 +36,7 @@ constexpr std::array<Serializer, 39> kSerializers{{
     {"villager_data",
      "{type:id(minecraft:villager_type) profession:id(minecraft:villager_profession) "
      "level:varint}"},
-    {"optional_unsigned_int", "varint"},
+    {"optional_unsigned_int", "optvarint"},
     {"pose",
      "enum(standing,fall_flying,sleeping,swimming,spin_attack,crouching,long_jumping,dying,"
      "croaking,using_tongue,sitting,roaring,sniffing,emerging,digging,sliding,shooting,"
@@ -150,11 +150,6 @@ Metadata read_metadata(ByteBuffer& in, int32_t protocol) {
             throw ProtocolError(std::format("entity data index {} has serializer {}", index, type));
         }
         Value value = read_layout(in, kSerializers[static_cast<size_t>(type)].layout, protocol);
-        // Zero is "none" and anything else is one more than the value.
-        if (static_cast<MetaType>(type) == MetaType::OptionalUnsignedInt) {
-            const int64_t raw = value.as_int().value_or(0);
-            value = raw == 0 ? Value{} : Value{raw - 1};
-        }
         out.set(index, static_cast<MetaType>(type), std::move(value));
     }
 }

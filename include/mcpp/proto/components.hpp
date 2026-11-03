@@ -36,15 +36,24 @@ public:
     using Storage = std::variant<std::monostate, bool, int64_t, double, std::string, nbt::Value,
                                  BlockPos, List, Record, std::shared_ptr<const ItemStack>>;
 
+    // What the note of a value says: an enum value's or a switch case's name,
+    // the registry an id points into ("minecraft:enchantment"), or that an
+    // nbt value is a text component.
+    enum class Note : uint8_t { None, Label, Registry, Text };
+
     Value() = default;
-    explicit Value(Storage storage, std::string_view note = {})
-        : storage_(std::move(storage)), note_(note) {}
+    explicit Value(Storage storage) : storage_(std::move(storage)) {}
+    Value(Storage storage, Note kind, std::string_view note)
+        : storage_(std::move(storage)), note_(note), kind_(kind) {}
 
     bool empty() const { return std::holds_alternative<std::monostate>(storage_); }
     const Storage& storage() const { return storage_; }
-    // What an integer means: the name of an enum value, or the registry an
-    // id points into ("minecraft:enchantment").
     std::string_view note() const { return note_; }
+    Note note_kind() const { return kind_; }
+    std::string_view label() const { return kind_ == Note::Label ? note_ : std::string_view{}; }
+    std::string_view registry() const {
+        return kind_ == Note::Registry ? note_ : std::string_view{};
+    }
 
     std::optional<int64_t> as_int() const;
     std::optional<double> as_double() const;   // ints too
@@ -61,6 +70,7 @@ public:
 private:
     Storage storage_;
     std::string_view note_;
+    Note kind_ = Note::None;
 };
 
 struct Value::Field {
