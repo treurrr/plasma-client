@@ -189,3 +189,6 @@ function(mcpp_probe name)
 endfunction()
 
 mcpp_probe(jmath_probe)
+mcpp_probe(movement_probe)
+target_sources(movement_probe PRIVATE src/client/player_rules.cpp)
+target_include_directories(movement_probe PRIVATE src)

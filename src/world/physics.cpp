@@ -662,17 +662,11 @@ public:
     }
 
     void move_relative(float speed_, double ix, double iy, double iz) {
-        const double length2 = ix * ix + iy * iy + iz * iz;
-        if (length2 < 1.0e-7) return;
-        Vec v{ix, iy, iz};
-        if (length2 > 1.0) v = v.normalize();
-        v = v.scale(speed_);
-        const float angle = b.yaw * kRadians;
-        const float s = jmath::sin(angle);
-        const float c = jmath::cos(angle);
-        b.vx += v.x * c - v.z * s;
-        b.vy += v.y;
-        b.vz += v.z * c + v.x * s;
+        double push[3];
+        input_vector(ix, iy, iz, speed_, b.yaw, push);
+        b.vx += push[0];
+        b.vy += push[1];
+        b.vz += push[2];
     }
 
     bool horizontal_collision_minor(const Vec& moved) const {
@@ -1207,6 +1201,35 @@ void move_vector(const Keys& k, float& mx, float& mz) {
 }
 
 } // namespace
+
+double collide_with_block(const BlockShapes& shapes, int32_t state, int32_t x, int32_t y,
+                          int32_t z, int axis, const Aabb& box, double distance) {
+    const auto empty = [](int32_t, int32_t, int32_t) { return 0; };
+    const BlockAt at = empty;
+    const Level level(World{at, shapes, nullptr, -64});
+    Placed p;
+    Context above;
+    above.bottom = std::numeric_limits<double>::max();
+    if (!collision_shape(level, above, x, y, z, state, p)) return distance;
+    const Box b{{box.min[0], box.min[1], box.min[2]}, {box.max[0], box.max[1], box.max[2]}};
+    if (std::abs(distance) < kEpsilon) return 0.0;
+    return collide_one(level, p, axis, b, distance);
+}
+
+void input_vector(double ix, double iy, double iz, float speed, float yaw, double out[3]) {
+    out[0] = out[1] = out[2] = 0.0;
+    const double length2 = ix * ix + iy * iy + iz * iz;
+    if (length2 < 1.0e-7) return;
+    Vec v{ix, iy, iz};
+    if (length2 > 1.0) v = v.normalize();
+    v = v.scale(speed);
+    const float angle = yaw * kRadians;
+    const float s = jmath::sin(angle);
+    const float c = jmath::cos(angle);
+    out[0] = v.x * c - v.z * s;
+    out[1] = v.y;
+    out[2] = v.z * c + v.x * s;
+}
 
 bool BlockTags::has(const BlockInfo& block, const BlockShapes& shapes, int32_t state,
                     uint8_t bit) const {

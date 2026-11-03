@@ -166,6 +166,15 @@ void place(Body& body, double x, double y, double z);
 // the pose, in its own order and with its own float and double types.
 void tick(Body& body, const Keys& keys, const Stats& stats, const World& world);
 
+// How far a box moving along one axis (0 x, 1 y, 2 z) gets before one
+// block's collision shape at (x, y, z) stops it: the game's own cell walk.
+double collide_with_block(const BlockShapes& shapes, int32_t state, int32_t x, int32_t y,
+                          int32_t z, int axis, const Aabb& box, double distance);
+
+// The push the keys give: input scaled to a speed and turned by the yaw, the
+// game's getInputVector with its sine table.
+void input_vector(double ix, double iy, double iz, float speed, float yaw, double out[3]);
+
 // Whether the body fits in a pose where it stands.
 bool fits(const Body& body, Pose pose, const World& world);
 
