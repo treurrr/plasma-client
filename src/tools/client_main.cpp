@@ -7,6 +7,7 @@
 #include "mcpp/session.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/offscreen.hpp"
+#include "mcpp/gpu/sky.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 #ifdef MCPP_HAVE_WINDOW
 #include "mcpp/gpu/text.hpp"
@@ -25,6 +26,7 @@
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 #include <format>
 #include <iostream>
 #include <mutex>
@@ -842,6 +844,15 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     const uint32_t shot_height = view == "macro" ? 1080u : 900u;
     mcpp::gpu::WorldRenderer renderer(device, shot_width, shot_height, atlas);
     renderer.upload(combined);
+
+    std::optional<mcpp::gpu::Sky> sky;
+    const auto sky_path = mcpp::gpu::Sky::default_path(mcpp::protocol::kTargetProtocol);
+    if (std::filesystem::exists(sky_path)) {
+        sky.emplace(device, renderer.colour_format(), sky_path);
+        renderer.set_sky(&*sky);
+    } else {
+        std::cout << "- no sky textures; bake them with tools/bake_sky.py\n";
+    }
 
     mcpp::gpu::Camera camera{};
     if (view == "macro") {

@@ -9,6 +9,8 @@
 
 namespace mcpp::gpu {
 
+class Sky;
+
 struct Camera {
     float eye[3];
     float target[3];
@@ -55,6 +57,9 @@ public:
 
     // Records a frame and leaves the colour image in TRANSFER_SRC_OPTIMAL, so a
     // window can blit it into a swapchain image in the same submission.
+    // Drawn inside the world's own pass, before the terrain, so it needs no
+    // second attachment and no second clear.
+    void set_sky(const Sky* sky) { sky_ = sky; }
     void record_present(VkCommandBuffer command, const Camera& camera);
     VkFormat colour_format() const;
     VkImage color_image() const { return color_; }
@@ -87,6 +92,7 @@ private:
     void destroy_mesh();
 
     Device& device_;
+    const Sky* sky_ = nullptr;
     uint32_t width_;
     uint32_t height_;
 

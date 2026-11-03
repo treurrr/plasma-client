@@ -1,5 +1,7 @@
 #include "mcpp/gpu/world_renderer.hpp"
 
+#include "mcpp/gpu/sky.hpp"
+
 #include "mcpp/byte_buffer.hpp"
 
 #include <algorithm>
@@ -53,6 +55,9 @@ constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
 // The sky the world is cleared to, and the colour distance fades into.
 constexpr float kSky[3] = {0.45f, 0.62f, 0.86f};
+
+// Straight up is a deeper blue than the band the land fades into.
+constexpr float kSkyZenith[3] = {0.35f, 0.55f, 0.93f};
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 void check(VkResult result, std::string_view what) {
@@ -998,6 +1003,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     rendering.pDepthAttachment = &depth_attachment;
 
     vkCmdBeginRendering(command, &rendering);
+    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, kSkyZenith, kSky);
     if (index_count_ > 0) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width_),
@@ -1192,6 +1198,7 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
     rendering.pDepthAttachment = &depth_attachment;
 
     vkCmdBeginRendering(command, &rendering);
+    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, kSkyZenith, kSky);
     if (index_count_ > 0) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width_),

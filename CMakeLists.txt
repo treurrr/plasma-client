@@ -64,6 +64,8 @@ mcpp_shader(world.vert WorldVert)
 mcpp_shader(world.frag WorldFrag)
 mcpp_shader(text.vert TextVert)
 mcpp_shader(text.frag TextFrag)
+mcpp_shader(sky.vert SkyVert)
+mcpp_shader(sky.frag SkyFrag)
 mcpp_shader(ui.vert UiVert)
 mcpp_shader(ui.frag UiFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
@@ -90,6 +92,7 @@ add_library(mcpp_net STATIC
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
+    src/gpu/sky.cpp
     src/gpu/text.cpp
     src/gpu/ui.cpp
     ${MCPP_WINDOW_SOURCES}
