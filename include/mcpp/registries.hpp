@@ -1,7 +1,9 @@
 #pragma once
 #include "mcpp/nbt.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -45,6 +47,12 @@ public:
         return -1;
     }
 
+    // The registries a client has built in and the server never sends:
+    // attributes, effects, entity types. A registry the server did send is
+    // left as the server sent it.
+    bool load_builtin(const std::filesystem::path& path);
+    static std::filesystem::path builtin_path(int32_t protocol);
+
     size_t size() const { return registries_.size(); }
     const std::map<std::string, std::vector<RegistryEntry>, std::less<>>& all() const {
         return registries_;
@@ -52,6 +60,32 @@ public:
 
 private:
     std::map<std::string, std::vector<RegistryEntry>, std::less<>> registries_;
+};
+
+// Named sets of ids into one registry: which blocks a pickaxe mines, which
+// fluids are water. Each update replaces a registry's tags whole.
+class Tags {
+public:
+    using Set = std::map<std::string, std::vector<int32_t>, std::less<>>;
+
+    void set(std::string registry, Set tags) { tags_[std::move(registry)] = std::move(tags); }
+
+    const std::vector<int32_t>* find(std::string_view registry, std::string_view tag) const {
+        const auto found = tags_.find(registry);
+        if (found == tags_.end()) return nullptr;
+        const auto entry = found->second.find(tag);
+        return entry == found->second.end() ? nullptr : &entry->second;
+    }
+
+    bool contains(std::string_view registry, std::string_view tag, int32_t id) const {
+        const auto* ids = find(registry, tag);
+        return ids != nullptr && std::find(ids->begin(), ids->end(), id) != ids->end();
+    }
+
+    size_t size() const { return tags_.size(); }
+
+private:
+    std::map<std::string, Set, std::less<>> tags_;
 };
 
 } // namespace mcpp

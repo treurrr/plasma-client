@@ -232,6 +232,43 @@ Session::Session(SessionOptions options, SessionEvents events)
         throw ProtocolError(std::format("no packet table for protocol {}; generate one with "
                                         "tools/gen_packet_ids.py", options_.protocol));
     }
+    registries_.load_builtin(Registries::builtin_path(options_.protocol));
+}
+
+const std::map<int32_t, MobEffect>& Session::effects(int32_t entity) const {
+    static const std::map<int32_t, MobEffect> none;
+    const auto found = effects_.find(entity);
+    return found == effects_.end() ? none : found->second;
+}
+
+const std::map<std::string, Attribute, std::less<>>& Session::attributes(int32_t entity) const {
+    static const std::map<std::string, Attribute, std::less<>> none;
+    const auto found = attributes_.find(entity);
+    return found == attributes_.end() ? none : found->second;
+}
+
+double Session::attribute(int32_t entity, std::string_view name, double fallback) const {
+    const auto& all = attributes(entity);
+    const auto found = all.find(name);
+    return found == all.end() ? fallback : found->second.value();
+}
+
+void Session::read_tags(ByteBuffer& in) {
+    const int32_t registries = in.read_varint();
+    for (int32_t r = 0; r < registries; ++r) {
+        std::string registry = in.read_string();
+        Tags::Set set;
+        const int32_t count = in.read_varint();
+        for (int32_t t = 0; t < count; ++t) {
+            std::string tag = in.read_string();
+            const int32_t size = in.read_varint();
+            if (size < 0) fail("negative tag size");
+            std::vector<int32_t> ids(static_cast<size_t>(size));
+            for (auto& id : ids) id = in.read_varint();
+            set.emplace(std::move(tag), std::move(ids));
+        }
+        tags_.set(std::move(registry), std::move(set));
+    }
 }
 
 void Session::status(std::string_view line) const {
@@ -396,6 +433,10 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
         status("no known packs reported; server sends the full registries");
         return true;
     }
+    if (packet.id == cb.update_tags) {
+        read_tags(in);
+        return true;
+    }
     if (packet.id == cb.registry_data) {
         // Read every registry whole, whatever it is, and keep it: the order of
         // its entries is what ids elsewhere index into.
@@ -552,6 +593,61 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         send(ids_->play_sb.pong, out);
         return true;
     }
+    if (packet.id == cb.change_difficulty) {
+        difficulty_ = in.read_u8();
+        difficulty_locked_ = in.read_bool();
+        return true;
+    }
+    if (packet.id == cb.update_tags) {
+        read_tags(in);
+        return true;
+    }
+    if (packet.id == cb.update_mob_effect) {
+        const int32_t entity = in.read_varint();
+        MobEffect effect;
+        effect.id = in.read_varint();
+        effect.amplifier = in.read_varint();
+        effect.duration = in.read_varint();
+        const uint8_t flags = in.read_u8();
+        effect.ambient = (flags & 0x01) != 0;
+        effect.particles = (flags & 0x02) != 0;
+        effect.icon = (flags & 0x04) != 0;
+        effect.blend = (flags & 0x08) != 0;
+        effects_[entity][effect.id] = effect;
+        return true;
+    }
+    if (packet.id == cb.remove_mob_effect) {
+        const int32_t entity = in.read_varint();
+        const int32_t id = in.read_varint();
+        if (const auto found = effects_.find(entity); found != effects_.end()) {
+            found->second.erase(id);
+        }
+        return true;
+    }
+    if (packet.id == cb.update_attributes) {
+        // Each attribute arrives whole, modifiers and all, so it replaces
+        // the one before it; attributes it does not name are left alone.
+        const int32_t entity = in.read_varint();
+        auto& attributes = attributes_[entity];
+        const int32_t count = in.read_varint();
+        for (int32_t i = 0; i < count; ++i) {
+            const int32_t id = in.read_varint();
+            const auto* entry = registries_.at("minecraft:attribute", static_cast<size_t>(id));
+            Attribute attribute;
+            attribute.base = in.read_f64();
+            const int32_t modifiers = in.read_varint();
+            for (int32_t m = 0; m < modifiers; ++m) {
+                Attribute::Modifier modifier;
+                modifier.id = in.read_string();
+                modifier.amount = in.read_f64();
+                modifier.operation = in.read_u8();
+                attribute.modifiers.push_back(std::move(modifier));
+            }
+            attributes[entry != nullptr ? entry->name : std::format("#{}", id)] =
+                std::move(attribute);
+        }
+        return true;
+    }
     if (packet.id == cb.player_abilities) {
         // Measured per game mode: survival 0x00, creative 0x0d, spectator 0x07.
         const uint8_t flags = in.read_u8();
@@ -569,8 +665,15 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         // entities, so the old ones are dropped here and the client drops
         // its world on the event.
         read_spawn_info(in);
-        in.read_u8();
+        // 0x01 keeps the attributes, 0x02 the entity data.
+        const uint8_t kept = in.read_u8();
         entities_.clear();
+        effects_.clear();
+        if ((kept & 0x01) == 0) {
+            attributes_.clear();
+        } else {
+            std::erase_if(attributes_, [this](const auto& e) { return e.first != entity_id_; });
+        }
         status(std::format("now in {}, from y {} for {}", dimension_.name, dimension_.min_y,
                            dimension_.height));
         if (events_.on_respawn) events_.on_respawn(dimension_);
@@ -578,7 +681,7 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.login) {
         entity_id_ = in.read_i32();
-        in.read_bool();   // hardcore
+        hardcore_ = in.read_bool();
         const int32_t worlds = in.read_varint();
         for (int32_t i = 0; i < worlds; ++i) in.read_string();
         in.read_varint();   // max players, which the client has no use for
@@ -769,6 +872,8 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         for (int32_t i = 0; i < count; ++i) {
             const int32_t id = in.read_varint();
             entities_.erase(id);
+            effects_.erase(id);
+            attributes_.erase(id);
             if (events_.on_entity_remove) events_.on_entity_remove(id);
         }
         return true;

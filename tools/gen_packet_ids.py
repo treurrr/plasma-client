@@ -61,7 +61,9 @@ CURATED = {
         "set_held_slot": "set_held_slot", "set_experience": "set_experience",
         "set_cursor_item": "set_cursor_item", "set_player_inventory": "set_player_inventory",
         "block_changed_ack": "block_changed_ack", "bundle_delimiter": "bundle_delimiter",
-        "player_abilities": "player_abilities",
+        "player_abilities": "player_abilities", "change_difficulty": "change_difficulty",
+        "update_mob_effect": "update_mob_effect", "remove_mob_effect": "remove_mob_effect",
+        "update_tags": "update_tags", "update_attributes": "update_attributes",
     }),
     "play_sb": ("play", "serverbound", {
         "keep_alive": "keep_alive", "pong": "pong", "chat": "chat",

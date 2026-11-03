@@ -84,6 +84,7 @@ add_library(mcpp_net STATIC
     src/json.cpp
     src/nbt.cpp
     src/session.cpp
+    src/registries.cpp
     src/translations.cpp
     src/auth.cpp
     src/world/chunk.cpp

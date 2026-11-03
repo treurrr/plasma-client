@@ -3,6 +3,7 @@
 #include "mcpp/json.hpp"
 #include "mcpp/nbt.hpp"
 #include "mcpp/proto/packet_ids.hpp"
+#include "mcpp/session.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
 #include "mcpp/gpu/span_allocator.hpp"
@@ -777,6 +778,32 @@ void test_span_allocator() {
     check(spans.allocate(100) == 0u, "so the whole buffer fits again");
 }
 
+void test_attributes_and_tags() {
+    // Speed II on a sprinting player: the base, the sprint's +30% of the
+    // total, and the effect's +20% per level, also of the total.
+    mcpp::Attribute speed;
+    speed.base = 0.1;
+    speed.modifiers = {{"minecraft:sprinting", 0.3, 2}, {"minecraft:effect.speed", 0.4, 2}};
+    check(std::abs(speed.value() - 0.182) < 1e-9,
+          std::format("multipliers on the total compound: {:.4f}", speed.value()));
+
+    // Additions are summed before anything multiplies, and a multiple of the
+    // base is a multiple of that sum, not of each other.
+    mcpp::Attribute mixed;
+    mixed.base = 4.0;
+    mixed.modifiers = {{"a", 2.0, 0}, {"b", 0.5, 1}, {"c", 0.5, 1}, {"d", 1.0, 2}};
+    check(std::abs(mixed.value() - 24.0) < 1e-9,
+          std::format("add, then multiply the base, then the total: {:.2f}", mixed.value()));
+
+    mcpp::Tags tags;
+    tags.set("minecraft:block", {{"minecraft:mineable/pickaxe", {1, 2, 3}}});
+    check(tags.contains("minecraft:block", "minecraft:mineable/pickaxe", 2),
+          "a block in a tag is found in it");
+    check(!tags.contains("minecraft:block", "minecraft:mineable/pickaxe", 9) &&
+              !tags.contains("minecraft:item", "minecraft:mineable/pickaxe", 2),
+          "and nothing else is");
+}
+
 int main() {
     test_varint_encoding();
     test_varlong_and_numbers();
@@ -789,6 +816,7 @@ int main() {
     test_mesher_culls_interiors();
     test_light_engine();
     test_span_allocator();
+    test_attributes_and_tags();
     test_physics_stands_and_stops();
     test_packet_tables();
     test_server_hash();

@@ -90,13 +90,13 @@ std::string item_display_name(std::string_view name) {
     return out;
 }
 
-// The block the crosshair is on, or none within reach. The game reaches 4.5
-// blocks and takes the first block the ray enters, so this steps cell by cell
+// The block the crosshair is on, or none within reach. Reach is the
+// block_interaction_range attribute, 4.5 in survival and 5 in creative, and
+// the game takes the first block the ray enters, so this steps cell by cell
 // rather than sampling along the ray, where a corner can be missed.
-bool aimed_block(const float eye[3], const float direction[3],
+bool aimed_block(const float eye[3], const float direction[3], float reach,
                  const mcpp::world::BlockAt& at, const mcpp::world::BlockTable& table,
                  int32_t out[3]) {
-    constexpr float kReach = 4.5f;
     int32_t cell[3]{static_cast<int32_t>(std::floor(eye[0])),
                     static_cast<int32_t>(std::floor(eye[1])),
                     static_cast<int32_t>(std::floor(eye[2]))};
@@ -110,7 +110,7 @@ bool aimed_block(const float eye[3], const float direction[3],
                                                : static_cast<float>(cell[i]);
         next[i] = direction[i] != 0.0f ? (edge - eye[i]) / direction[i] : 1e30f;
     }
-    for (float travelled = 0.0f; travelled <= kReach;) {
+    for (float travelled = 0.0f; travelled <= reach;) {
         const int32_t state = at(cell[0], cell[1], cell[2]);
         if (state > 0 && !table.fluid(state)) {
             out[0] = cell[0];
@@ -1074,7 +1074,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
         eye[2] = between(body.previous_z, body.z);
 
         int32_t aimed[3]{};
-        const bool aiming = aimed_block(eye, forward, block_at, table, aimed);
+        const auto reach = static_cast<float>(
+            session.attribute(session.entity_id(), "minecraft:block_interaction_range", 4.5));
+        const bool aiming = aimed_block(eye, forward, reach, block_at, table, aimed);
         renderer.set_outlined_block(aimed, aiming);
 
         // Walking rocks the view: sideways with each step, down as each foot
@@ -1674,7 +1676,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                                        direction[2] * direction[2]);
         for (float& component : direction) component /= length;
         int32_t aimed[3]{};
-        const bool aiming = aimed_block(camera.eye, direction, chunk_block, table, aimed);
+        const bool aiming = aimed_block(camera.eye, direction, 4.5f, chunk_block, table, aimed);
         renderer.set_outlined_block(aimed, aiming);
         std::cout << (aiming ? std::format("- crosshair on the block at {} {} {}\n", aimed[0],
                                            aimed[1], aimed[2])
@@ -2186,6 +2188,38 @@ int do_digtest(const std::string& target) {
     std::cout << std::format("- ten up from 70 by a relative teleport: y {:.2f}\n", spawn[1]);
     session.send_command("tp @s 4 70 3");
     pump_for(1.0);
+
+    // Effects, attributes and difficulty, each set by a command and read back
+    // from what the server sent about it.
+    session.send_command("effect give @s minecraft:speed 30 1");
+    session.send_command("attribute @s minecraft:block_interaction_range modifier add "
+                         "plasma:test 1.5 add_value");
+    session.send_command("difficulty hard");
+    pump_for(1.0);
+    for (const auto& [id, effect] : session.effects(session.entity_id())) {
+        const auto* entry = session.registries().at("minecraft:mob_effect", id);
+        std::cout << std::format("- effect {} level {} for {} ticks\n",
+                                 entry != nullptr ? entry->name : std::to_string(id),
+                                 effect.amplifier + 1, effect.duration);
+    }
+    std::cout << std::format("- reach {:.2f}, speed {:.4f}, difficulty {}{}, {} tag registries\n",
+                             session.attribute(session.entity_id(),
+                                               "minecraft:block_interaction_range", -1.0),
+                             session.attribute(session.entity_id(), "minecraft:movement_speed",
+                                               -1.0),
+                             session.difficulty(), session.difficulty_locked() ? " locked" : "",
+                             session.tags().size());
+    for (const auto& line : said_in_chat) std::cout << "  chat: " << line << "\n";
+    session.send_command("effect clear @s");
+    session.send_command("attribute @s minecraft:block_interaction_range modifier remove "
+                         "plasma:test");
+    session.send_command("difficulty normal");
+    pump_for(1.0);
+    std::cout << std::format("- after clearing: {} effects, reach {:.2f}, difficulty {}\n",
+                             session.effects(session.entity_id()).size(),
+                             session.attribute(session.entity_id(),
+                                               "minecraft:block_interaction_range", -1.0),
+                             session.difficulty());
 
     // The test gives itself something to build with, so placing is actually
     // exercised rather than silently doing nothing with an empty hand.

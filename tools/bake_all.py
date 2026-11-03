@@ -3,10 +3,12 @@
 
 Usage: bake_all.py <client.jar> <reports/blocks.json> <protocol> [out-dir]
 
-Four files come out: block geometry, the texture array, the colour maps biome
-tints are looked up in, and the sky. All of it is read from the installation
-the player already owns; none of it is committed here or shipped.
+Out come block geometry, the texture array, the colour maps biome tints are
+looked up in, the sky, items, the gui, the built-in registries and the language.
+All of it is read from the installation the player already owns; none of it is
+committed here or shipped.
 """
+import json
 import os
 import subprocess
 import sys
@@ -42,6 +44,15 @@ def main(args):
         Path(report).parent / "items.json", protocol,
         out / f"items-{protocol}.plit")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu")
+    # The registries the client has built in, in id order: what an attribute,
+    # an effect or an entity type number means.
+    registries = json.loads((Path(report).parent / "registries.json").read_text())
+    with open(out / f"registries-{protocol}.txt", "w") as lines:
+        for name, registry in registries.items():
+            ordered = sorted(registry["entries"].items(), key=lambda e: e[1]["protocol_id"])
+            for entry, _ in ordered:
+                lines.write(f"{name}\t{entry}\n")
+    print(out / f"registries-{protocol}.txt")
     # The language file, without which every server message that names a key
     # - a death, a chat format, an advancement - shows the key itself.
     lang = out.parent / "lang"

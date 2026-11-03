@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace mcpp {
 
@@ -83,6 +84,42 @@ struct Entity {
     float head_yaw = 0.0f;
     int32_t data = 0;   // means something different for every type that uses it
     bool on_ground = false;
+};
+
+// A potion effect on something, as the server last described it. Duration is
+// in ticks, -1 for one that never runs out.
+struct MobEffect {
+    int32_t id = 0;
+    int32_t amplifier = 0;   // 0 is level I
+    int32_t duration = 0;
+    bool ambient = false;    // from a beacon or a conduit
+    bool particles = true;
+    bool icon = true;
+    bool blend = false;
+};
+
+// One attribute of something - its speed, its reach, its health - with every
+// modifier the server put on it.
+struct Attribute {
+    struct Modifier {
+        std::string id;
+        double amount = 0.0;
+        // Adds, adds that many times the base, or multiplies the result.
+        int32_t operation = 0;
+    };
+    double base = 0.0;
+    std::vector<Modifier> modifiers;
+
+    // Additions first, then the multiples of what they summed to, then each
+    // multiplier on the whole: the game's own order.
+    double value() const {
+        double sum = base;
+        for (const auto& m : modifiers) if (m.operation == 0) sum += m.amount;
+        double result = sum;
+        for (const auto& m : modifiers) if (m.operation == 1) result += sum * m.amount;
+        for (const auto& m : modifiers) if (m.operation == 2) result *= 1.0 + m.amount;
+        return result;
+    }
 };
 
 struct SessionEvents {
@@ -201,6 +238,17 @@ public:
         float walking_speed = 0.1f;
     };
     const Abilities& abilities() const { return abilities_; }
+    // Peaceful, easy, normal, hard.
+    int32_t difficulty() const { return difficulty_; }
+    bool difficulty_locked() const { return difficulty_locked_; }
+    bool hardcore() const { return hardcore_; }
+    const Tags& tags() const { return tags_; }
+    // What the server put on an entity, ours included; empty for one it has
+    // said nothing about.
+    const std::map<int32_t, MobEffect>& effects(int32_t entity) const;
+    const std::map<std::string, Attribute, std::less<>>& attributes(int32_t entity) const;
+    // An attribute's value, or the fallback when the server never sent it.
+    double attribute(int32_t entity, std::string_view name, double fallback) const;
     const Vitals& vitals() const { return vitals_; }
     // Switches the hand locally and tells the server, the way the wheel does.
     void send_held_slot(int32_t slot);
@@ -233,6 +281,13 @@ private:
     void read_spawn_info(ByteBuffer& in);
     Vitals vitals_;
     Abilities abilities_;
+    int32_t difficulty_ = 2;
+    bool difficulty_locked_ = false;
+    bool hardcore_ = false;
+    Tags tags_;
+    void read_tags(ByteBuffer& in);
+    std::map<int32_t, std::map<int32_t, MobEffect>> effects_;
+    std::map<int32_t, std::map<std::string, Attribute, std::less<>>> attributes_;
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;
     bool in_bundle_ = false;
