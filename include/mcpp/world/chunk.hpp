@@ -63,12 +63,17 @@ struct LightLayer {
 struct Chunk {
     int32_t x = 0;
     int32_t z = 0;
+    // The world y the lowest section starts at: -64 in the overworld, 0 in the
+    // nether and the end. Every world y becomes an index by subtracting it.
+    int32_t min_y = -64;
     std::vector<ChunkSection> sections;
     std::vector<BlockEntity> block_entities;
     LightLayer sky_light;
     LightLayer block_light;
 
     size_t non_empty_sections() const;
+    int32_t index_of(int32_t world_y) const { return world_y - min_y; }
+    int32_t top_y() const { return min_y + static_cast<int32_t>(sections.size()) * 16; }
     int32_t block_state(int32_t local_x, int32_t y_index, int32_t local_z) const;
     // True when the write landed; false when the position is outside the chunk.
     bool set_block_state(int32_t local_x, int32_t y_index, int32_t local_z, int32_t state);
@@ -83,7 +88,7 @@ struct Chunk {
 };
 
 // Reads a level_chunk_with_light payload, light included.
-Chunk read_chunk(ByteBuffer& in);
+Chunk read_chunk(ByteBuffer& in, int32_t min_y = -64);
 // The light half of a chunk packet on its own, which is what the server sends
 // after a block changes. The chunk keeps its blocks and takes the new light.
 void read_light_into(ByteBuffer& in, Chunk& chunk);

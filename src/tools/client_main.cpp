@@ -208,7 +208,7 @@ float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
                 for (int32_t y = static_cast<int32_t>(chunk.sections.size()) * 16 - 1; y >= 0; --y) {
                     const int32_t state = chunk.block_state(lx, y, lz);
                     if (state != 0 && table.full_cube(state)) {
-                        ground = std::max(ground, static_cast<float>(y - 64));
+                        ground = std::max(ground, static_cast<float>(y + chunk.min_y));
                         break;
                     }
                 }
@@ -673,7 +673,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
             std::lock_guard lock(world_guard);
             const auto found = world.find({chunk_x, chunk_z});
             if (found == world.end()) return;
-            if (!found->second.set_block_state(x & 15, y + 64, z & 15, state)) return;
+            if (!found->second.set_block_state(x & 15, found->second.index_of(y), z & 15, state)) return;
             relit = light.relight(world, x, y, z);
         }
         std::lock_guard lock(dirty_guard);
@@ -922,11 +922,11 @@ int do_play(const std::string& target, size_t chunk_limit) {
     // Unloaded counts as solid, so nobody falls out of the world while a chunk
     // is still on its way.
     const auto block_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
-        const int32_t index = y + 64;
-        if (index < 0) return 1;
         std::lock_guard lock(world_guard);
         const auto found = world.find({x >> 4, z >> 4});
         if (found == world.end()) return -1;
+        const int32_t index = found->second.index_of(y);
+        if (index < 0) return 1;
         if (index >= static_cast<int32_t>(found->second.sections.size()) * 16) return 0;
         return found->second.block_state(x & 15, index, z & 15);
     };
@@ -941,7 +941,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
             std::lock_guard lock(world_guard);
             const auto found = world.find({chunk_x, chunk_z});
             if (found == world.end()) return;
-            if (!found->second.set_block_state(x & 15, y + 64, z & 15, state)) return;
+            if (!found->second.set_block_state(x & 15, found->second.index_of(y), z & 15, state)) return;
             relit = light.relight(world, x, y, z);
         }
         std::lock_guard lock(dirty_guard);
@@ -1225,7 +1225,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
                 if (const auto found = world.find({cx, cz}); found != world.end()) {
                     const int32_t biome = found->second.biome_at(
                         static_cast<int32_t>(std::floor(eye[0])) & 15,
-                        static_cast<int32_t>(std::floor(eye[1])) + 64,
+                        found->second.index_of(static_cast<int32_t>(std::floor(eye[1]))),
                         static_cast<int32_t>(std::floor(eye[2])) & 15);
                     renderer.set_sky_colours(
                         session.biomes().sky(static_cast<size_t>(std::max(biome, 0))), 0xC0D8FFu);
@@ -1435,7 +1435,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             if (state != 0) {
                 column = std::format("highest block at (8,8) of chunk ({},{}): y={} state={} {}"
                                      ", sky light {} above it and {} ten blocks under it",
-                                     first.x, first.z, y - 64, state, table.block_name(state),
+                                     first.x, first.z, y + first.min_y, state, table.block_name(state),
                                      first.sky_light_at(8, y + 1, 8),
                                      first.sky_light_at(8, y - 10, 8));
                 break;
@@ -1449,7 +1449,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             for (const auto& chunk : chunks) {
                 for (int32_t z = 2; z < 16; z += 6) {
                     for (int32_t x = 2; x < 16; x += 6) {
-                        const int32_t id = chunk.biome_at(x, 63 + 64, z);
+                        const int32_t id = chunk.biome_at(x, chunk.index_of(63), z);
                         if (const auto* biome = session.biomes().at(static_cast<size_t>(id))) {
                             ++present[std::format("{} #{:06x}", biome->name,
                                                   session.biomes().grass(
@@ -1471,7 +1471,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             for (const auto& [name, count] : present) {
                 std::cout << std::format("    {:4}x {}\n", count, name);
             }
-            const int32_t id = first.biome_at(8, 63 + 64, 8);
+            const int32_t id = first.biome_at(8, first.index_of(63), 8);
             if (const auto* biome = session.biomes().at(static_cast<size_t>(id))) {
                 std::cout << std::format(
                     "- biome at the surface: {} ({}), temperature {:.2f}, downfall {:.2f}, "
@@ -1491,8 +1491,8 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                     const int32_t state = first.block_state(lx, y, lz);
                     if (state == 0) continue;
                     ++tops[std::string(table.block_name(state))];
-                    lowest = std::min(lowest, y - 64);
-                    highest = std::max(highest, y - 64);
+                    lowest = std::min(lowest, y + first.min_y);
+                    highest = std::max(highest, y + first.min_y);
                     break;
                 }
             }
@@ -1596,7 +1596,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                          y >= 0; --y) {
                         const int32_t state = chunk.block_state(lx, y, lz);
                         if (state != 0 && table.full_cube(state)) {
-                            ground = std::max(ground, static_cast<float>(y - 64));
+                            ground = std::max(ground, static_cast<float>(y + chunk.min_y));
                             break;
                         }
                     }
@@ -1640,10 +1640,10 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     // screenshot of the client shows what the client would be pointing at.
     if (outline.has_value()) {
         const auto chunk_block = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
-            const int32_t index = y + 64;
-            if (index < 0) return 1;
             for (const auto& chunk : chunks) {
                 if (chunk.x != (x >> 4) || chunk.z != (z >> 4)) continue;
+                const int32_t index = chunk.index_of(y);
+                if (index < 0) return 1;
                 if (index >= static_cast<int32_t>(chunk.sections.size()) * 16) return 0;
                 return chunk.block_state(x & 15, index, z & 15);
             }
@@ -1670,7 +1670,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
         renderer.set_biome_colours(session.biomes().tints(maps));
         const auto& here = chunks.front();
-        const int32_t biome = here.biome_at(8, 64 + 64, 8);
+        const int32_t biome = here.biome_at(8, here.index_of(64), 8);
         renderer.set_sky_colours(session.biomes().sky(static_cast<size_t>(std::max(biome, 0))),
                                  0xC0D8FFu);
     }
@@ -2068,7 +2068,7 @@ int do_digtest(const std::string& target) {
     };
     events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const auto found = world.find({x >> 4, z >> 4});
-        if (found != world.end() && found->second.set_block_state(x & 15, y + 64, z & 15, state)) {
+        if (found != world.end() && found->second.set_block_state(x & 15, found->second.index_of(y), z & 15, state)) {
             light.relight(world, x, y, z);
         }
         changes.push_back(std::format("{} {} {} is now {} ({})", x, y, z, state,
@@ -2115,7 +2115,7 @@ int do_digtest(const std::string& target) {
     const auto block_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
         const auto found = world.find({x >> 4, z >> 4});
         if (found == world.end()) return -1;
-        const int32_t index = y + 64;
+        const int32_t index = found->second.index_of(y);
         if (index < 0 || index >= static_cast<int32_t>(found->second.sections.size()) * 16) {
             return 0;
         }
@@ -2172,7 +2172,7 @@ int do_digtest(const std::string& target) {
         const auto found = world.find({foot_x >> 4, foot_z >> 4});
         if (found != world.end()) {
             const auto& chunk = found->second;
-            const int32_t index = target_y + 64;
+            const int32_t index = chunk.index_of(target_y);
             std::cout << std::format(
                 "- light in the hole: sky {} block {}; above it sky {}; beside it sky {}\n",
                 chunk.sky_light_at(foot_x & 15, index, foot_z & 15),
@@ -2267,10 +2267,10 @@ int do_walktest(const std::string& target, double seconds) {
                              spawn[0], spawn[1], spawn[2]);
 
     const auto block_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
-        const int32_t index = y + 64;
-        if (index < 0) return 1;
         const auto found = world.find({x >> 4, z >> 4});
         if (found == world.end()) return -1;
+        const int32_t index = found->second.index_of(y);
+        if (index < 0) return 1;
         if (index >= static_cast<int32_t>(found->second.sections.size()) * 16) return 0;
         return found->second.block_state(x & 15, index, z & 15);
     };
@@ -2356,9 +2356,10 @@ int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples
     }
 
     mcpp::world::Chunk chunk;
+    chunk.min_y = 0;   // one section, sitting at the origin
     chunk.sections.push_back(section_from_states(states));
     const mcpp::world::ChunkBlocks unpacked(chunk);
-    const auto mesh = mcpp::world::mesh_chunk(chunk, unpacked, table, {}, 0);
+    const auto mesh = mcpp::world::mesh_chunk(chunk, unpacked, table, {});
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options options;

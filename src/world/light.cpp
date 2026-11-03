@@ -8,8 +8,6 @@
 namespace mcpp::world {
 namespace {
 
-constexpr int32_t kMinY = -64;
-
 struct Cell {
     int32_t x, y, z;
     uint8_t level;
@@ -33,7 +31,7 @@ public:
         if (chunk == nullptr) return -1;
         LightLayer& layer = sky_ ? chunk->sky_light : chunk->block_light;
         if (layer.sections.empty()) return -1;
-        const int32_t index = y - kMinY;
+        const int32_t index = chunk->index_of(y);
         // Above the top of the world is open sky, which is where sky light
         // comes from in the first place.
         if (index >= static_cast<int32_t>(chunk->sections.size()) * 16) return sky_ ? 15 : 0;
@@ -45,7 +43,7 @@ public:
         Chunk* chunk = find(x, z);
         if (chunk == nullptr) return;
         LightLayer& layer = sky_ ? chunk->sky_light : chunk->block_light;
-        const int32_t index = y - kMinY;
+        const int32_t index = chunk->index_of(y);
         if (layer.sections.empty() || index < 0 ||
             index >= static_cast<int32_t>(chunk->sections.size()) * 16) {
             return;
@@ -65,7 +63,7 @@ public:
     int32_t state(int32_t x, int32_t y, int32_t z) {
         Chunk* chunk = find(x, z);
         if (chunk == nullptr) return 0;
-        const int32_t index = y - kMinY;
+        const int32_t index = chunk->index_of(y);
         if (index < 0 || index >= static_cast<int32_t>(chunk->sections.size()) * 16) return 0;
         return chunk->block_state(x & 15, index, z & 15);
     }

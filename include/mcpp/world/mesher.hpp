@@ -104,12 +104,11 @@ struct Neighbours {
 // One mesh per non-empty section, with positions relative to that section's
 // corner. A face whose cullface points at a neighbouring full cube is dropped.
 std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& blocks,
-                                       const BlockTable& table, const Neighbours& neighbours = {},
-                                       int32_t min_section_y = -4);
+                                       const BlockTable& table, const Neighbours& neighbours = {});
 
 // The same geometry merged into one buffer, in world coordinates. Convenient
 // for a one-off render or a test; the renderer wants the sections.
 Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
-                const Neighbours& neighbours = {}, int32_t min_section_y = -4);
+                const Neighbours& neighbours = {});
 
 } // namespace mcpp::world

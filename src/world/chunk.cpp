@@ -257,8 +257,9 @@ LightLayer read_light_layer(ByteBuffer& in, const std::vector<uint64_t>& present
 
 } // namespace
 
-Chunk read_chunk(ByteBuffer& in) {
+Chunk read_chunk(ByteBuffer& in, int32_t min_y) {
     Chunk chunk;
+    chunk.min_y = min_y;
     chunk.x = in.read_i32();
     chunk.z = in.read_i32();
 

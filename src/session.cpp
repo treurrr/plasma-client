@@ -570,7 +570,7 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
             options_.chunk_dump.clear();
             status("first chunk packet written out raw");
         }
-        auto chunk = world::read_chunk(in);
+        auto chunk = world::read_chunk(in, dimension_.min_y);
         // The packet should end exactly here. Anything left over means the
         // light format moved and we are reading the next chunk wrong.
         if (in.remaining() != 0 && !light_format_warned_) {

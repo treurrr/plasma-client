@@ -192,8 +192,7 @@ int32_t ChunkBlocks::at(int32_t x, int32_t y, int32_t z) const {
 }
 
 std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& blocks,
-                                       const BlockTable& table, const Neighbours& neighbours,
-                                       int32_t min_section_y) {
+                                       const BlockTable& table, const Neighbours& neighbours) {
     std::vector<SectionMesh> meshes;
     const auto section_count = static_cast<int32_t>(blocks.section_count());
 
@@ -272,7 +271,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 
         SectionMesh mesh;
         mesh.origin[0] = chunk.x * kSection;
-        mesh.origin[1] = (section + min_section_y) * kSection;
+        mesh.origin[1] = chunk.min_y + section * kSection;
         mesh.origin[2] = chunk.z * kSection;
         mesh.vertices.reserve(1 << 12);
         mesh.indices.reserve(1 << 12);
@@ -476,10 +475,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 }
 
 Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
-                const Neighbours& neighbours, int32_t min_section_y) {
+                const Neighbours& neighbours) {
     Mesh merged;
     std::vector<uint32_t> blended;
-    for (const auto& section : mesh_sections(chunk, blocks, table, neighbours, min_section_y)) {
+    for (const auto& section : mesh_sections(chunk, blocks, table, neighbours)) {
         const auto base = static_cast<uint32_t>(merged.vertices.size());
         // The merged form keeps section-local positions; only the renderer's
         // section path knows where each section sits.
