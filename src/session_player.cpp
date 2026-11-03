@@ -43,9 +43,9 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         const double x = in.read_f64();
         const double y = in.read_f64();
         const double z = in.read_f64();
-        in.read_f64();   // velocity, which this client works out itself
-        in.read_f64();
-        in.read_f64();
+        const double vx = in.read_f64();
+        const double vy = in.read_f64();
+        const double vz = in.read_f64();
         const float yaw = in.read_f32();
         const float pitch = in.read_f32();
         // Each bit makes one field an offset from where the player already is
@@ -66,9 +66,32 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
             events_.player.on_position(player_.last_x, player_.last_y, player_.last_z,
                                        player_.last_yaw, player_.last_pitch);
         }
+        if (events_.player.on_teleport) {
+            events_.player.on_teleport(player_.last_x, player_.last_y, player_.last_z, vx, vy, vz,
+                                       relative);
+        }
+        if (player_.announced_loaded) ++player_.teleports;
         ByteBuffer out;
         out.write_varint(teleport);
         send(ids_->play_sb.accept_teleportation, out);
+        // The game answers a teleport with where it now stands, straight
+        // away: the server ignores movement until it has heard it.
+        ByteBuffer here;
+        here.write_f64(player_.last_x);
+        here.write_f64(player_.last_y);
+        here.write_f64(player_.last_z);
+        here.write_f32(player_.last_yaw);
+        here.write_f32(player_.last_pitch);
+        here.write_u8(0);
+        send(ids_->play_sb.move_player_pos_rot, here);
+        player_.sent_x = player_.last_x;
+        player_.sent_y = player_.last_y;
+        player_.sent_z = player_.last_z;
+        player_.sent_yaw = player_.last_yaw;
+        player_.sent_pitch = player_.last_pitch;
+        player_.sent_on_ground = false;
+        player_.sent_collision = false;
+        player_.position_reminder = 0;
         // Since 1.21.2 the server keeps the player hidden from everyone else
         // until the client says it has finished loading. Without this you are
         // in the world, you can walk and chat, and nobody can see you.

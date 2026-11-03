@@ -162,6 +162,12 @@ struct SessionEvents {
         // Where the server says we are. It decides, not us: starting anywhere else
         // makes the first movement packet look like a teleport.
         std::function<void(double, double, double, float, float)> on_position;
+        // The same teleport with the velocity the server sent and the relative
+        // bits: 0x20, 0x40 and 0x80 make the velocity's x, y and z additions
+        // to the player's own. The position is already resolved. Called after
+        // on_position.
+        std::function<void(double, double, double, double, double, double, uint32_t)>
+            on_teleport;
     } player;
 
     struct Ui {
@@ -292,6 +298,31 @@ public:
                     float cursor_y, float cursor_z);
     void send_swing();
 
+    // One game tick of a player that moves itself, in the order the game
+    // sends it: the keys if they changed, sprinting if it changed, the
+    // cheapest of the four movement packets that says what changed, and the
+    // end of the tick.
+    struct Movement {
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        float yaw = 0.0f;
+        float pitch = 0.0f;
+        bool on_ground = false;
+        bool horizontal_collision = false;
+        bool sprinting = false;
+        // The keys held: forward, back, left, right, jump, sneak, sprint.
+        uint8_t keys = 0;
+    };
+    void send_movement(const Movement& movement);
+    // Creative flight switched on or off by the player.
+    void send_flying(bool flying);
+    // How many times the server has put us somewhere we did not move to,
+    // after the first placement: corrections, as a test counts them.
+    size_t teleports() const { return player_.teleports; }
+    // The level of an effect on the player by name, 0 when it is not on.
+    int32_t effect_level(std::string_view name) const;
+
     // Ui: session_ui.cpp.
     void send_chat(std::string_view message);
     void send_command(std::string_view command);
@@ -351,6 +382,18 @@ private:
         double last_z = 0.0;
         float last_yaw = 0.0f;
         float last_pitch = 0.0f;
+        // What the server was last told, so each tick sends only what changed.
+        double sent_x = 0.0;
+        double sent_y = 0.0;
+        double sent_z = 0.0;
+        float sent_yaw = 0.0f;
+        float sent_pitch = 0.0f;
+        bool sent_on_ground = false;
+        bool sent_collision = false;
+        bool sent_sprinting = false;
+        uint8_t sent_keys = 0;
+        int32_t position_reminder = 0;
+        size_t teleports = 0;
     };
     PlayerState player_;
 
