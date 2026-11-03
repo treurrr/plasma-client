@@ -115,6 +115,12 @@ Window::Window(Device& device, uint32_t width, uint32_t height, const std::strin
         }
         self->events_.push_back({InputEvent::Type::Move, 0, 0, 0, 0, x, y});
     });
+    // Wayland never reports a resized surface as out of date, so a tiling
+    // compositor would otherwise get the first swapchain stretched to fit.
+    glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* handle, int, int) {
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
+        if (self != nullptr) self->swapchain_stale_ = true;
+    });
 
     check(glfwCreateWindowSurface(device_.instance(), window_, nullptr, &surface_),
           "glfwCreateWindowSurface");
@@ -460,6 +466,9 @@ void Window::present(WorldRenderer& renderer, const Camera& camera,
                      const Overlay& overlay) {
     const auto started = std::chrono::steady_clock::now();
     if (swapchain_stale_) {
+        int w = 0, h = 0;
+        glfwGetFramebufferSize(window_, &w, &h);
+        if (w == 0 || h == 0) return;
         swapchain_stale_ = false;
         vkDeviceWaitIdle(device_.handle());
         destroy_swapchain();
