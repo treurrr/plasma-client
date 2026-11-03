@@ -175,6 +175,7 @@ mcpp_test(packet_ids)
 mcpp_test(assets)
 mcpp_test(ui)
 mcpp_test(jmath)
+mcpp_test(hud)
 
 # The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it
 # with the game's own code. One line per probe.
