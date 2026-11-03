@@ -18,6 +18,7 @@
 #include "mcpp/image_png.hpp"
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/biomes.hpp"
+#include "mcpp/translations.hpp"
 #include "mcpp/world/light.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/mesher.hpp"
@@ -61,9 +62,20 @@ mcpp::auth::Profile signed_in_profile(std::string& username) {
     return {};
 }
 
-// "diamond_sword" is how the registry names it; a player reads "Diamond Sword".
-// The real translation comes from the language file when one is installed.
-std::string pretty_item(std::string_view name) {
+// What the game calls an item, from its own language file: "Totem of Undying",
+// "Bottle o' Enchanting", "TNT". Casing the registry name gets a third of them
+// wrong, so that is only the fallback for an install with no language file.
+std::string item_display_name(std::string_view name) {
+    static const mcpp::Translations language = [] {
+        mcpp::Translations loaded;
+        loaded.load(mcpp::Translations::default_path());
+        return loaded;
+    }();
+    for (const char* kind : {"item", "block"}) {
+        if (const auto* text = language.find(std::format("{}.minecraft.{}", kind, name))) {
+            return *text;
+        }
+    }
     std::string out;
     bool start = true;
     for (const char c : name) {
@@ -1285,7 +1297,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
             }
             state.held = inventory.held;
             const auto& in_hand = inventory.hotbar(static_cast<size_t>(inventory.held));
-            state.held_name = in_hand.count > 0 ? pretty_item(quads.item_name(in_hand.id))
+            state.held_name = in_hand.count > 0 ? item_display_name(quads.item_name(in_hand.id))
                                                 : std::string{};
             const auto& vitals = session.vitals();
             state.health = vitals.health;
@@ -1301,7 +1313,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
                 state.slots[i] = inventory.slots[i].id;
                 state.slot_counts[i] = inventory.slots[i].count;
                 state.slot_names[i] = inventory.slots[i].count > 0
-                                          ? pretty_item(quads.item_name(inventory.slots[i].id))
+                                          ? item_display_name(quads.item_name(inventory.slots[i].id))
                                           : std::string{};
             }
             state.cursor_item = inventory.carried.id;
@@ -1743,7 +1755,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             }
             state.held = inventory.held;
             const auto& in_hand = inventory.hotbar(static_cast<size_t>(inventory.held));
-            if (in_hand.count > 0) state.held_name = pretty_item(quads->item_name(in_hand.id));
+            if (in_hand.count > 0) state.held_name = item_display_name(quads->item_name(in_hand.id));
             const auto& vitals = session.vitals();
             state.health = vitals.health;
             state.food = vitals.food;

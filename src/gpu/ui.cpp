@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <vector>
 #include <format>
 #include <span>
@@ -228,7 +229,16 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
         input.read(magic, 4);
         uint32_t header[6]{};
         input.read(reinterpret_cast<char*>(header), sizeof(header));
-        if (std::memcmp(magic, "PLIT", 4) == 0 && header[0] == 3 && header[3] > 0) {
+        // A file from another version of the baker is said out loud: read as
+        // if it fit, the icons silently vanish, which is how this once went
+        // unnoticed for a whole series of changes.
+        constexpr uint32_t kItemsVersion = 4;
+        if (std::memcmp(magic, "PLIT", 4) == 0 && header[0] != kItemsVersion) {
+            std::cerr << std::format("{} is baker version {}, this client reads {}; "
+                                     "bake it again with tools/bake_all.py\n",
+                                     items.string(), header[0], kItemsVersion);
+        }
+        if (std::memcmp(magic, "PLIT", 4) == 0 && header[0] == kItemsVersion && header[3] > 0) {
             tile = header[2];
             item_layers_ = header[3];
             input.seekg(static_cast<std::streamoff>(((4 + sizeof(header)) + 7) & ~size_t{7}));
@@ -269,7 +279,13 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
         gui_input.read(magic, 4);
         uint32_t header[7]{};
         gui_input.read(reinterpret_cast<char*>(header), sizeof(header));
-        if (std::memcmp(magic, "PLGU", 4) == 0 && header[0] == 3 && header[2] > 0) {
+        constexpr uint32_t kGuiVersion = 3;
+        if (std::memcmp(magic, "PLGU", 4) == 0 && header[0] != kGuiVersion) {
+            std::cerr << std::format("{} is baker version {}, this client reads {}; "
+                                     "bake it again with tools/bake_all.py\n",
+                                     gui.string(), header[0], kGuiVersion);
+        }
+        if (std::memcmp(magic, "PLGU", 4) == 0 && header[0] == kGuiVersion && header[2] > 0) {
             gui_side = header[2];
             gui_input.seekg(static_cast<std::streamoff>(((4 + sizeof(header)) + 7) & ~size_t{7}));
             gui_pixels.resize(static_cast<size_t>(gui_side) * gui_side * 4);
