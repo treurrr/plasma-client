@@ -13,7 +13,10 @@
 
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 #include <format>
+#include <map>
+#include <tuple>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -206,6 +209,120 @@ void test_block_sounds() {
     check(step && near(step->volume, 0.045) && near(step->pitch, 1.0), "anvil step");
     check(!cue(table.find("cactus_flower"), BlockSoundKind::Step), "no event, no sound");
     check(table.find("water").step == "intentionally_empty", "fluids are silent");
+}
+
+// A flat world for the feet: one floor block at y 63 everywhere unless placed.
+struct TestWorld {
+    std::map<std::tuple<int32_t, int32_t, int32_t>, std::string> blocks;
+    std::string floor = "minecraft:stone";
+    std::map<std::string, std::vector<std::string>> tags;
+
+    StepWorld world() {
+        StepWorld w;
+        w.block_at = [this](int32_t x, int32_t y, int32_t z) -> std::string {
+            if (const auto found = blocks.find({x, y, z}); found != blocks.end()) return found->second;
+            return y == 63 ? floor : "minecraft:air";
+        };
+        w.in_tag = [this](std::string_view block, std::string_view tag) {
+            const auto found = tags.find(std::string(tag));
+            if (found == tags.end()) return false;
+            return std::find(found->second.begin(), found->second.end(), block) != found->second.end();
+        };
+        w.collides = [this, w](int32_t x, int32_t y, int32_t z) {
+            const auto name = w.block_at(x, y, z);
+            return name != "minecraft:air" && name != "minecraft:snow" && name != "minecraft:pink_petals";
+        };
+        return w;
+    }
+};
+
+void test_footsteps() {
+    const auto& table = BlockSounds::builtin();
+    jmath::LegacyRandom random(1);
+
+    // Walking at 0.21585 a tick counts 0.12951 a tick (in floats): past 1 on
+    // the eighth tick, past 2 on the sixteenth, past 3 on the twenty-fourth.
+    TestWorld flat;
+    auto world = flat.world();
+    Footsteps feet;
+    std::vector<int> step_ticks;
+    double x = 0.5;
+    for (int tick = 1; tick <= 24; ++tick) {
+        x += 0.21585;
+        StepInput input{x, 64.0, 0.5, 0.21585, 0.0, 0.0, true};
+        for (const auto& sound : feet.tick(input, table, world, random)) {
+            check(sound.event == "block.stone.step" && near(sound.volume, 0.15) && near(sound.pitch, 1.0),
+                  "a step on stone");
+            step_ticks.push_back(tick);
+        }
+    }
+    check(step_ticks == std::vector<int>{8, 16, 24},
+          std::format("steps on ticks 8, 16 and 24, got {} of them", step_ticks.size()));
+
+    // Snow on grass is both, the grass muffled; pink petals are heard alone.
+    TestWorld layered;
+    layered.floor = "minecraft:grass_block";
+    layered.tags["minecraft:combination_step_sound_blocks"] = {"minecraft:snow"};
+    layered.tags["minecraft:inside_step_sound_blocks"] = {"minecraft:pink_petals"};
+    for (int i = 0; i < 8; ++i) layered.blocks[{i, 64, 0}] = "minecraft:snow";
+    auto layered_world = layered.world();
+    Footsteps snow_feet;
+    std::vector<StepSound> heard;
+    x = 0.5;
+    for (int tick = 1; tick <= 8; ++tick) {
+        x += 0.21585;
+        auto sounds = snow_feet.tick({x, 64.0, 0.5, 0.21585, 0.0, 0.0, true}, table, layered_world, random);
+        heard.insert(heard.end(), sounds.begin(), sounds.end());
+    }
+    check(heard.size() == 2 && heard[0].event == "block.snow.step" && heard[1].event == "block.grass.step" &&
+              near(heard[1].volume, 0.05) && near(heard[1].pitch, 0.8),
+          "snow over grass: the snow, then the grass at a third and four fifths");
+
+    // Standing over an edge, the block still under the box is the one heard.
+    TestWorld edge;
+    edge.floor = "minecraft:air";
+    edge.blocks[{0, 63, 0}] = "minecraft:oak_planks";
+    auto edge_world = edge.world();
+    Footsteps edge_feet;
+    heard.clear();
+    double z = 0.5;
+    for (int tick = 1; tick <= 8; ++tick) {
+        x = 1.2;   // 0.2 past the plank's edge, the box still on it
+        z += 0.0;
+        auto sounds = edge_feet.tick({x, 64.0, z, 0.0, 0.0, 0.21585, true}, table, edge_world, random);
+        heard.insert(heard.end(), sounds.begin(), sounds.end());
+    }
+    check(heard.size() == 1 && heard[0].event == "block.wood.step",
+          "a step over the edge sounds like the plank that holds the player");
+
+    // Landing hurts from a fall of four, and only then is it heard: 3.5 is
+    // silent, 4 is a small fall and the block, 9 is a big one.
+    const auto land = [&](double height, std::string_view floor) {
+        TestWorld drop;
+        drop.floor = std::string(floor);
+        auto drop_world = drop.world();
+        Footsteps falling;
+        std::vector<StepSound> all;
+        double y = 64.0 + height;
+        double speed = 0.0;
+        while (y > 64.0) {
+            speed = (speed + 0.08) * 0.98;
+            const double step = std::min(speed, y - 64.0);
+            y -= step;
+            auto sounds = falling.tick({0.5, y, 0.5, 0.0, -step, 0.0, y <= 64.0}, table, drop_world, random);
+            all.insert(all.end(), sounds.begin(), sounds.end());
+        }
+        return all;
+    };
+    check(land(3.5, "minecraft:stone").empty(), "a fall of 3.5 is silent");
+    const auto small = land(4.0, "minecraft:stone");
+    check(small.size() == 2 && small[0].event == "entity.player.small_fall" &&
+              small[1].event == "block.stone.fall" && near(small[1].volume, 0.5) && near(small[1].pitch, 0.75),
+          "a fall of 4: the small fall and the stone");
+    const auto big = land(9.0, "minecraft:stone");
+    check(!big.empty() && big[0].event == "entity.player.big_fall", "a fall of 9 is a big one");
+    check(land(9.0, "minecraft:hay_block").size() == 2 && land(5.0, "minecraft:hay_block").empty(),
+          "hay takes four fifths of the fall away");
 }
 
 void test_level_events() {
@@ -507,6 +624,7 @@ int main() {
     test_attenuation();
     test_categories();
     test_block_sounds();
+    test_footsteps();
     test_level_events();
     test_mixer();
     test_engine_on_assets();

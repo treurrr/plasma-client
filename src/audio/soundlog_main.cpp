@@ -292,19 +292,48 @@ int do_replay(const std::string& file, bool realtime) {
         const int32_t id = session_ptr->registries().index_of("minecraft:block", block);
         return id >= 0 && session_ptr->tags().contains("minecraft:block", tag, id);
     };
+    const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
+        const auto found = world.find({x >> 4, z >> 4});
+        if (found == world.end()) return 0;
+        const int32_t row = found->second.index_of(y);
+        if (row < 0 || row >= static_cast<int32_t>(found->second.sections.size()) * 16) return 0;
+        return found->second.block_state(x & 15, row, z & 15);
+    };
+    mcpp::audio::StepWorld step_world;
+    step_world.block_at = block_name_at;
+    step_world.in_tag = in_tag;
+    // Full cubes only, as the client's physics has it until collision shapes land.
+    step_world.collides = [&](int32_t x, int32_t y, int32_t z) {
+        return table.is_open() && table.full_cube(state_at(x, y, z));
+    };
+    std::map<int32_t, std::array<double, 3>> last_seen;
+    mcpp::jmath::LegacyRandom walker_random(7);
     const auto feed = [&](const mcpp::Entity& entity, bool teleported) {
         const int32_t player_type =
             session_ptr->registries().index_of("minecraft:entity_type", "minecraft:player");
         if (entity.type != player_type || entity.id == session_ptr->entity_id()) return;
-        if (teleported) walkers[entity.id].reset();
-        const auto sounds = walkers[entity.id].tick({entity.x, entity.y, entity.z, entity.on_ground},
-                                                    mcpp::audio::BlockSounds::builtin(),
-                                                    block_name_at, in_tag);
+        auto& walker = walkers[entity.id];
+        auto& last = last_seen[entity.id];
+        if (teleported) {
+            walker.reset();
+            last = {entity.x, entity.y, entity.z};
+        }
+        mcpp::audio::StepInput input;
+        input.x = entity.x;
+        input.y = entity.y;
+        input.z = entity.z;
+        input.moved_x = entity.x - last[0];
+        input.moved_y = entity.y - last[1];
+        input.moved_z = entity.z - last[2];
+        input.on_ground = entity.on_ground;
+        last = {entity.x, entity.y, entity.z};
+        const auto sounds =
+            walker.tick(input, mcpp::audio::BlockSounds::builtin(), step_world, walker_random);
         for (const auto& sound : sounds) {
             ++predicted;
             std::cout << std::format("{:8.3f} model   {} at {:.3f} {:.3f} {:.3f} volume {:.4f} pitch {:.4f}\n",
-                                     now, sound.cue.event, sound.x, sound.y, sound.z,
-                                     sound.cue.volume, sound.cue.pitch);
+                                     now, sound.event, sound.x, sound.y, sound.z, sound.volume,
+                                     sound.pitch);
         }
     };
     events.entities.on_add = [&](const mcpp::Entity& entity) {
