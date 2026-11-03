@@ -1,746 +1,1423 @@
 #include "mcpp/world/physics.hpp"
 
+#include "mcpp/jmath.hpp"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <numbers>
-#include <vector>
+#include <limits>
 
 namespace mcpp::world {
 namespace {
 
-constexpr double kAirDrag = 0.91;
-constexpr double kVerticalDrag = 0.98;
-constexpr double kSprintBoost = 0.3;          // the sprinting modifier, multiply_total
-constexpr double kSprintJumpBoost = 0.2;
-constexpr double kAirAccel = 0.02;
-constexpr double kSprintAirAccel = 0.025999999;
-constexpr double kInputScale = 0.98;
-constexpr double kClimbSpeed = 0.15;
-constexpr double kFluidJumpThreshold = 0.4;
-constexpr double kEpsilon = 1e-7;
-constexpr double kMaxSway = 0.1;
+// The game's degrees-to-radians, a float.
+constexpr float kRadians = 0.017453292f;
+constexpr double kEpsilon = 1.0e-7;
 
-struct Aabb {
+int32_t floor_i(double v) {
+    const auto i = static_cast<int32_t>(v);
+    return v < static_cast<double>(i) ? i - 1 : i;
+}
+
+int32_t ceil_i(double v) {
+    const auto i = static_cast<int32_t>(v);
+    return v > static_cast<double>(i) ? i + 1 : i;
+}
+
+bool near(double a, double b) { return std::abs(b - a) < static_cast<double>(1.0e-5f); }
+
+struct Vec {
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+
+    double operator[](int axis) const { return axis == 0 ? x : axis == 1 ? y : z; }
+    double& operator[](int axis) { return axis == 0 ? x : axis == 1 ? y : z; }
+    double length_sqr() const { return x * x + y * y + z * z; }
+    double length() const { return std::sqrt(length_sqr()); }
+    double horizontal_sqr() const { return x * x + z * z; }
+    Vec scale(double by) const { return {x * by, y * by, z * by}; }
+    Vec normalize() const {
+        const double d = length();
+        return d < static_cast<double>(1.0e-5f) ? Vec{} : Vec{x / d, y / d, z / d};
+    }
+};
+
+struct Box {
     double min[3];
     double max[3];
 
-    Aabb moved(double dx, double dy, double dz) const {
+    Box move(double dx, double dy, double dz) const {
         return {{min[0] + dx, min[1] + dy, min[2] + dz}, {max[0] + dx, max[1] + dy, max[2] + dz}};
     }
-    Aabb grown(double dx, double dy, double dz) const {
-        Aabb out = *this;
+    Box move(const Vec& v) const { return move(v.x, v.y, v.z); }
+    Box expand_towards(double dx, double dy, double dz) const {
+        Box out = *this;
         const double d[3] = {dx, dy, dz};
         for (int i = 0; i < 3; ++i) {
             if (d[i] < 0.0) out.min[i] += d[i];
-            else out.max[i] += d[i];
+            else if (d[i] > 0.0) out.max[i] += d[i];
         }
         return out;
     }
-    Aabb shrunk(double by) const {
+    Box deflate(double by) const {
         return {{min[0] + by, min[1] + by, min[2] + by}, {max[0] - by, max[1] - by, max[2] - by}};
     }
-    bool overlaps(const Aabb& o) const {
-        for (int i = 0; i < 3; ++i) {
-            if (max[i] <= o.min[i] || min[i] >= o.max[i]) return false;
-        }
-        return true;
+    bool intersects(double x0, double y0, double z0, double x1, double y1, double z1) const {
+        return min[0] < x1 && max[0] > x0 && min[1] < y1 && max[1] > y0 && min[2] < z1 && max[2] > z0;
     }
 };
 
-int32_t floor_i(double v) { return static_cast<int32_t>(std::floor(v)); }
-
-double body_height(Pose pose) {
+float pose_height(Pose pose) {
     switch (pose) {
-        case Pose::Crouching: return kCrouchHeight;
-        case Pose::Swimming: return kSwimHeight;
-        default: return kPlayerHeight;
+        case Pose::Crouching: return kCrouchingHeight;
+        case Pose::Swimming: return kSwimmingHeight;
+        default: return kStandingHeight;
     }
 }
 
-double body_eye(Pose pose) {
+float pose_eye(Pose pose) {
     switch (pose) {
-        case Pose::Crouching: return kCrouchEyeHeight;
-        case Pose::Swimming: return kSwimEyeHeight;
-        default: return kEyeHeight;
+        case Pose::Crouching: return kCrouchingEye;
+        case Pose::Swimming: return kSwimmingEye;
+        default: return kStandingEye;
     }
 }
 
-Aabb box_of(double x, double y, double z, double height) {
-    const double half = kPlayerWidth * 0.5;
+Box box_at(double x, double y, double z, Pose pose) {
+    const float half = kPlayerWidth / 2.0f;
+    const float height = pose_height(pose);
     return {{x - half, y, z - half}, {x + half, y + height, z + half}};
 }
 
-struct World {
-    const BlockAt& at;
+Box box_of(const Body& b) { return box_at(b.x, b.y, b.z, b.pose); }
+
+// The world as one tick sees it. Every block is asked for once per tick at
+// most; the movement asks for the same few dozen over and over.
+class Level {
+public:
+    explicit Level(const World& world)
+        : shapes(world.shapes), tags(world.tags), min_y(world.min_y), at_(world.at) {
+        const int32_t stone = shapes.find("minecraft:stone");
+        block_shape = stone >= 0 ? shapes.state(stone).collision : 0;
+        scaffolding_bottom = shapes.named("scaffolding_unstable_bottom");
+        powder_snow_falling = shapes.named("powder_snow_falling");
+    }
+
+    int32_t raw(int32_t x, int32_t y, int32_t z) const {
+        const uint64_t key = ((static_cast<uint64_t>(static_cast<uint32_t>(x)) & 0x3FFFFFFu) << 38) |
+                             ((static_cast<uint64_t>(static_cast<uint32_t>(z)) & 0x3FFFFFFu) << 12) |
+                             (static_cast<uint64_t>(static_cast<uint32_t>(y)) & 0xFFFu);
+        const size_t slot = static_cast<size_t>((key * 0x9E3779B97F4A7C15ull) >> 54);
+        if (!used_[slot] || keys_[slot] != key) {
+            used_[slot] = true;
+            keys_[slot] = key;
+            values_[slot] = at_(x, y, z);
+        }
+        return values_[slot];
+    }
+    int32_t state(int32_t x, int32_t y, int32_t z) const { return std::max(0, raw(x, y, z)); }
+    const StateInfo& info(int32_t x, int32_t y, int32_t z) const {
+        return shapes.state(state(x, y, z));
+    }
+    const BlockInfo& block(int32_t x, int32_t y, int32_t z) const {
+        return shapes.block(state(x, y, z));
+    }
+    bool loaded(int32_t x, int32_t z) const { return raw(x, min_y, z) >= 0; }
+    bool loaded(int32_t x0, int32_t z0, int32_t x1, int32_t z1) const {
+        for (int32_t cx = x0 >> 4; cx <= x1 >> 4; ++cx) {
+            for (int32_t cz = z0 >> 4; cz <= z1 >> 4; ++cz) {
+                if (!loaded(cx * 16, cz * 16)) return false;
+            }
+        }
+        return true;
+    }
+    bool tagged(int32_t state, uint8_t bit) const {
+        return tags != nullptr && tags->has(shapes.block(state), shapes, state, bit);
+    }
+
     const BlockShapes& shapes;
-    const Body& body;
-    bool sneaking;
+    const BlockTags* tags;
+    int32_t min_y;
+    uint16_t block_shape = 0;
+    int32_t scaffolding_bottom = -1;
+    int32_t powder_snow_falling = -1;
 
-    int32_t state(int32_t x, int32_t y, int32_t z) const { return at(x, y, z); }
+private:
+    const BlockAt& at_;
+    mutable std::array<uint64_t, 1024> keys_{};
+    mutable std::array<int32_t, 1024> values_{};
+    mutable std::array<bool, 1024> used_{};
+};
 
-    // Every collision box that could touch the region, in world coordinates.
-    // Unloaded ground is solid, so nobody falls out of a chunk on its way.
-    void collect(const Aabb& region, std::vector<Aabb>& out) const {
-        out.clear();
-        const int32_t x0 = floor_i(region.min[0] - kEpsilon) ;
-        const int32_t x1 = floor_i(region.max[0] + kEpsilon);
-        const int32_t y0 = floor_i(region.min[1] - kEpsilon) - 1;   // fences and walls reach up
-        const int32_t y1 = floor_i(region.max[1] + kEpsilon);
-        const int32_t z0 = floor_i(region.min[2] - kEpsilon);
-        const int32_t z1 = floor_i(region.max[2] + kEpsilon);
-        for (int32_t x = x0; x <= x1; ++x) {
-            for (int32_t z = z0; z <= z1; ++z) {
-                for (int32_t y = y0; y <= y1; ++y) {
-                    const int32_t s = state(x, y, z);
-                    if (s < 0) {
-                        out.push_back({{double(x), double(y), double(z)},
-                                       {x + 1.0, y + 1.0, z + 1.0}});
-                        continue;
-                    }
-                    if (s == 0) continue;
-                    const auto& physics = shapes.physics(s);
-                    if (physics.scaffolding) {
-                        // Standing on it unless you are sneaking down through it.
-                        if (sneaking || body.y < y + 1.0 - 1e-5) continue;
-                        out.push_back({{double(x), y + 14.0 / 16.0, double(z)},
-                                       {x + 1.0, y + 1.0, z + 1.0}});
-                        continue;
-                    }
-                    double ox = 0.0;
-                    double oz = 0.0;
-                    if (physics.offset > 0.0f) random_offset(x, z, physics.offset, ox, oz);
-                    for (const auto& b : shapes.collision(s)) {
-                        Aabb w{{x + b.min[0] + ox, y + b.min[1], z + b.min[2] + oz},
-                               {x + b.max[0] + ox, y + b.max[1], z + b.max[2] + oz}};
-                        if (w.max[1] <= region.min[1] - kEpsilon && y < floor_i(region.min[1])) {
-                            continue;
-                        }
-                        out.push_back(w);
-                    }
-                }
+// Who is asking for a collision shape: scaffolding and powder snow answer
+// differently to someone above them, sneaking, or falling.
+struct Context {
+    bool descending = false;
+    double bottom = 0.0;
+    double fall_distance = 0.0;
+    bool leather_boots = false;
+};
+
+Context context_of(const Body& b, const Keys& keys, const Stats& stats) {
+    return {keys.shift, b.y, b.fall_distance, stats.leather_boots};
+}
+
+// A collision shape where it stands in the world.
+struct Placed {
+    const Voxels* v;
+    double offset[3];
+    int32_t pos[3];
+    bool block;
+
+    double edge(const BlockShapes& shapes, int axis, int i) const {
+        return (shapes.edges(*v, axis)[static_cast<size_t>(i)] + offset[axis]) +
+               static_cast<double>(pos[axis]);
+    }
+    int cells(int axis) const { return v->edges[axis] - 1; }
+};
+
+bool collision_shape(const Level& level, const Context& c, int32_t x, int32_t y, int32_t z,
+                     int32_t state, Placed& out) {
+    const auto& shapes = level.shapes;
+    const auto& info = shapes.state(state);
+    const auto& block = shapes.block(state);
+    int32_t shape = info.collision;
+    if (block.special == Special::Scaffolding) {
+        if (c.bottom > y + 1.0 - static_cast<double>(1.0e-5f) && !c.descending) {
+            shape = info.collision;
+        } else if (shapes.property(state, "distance") != "0" &&
+                   shapes.property(state, "bottom") == "true" &&
+                   c.bottom > y + 0.0 - static_cast<double>(1.0e-5f)) {
+            shape = level.scaffolding_bottom;
+        } else {
+            return false;
+        }
+    } else if (block.special == Special::PowderSnow) {
+        if (c.fall_distance > 2.5) {
+            shape = level.powder_snow_falling;
+        } else if (c.leather_boots && c.bottom > y + 1.0 - static_cast<double>(1.0e-5f) &&
+                   !c.descending) {
+            shape = level.block_shape;
+        } else {
+            return false;
+        }
+    }
+    if (shape < 0 || shapes.empty(static_cast<uint16_t>(shape))) return false;
+    out.v = &shapes.voxels(static_cast<uint16_t>(shape));
+    out.offset[0] = out.offset[1] = out.offset[2] = 0.0;
+    if (block.offset != 0) shapes.offset(state, x, z, out.offset);
+    out.pos[0] = x;
+    out.pos[1] = y;
+    out.pos[2] = z;
+    out.block = shape == level.block_shape && block.offset == 0;
+    return true;
+}
+
+// Whether any full cell of the shape overlaps the box, the way the game
+// merges the two shapes' edges: anything thinner than 1e-7 does not count.
+bool overlaps(const Level& level, const Placed& p, const Box& box) {
+    if (p.block) {
+        return box.intersects(p.pos[0], p.pos[1], p.pos[2], p.pos[0] + 1.0, p.pos[1] + 1.0,
+                              p.pos[2] + 1.0);
+    }
+    const auto& shapes = level.shapes;
+    for (int z = 0; z < p.cells(2); ++z) {
+        const double z0 = std::max(p.edge(shapes, 2, z), box.min[2]);
+        const double z1 = std::min(p.edge(shapes, 2, z + 1), box.max[2]);
+        if (!(z1 - z0 > kEpsilon)) continue;
+        for (int y = 0; y < p.cells(1); ++y) {
+            const double y0 = std::max(p.edge(shapes, 1, y), box.min[1]);
+            const double y1 = std::min(p.edge(shapes, 1, y + 1), box.max[1]);
+            if (!(y1 - y0 > kEpsilon)) continue;
+            for (int x = 0; x < p.cells(0); ++x) {
+                if (!shapes.full(*p.v, x, y, z)) continue;
+                const double x0 = std::max(p.edge(shapes, 0, x), box.min[0]);
+                const double x1 = std::min(p.edge(shapes, 0, x + 1), box.max[0]);
+                if (x1 - x0 > kEpsilon) return true;
             }
         }
     }
+    return false;
+}
 
-    bool free(const Aabb& box) const {
-        std::vector<Aabb> boxes;
-        collect(box, boxes);
-        const Aabb inner = box;
-        return std::ranges::none_of(boxes, [&](const Aabb& b) { return inner.overlaps(b); });
+// Every block shape that touches the box, in the order the game walks them:
+// x fastest, then y, then z, one block beyond on every side for the shapes
+// that reach out of their cell.
+template <class Visit>
+void block_collisions(const Level& level, const Context& c, const Box& box, bool suffocating_only,
+                      Visit&& visit) {
+    const int32_t x0 = floor_i(box.min[0] - kEpsilon) - 1;
+    const int32_t x1 = floor_i(box.max[0] + kEpsilon) + 1;
+    const int32_t y0 = floor_i(box.min[1] - kEpsilon) - 1;
+    const int32_t y1 = floor_i(box.max[1] + kEpsilon) + 1;
+    const int32_t z0 = floor_i(box.min[2] - kEpsilon) - 1;
+    const int32_t z1 = floor_i(box.max[2] + kEpsilon) + 1;
+    for (int32_t z = z0; z <= z1; ++z) {
+        const int edge_z = (z == z0 || z == z1) ? 1 : 0;
+        for (int32_t y = y0; y <= y1; ++y) {
+            const int edge_y = (y == y0 || y == y1) ? 1 : 0;
+            for (int32_t x = x0; x <= x1; ++x) {
+                const int type = edge_z + edge_y + ((x == x0 || x == x1) ? 1 : 0);
+                if (type == 3 || type == 2) continue;
+                const int32_t raw = level.raw(x, y, z);
+                if (raw <= 0) continue;
+                const auto& info = level.shapes.state(raw);
+                if (suffocating_only && (info.flags & kSuffocating) == 0) continue;
+                if (type == 1 && (info.flags & kLargeCollision) == 0) continue;
+                Placed p;
+                if (!collision_shape(level, c, x, y, z, raw, p)) continue;
+                if (!overlaps(level, p, box)) continue;
+                if (!visit(p)) return;
+            }
+        }
     }
+}
 
-    bool has_fluid(const Aabb& box) const {
-        for (int32_t x = floor_i(box.min[0]); x <= floor_i(box.max[0] - kEpsilon); ++x) {
-            for (int32_t y = floor_i(box.min[1]); y <= floor_i(box.max[1] - kEpsilon); ++y) {
-                for (int32_t z = floor_i(box.min[2]); z <= floor_i(box.max[2] - kEpsilon); ++z) {
-                    const int32_t s = state(x, y, z);
-                    if (s > 0 && shapes.physics(s).fluid != FluidKind::None) return true;
-                }
+bool no_collision(const Level& level, const Context& c, const Box& box) {
+    bool free = true;
+    block_collisions(level, c, box, false, [&](const Placed&) {
+        free = false;
+        return false;
+    });
+    return free;
+}
+
+bool suffocating_in(const Level& level, const Context& c, const Box& box) {
+    bool found = false;
+    block_collisions(level, c, box, true, [&](const Placed&) {
+        found = true;
+        return false;
+    });
+    return found;
+}
+
+// How far the box may move along one axis before this shape stops it, cell
+// by cell as the game walks a shape.
+double collide_one(const Level& level, const Placed& p, int axis, const Box& box, double dist) {
+    if (std::abs(dist) < kEpsilon) return 0.0;
+    const auto& shapes = level.shapes;
+    const int a = axis;
+    const int b = (axis + 1) % 3;
+    const int c = (axis + 2) % 3;
+    const auto find = [&](int ax, double value) {
+        int index = -1;
+        for (int i = 0; i < p.v->edges[ax]; ++i) {
+            if (value < p.edge(shapes, ax, i)) break;
+            index = i;
+        }
+        return index;
+    };
+    const double max_a = box.max[a];
+    const double min_a = box.min[a];
+    const int i_min = find(a, min_a + kEpsilon);
+    const int i_max = find(a, max_a - kEpsilon);
+    const int b0 = std::max(0, find(b, box.min[b] + kEpsilon));
+    const int b1 = std::min(p.cells(b), find(b, box.max[b] - kEpsilon) + 1);
+    const int c0 = std::max(0, find(c, box.min[c] + kEpsilon));
+    const int c1 = std::min(p.cells(c), find(c, box.max[c] - kEpsilon) + 1);
+    const auto full = [&](int n, int ib, int ic) {
+        int idx[3];
+        idx[a] = n;
+        idx[b] = ib;
+        idx[c] = ic;
+        return shapes.full(*p.v, idx[0], idx[1], idx[2]);
+    };
+    const auto any = [&](int n) {
+        for (int ib = b0; ib < b1; ++ib) {
+            for (int ic = c0; ic < c1; ++ic) {
+                if (full(n, ib, ic)) return true;
             }
         }
         return false;
-    }
-
-    // How high the fluid in a cell stands: to the top when more of the same
-    // is above it, otherwise by how much of a block it holds.
-    double fluid_top(int32_t x, int32_t y, int32_t z, FluidKind kind) const {
-        const int32_t s = state(x, y, z);
-        if (s <= 0) return -1.0;
-        const auto& physics = shapes.physics(s);
-        if (physics.fluid != kind) return -1.0;
-        const int32_t above = state(x, y + 1, z);
-        if (above > 0 && shapes.physics(above).fluid == kind) return y + 1.0;
-        return y + physics.fluid_amount / 9.0;
-    }
-};
-
-// How far the box may move along one axis before it meets one of the boxes.
-double clip(const std::vector<Aabb>& boxes, const Aabb& box, int axis, double distance) {
-    if (std::abs(distance) < kEpsilon) return 0.0;
-    const int a = (axis + 1) % 3;
-    const int b = (axis + 2) % 3;
-    for (const auto& o : boxes) {
-        if (o.max[a] - kEpsilon <= box.min[a] || o.min[a] + kEpsilon >= box.max[a]) continue;
-        if (o.max[b] - kEpsilon <= box.min[b] || o.min[b] + kEpsilon >= box.max[b]) continue;
-        if (distance > 0.0 && o.min[axis] >= box.max[axis] - kEpsilon) {
-            distance = std::min(distance, o.min[axis] - box.max[axis]);
-        } else if (distance < 0.0 && o.max[axis] <= box.min[axis] + kEpsilon) {
-            distance = std::max(distance, o.max[axis] - box.min[axis]);
+    };
+    if (dist > 0.0) {
+        for (int n = i_max + 1; n < p.cells(a); ++n) {
+            if (!any(n)) continue;
+            const double gap = p.edge(shapes, a, n) - max_a;
+            if (gap >= -kEpsilon) dist = std::min(dist, gap);
+            return dist;
+        }
+    } else if (dist < 0.0) {
+        for (int n = i_min - 1; n >= 0; --n) {
+            if (!any(n)) continue;
+            const double gap = p.edge(shapes, a, n + 1) - min_a;
+            if (gap <= kEpsilon) dist = std::max(dist, gap);
+            return dist;
         }
     }
-    return std::abs(distance) < kEpsilon ? 0.0 : distance;
+    return dist;
 }
 
-struct Move {
-    double d[3];
-};
+double collide_axis(const Level& level, int axis, const Box& box, const std::vector<Placed>& shapes,
+                    double dist) {
+    for (const auto& p : shapes) {
+        if (std::abs(dist) < kEpsilon) return 0.0;
+        dist = collide_one(level, p, axis, box, dist);
+    }
+    return dist;
+}
 
-// Y first, then whichever of x and z is the larger move: the game's order,
-// and the reason a diagonal run along a wall slides instead of sticking.
-Move collide_with(const std::vector<Aabb>& boxes, Aabb box, Move m) {
-    Move out{{0.0, 0.0, 0.0}};
-    const int order[3] = {1, std::abs(m.d[0]) < std::abs(m.d[2]) ? 2 : 0,
-                          std::abs(m.d[0]) < std::abs(m.d[2]) ? 0 : 2};
+Vec collide_with_shapes(const Level& level, const Vec& m, const Box& box,
+                        const std::vector<Placed>& shapes) {
+    if (shapes.empty()) return m;
+    Vec out;
+    const bool z_first = std::abs(m.x) < std::abs(m.z);
+    const int order[3] = {1, z_first ? 2 : 0, z_first ? 0 : 2};
     for (const int axis : order) {
-        const double moved = clip(boxes, box, axis, m.d[axis]);
-        out.d[axis] = moved;
-        box.min[axis] += moved;
-        box.max[axis] += moved;
+        const double d = m[axis];
+        if (d != 0.0) out[axis] = collide_axis(level, axis, box.move(out), shapes, d);
     }
     return out;
 }
 
-double horizontal2(const Move& m) { return m.d[0] * m.d[0] + m.d[2] * m.d[2]; }
+// Scratch lists, reused so a tick allocates nothing once it has warmed up.
+struct Scratch {
+    std::vector<Placed> plain;
+    std::vector<Placed> step;
+    std::vector<float> heights;
+};
 
-Move collide(const World& world, const Aabb& box, const Move& m, bool on_ground,
-             double step) {
-    std::vector<Aabb> boxes;
-    world.collect(box.grown(m.d[0], m.d[1], m.d[2]), boxes);
-    const Move plain = collide_with(boxes, box, m);
+Scratch& scratch() {
+    thread_local Scratch s;
+    return s;
+}
 
-    const bool blocked_x = plain.d[0] != m.d[0];
-    const bool blocked_z = plain.d[2] != m.d[2];
-    const bool landed = plain.d[1] != m.d[1] && m.d[1] < 0.0;
-    if (step <= 0.0 || !(on_ground || landed) || !(blocked_x || blocked_z)) return plain;
+void collect(const Level& level, const Context& c, const Box& box, std::vector<Placed>& out) {
+    out.clear();
+    block_collisions(level, c, box, false, [&](const Placed& p) {
+        out.push_back(p);
+        return true;
+    });
+}
 
-    // A kerb is not a wall: try the same move a step higher, and keep it if
-    // it gets further.
-    std::vector<Aabb> around;
-    Aabb region = box.grown(m.d[0], step, m.d[2]);
-    region.min[1] = std::min(region.min[1], box.min[1] + m.d[1]);
-    world.collect(region, around);
-    Move up = collide_with(around, box, {{m.d[0], step, m.d[2]}});
-    const Move rise = collide_with(around, box.grown(m.d[0], 0.0, m.d[2]), {{0.0, step, 0.0}});
-    if (rise.d[1] < step) {
-        const Move across =
-            collide_with(around, box.moved(0.0, rise.d[1], 0.0), {{m.d[0], 0.0, m.d[2]}});
-        if (horizontal2(across) > horizontal2(up)) {
-            up = {{across.d[0], rise.d[1], across.d[2]}};
+class Mover {
+public:
+    Mover(Body& body, const Keys& keys, const Stats& stats, const Level& level)
+        : b(body), keys(keys), stats(stats), level(level) {}
+
+    Body& b;
+    const Keys& keys;
+    const Stats& stats;
+    const Level& level;
+
+    bool flying() const { return b.flying; }
+    bool swimming() const { return b.swimming && !b.flying && !stats.spectator; }
+    bool in_lava() const { return b.in_lava(); }
+    Context context() const { return context_of(b, keys, stats); }
+
+    int32_t block_x() const { return floor_i(b.x); }
+    int32_t block_y() const { return floor_i(b.y); }
+    int32_t block_z() const { return floor_i(b.z); }
+
+    float speed() const { return static_cast<float>(Body::speed(stats, b.sprinting)); }
+
+    bool fits(Pose pose) const {
+        return no_collision(level, context(), box_at(b.x, b.y, b.z, pose).deflate(kEpsilon));
+    }
+
+    // The block under the feet that movement reads: the one the body stands
+    // on, or the cell straight down.
+    void on_pos(float offset, int32_t out[3]) const {
+        if (b.has_support) {
+            out[0] = b.support[0];
+            out[1] = b.support[1];
+            out[2] = b.support[2];
+            if (!(offset > 1.0e-5f)) return;
+            const int32_t s = level.state(out[0], out[1], out[2]);
+            if ((!(offset <= 0.5) || !level.tagged(s, BlockTags::kFences)) &&
+                !level.tagged(s, BlockTags::kWalls) && !level.tagged(s, BlockTags::kFenceGate)) {
+                out[1] = floor_i(b.y - static_cast<double>(offset));
+            }
+            return;
         }
+        out[0] = floor_i(b.x);
+        out[1] = floor_i(b.y - static_cast<double>(offset));
+        out[2] = floor_i(b.z);
     }
-    if (horizontal2(up) <= horizontal2(plain)) return plain;
-    const double settle =
-        clip(around, box.moved(up.d[0], up.d[1], up.d[2]), 1, -up.d[1] + m.d[1]);
-    return {{up.d[0], up.d[1] + settle, up.d[2]}};
-}
 
-void move_relative(Body& body, double speed, double strafe, double forward, float yaw) {
-    const double length2 = strafe * strafe + forward * forward;
-    if (length2 < 1e-7) return;
-    if (length2 > 1.0) {
-        const double length = std::sqrt(length2);
-        strafe /= length;
-        forward /= length;
-    }
-    strafe *= speed;
-    forward *= speed;
-    const double radians = yaw * std::numbers::pi / 180.0;
-    const double s = std::sin(radians);
-    const double c = std::cos(radians);
-    body.vx += strafe * c - forward * s;
-    body.vz += forward * c + strafe * s;
-}
+    const BlockInfo& block_at(const int32_t p[3]) const { return level.block(p[0], p[1], p[2]); }
 
-const BlockPhysics& physics_at(const World& world, int32_t x, int32_t y, int32_t z) {
-    return world.shapes.physics(std::max(0, world.state(x, y, z)));
-}
-
-// The block that decides friction and speed: the one under the feet, half a
-// block down, so a slab's top counts as what it is on.
-const BlockPhysics& below(const World& world, const Body& body) {
-    return physics_at(world, floor_i(body.x), floor_i(body.y - 0.5000001), floor_i(body.z));
-}
-
-double block_factor(const World& world, const Body& body, float BlockPhysics::*factor) {
-    const auto& here = physics_at(world, floor_i(body.x), floor_i(body.y), floor_i(body.z));
-    if (here.fluid == FluidKind::Water && here.bubbles != 0) return 1.0;
-    if (here.*factor != 1.0f) return here.*factor;
-    return below(world, body).*factor;
-}
-
-bool on_climbable(const World& world, const Body& body) {
-    return physics_at(world, floor_i(body.x), floor_i(body.y), floor_i(body.z)).climbable;
-}
-
-// Space under a box at the body's feet, offset sideways: whether a step
-// that way would drop further than a stair.
-bool can_fall(const World& world, const Body& body, double dx, double dz, double depth) {
-    const Aabb box = box_of(body.x, body.y, body.z, body.height());
-    const Aabb probe{{box.min[0] + kEpsilon + dx, box.min[1] - depth - kEpsilon,
-                      box.min[2] + kEpsilon + dz},
-                     {box.max[0] - kEpsilon + dx, box.min[1], box.max[2] - kEpsilon + dz}};
-    return world.free(probe);
-}
-
-// Sneaking at an edge stops you at the edge: the move is cut back a
-// twentieth at a time until it would no longer drop you off.
-Move back_off_edge(const World& world, const Body& body, const Intent& intent, Move m) {
-    if (intent.flying || m.d[1] > 0.0 || !world.sneaking) return m;
-    const double step = intent.step_height;
-    const bool above_ground =
-        body.on_ground ||
-        (body.fall_distance < step && !can_fall(world, body, 0.0, 0.0, step - body.fall_distance));
-    if (!above_ground) return m;
-    double dx = m.d[0];
-    double dz = m.d[2];
-    constexpr double kBit = 0.05;
-    const auto shrink = [](double v) {
-        if (std::abs(v) < kBit) return 0.0;
-        return v - std::copysign(kBit, v);
-    };
-    while (dx != 0.0 && can_fall(world, body, dx, 0.0, step)) dx = shrink(dx);
-    while (dz != 0.0 && can_fall(world, body, 0.0, dz, step)) dz = shrink(dz);
-    while (dx != 0.0 && dz != 0.0 && can_fall(world, body, dx, dz, step)) {
-        dx = shrink(dx);
-        dz = shrink(dz);
-    }
-    return {{dx, m.d[1], dz}};
-}
-
-bool equal(double a, double b) { return std::abs(a - b) < 1e-5; }
-
-// Moves the body by its velocity against the world and settles everything
-// that depends on what it ran into.
-void move(Body& body, const World& world, const Intent& intent, double strafe, double forward) {
-    Move m{{body.vx, body.vy, body.vz}};
-    if (body.stuck[0] != 0.0 || body.stuck[1] != 0.0 || body.stuck[2] != 0.0) {
-        for (int i = 0; i < 3; ++i) m.d[i] *= body.stuck[i];
-        body.stuck[0] = body.stuck[1] = body.stuck[2] = 0.0;
-        body.vx = body.vy = body.vz = 0.0;
-    }
-    m = back_off_edge(world, body, intent, m);
-
-    const Aabb box = box_of(body.x, body.y, body.z, body.height());
-    const Move done = collide(world, box, m, body.on_ground, intent.step_height);
-    body.x += done.d[0];
-    body.y += done.d[1];
-    body.z += done.d[2];
-
-    const bool hit_x = !equal(m.d[0], done.d[0]);
-    const bool hit_z = !equal(m.d[2], done.d[2]);
-    body.horizontal_collision = hit_x || hit_z;
-    body.vertical_collision = m.d[1] != done.d[1];
-    body.on_ground = body.vertical_collision && m.d[1] < 0.0;
-
-    // A collision that turns the run by less than eight degrees does not end
-    // a sprint: brushing a wall is not running into it.
-    body.minor_horizontal_collision = false;
-    if (body.horizontal_collision) {
-        const double radians = intent.yaw_degrees * std::numbers::pi / 180.0;
-        const double wx = strafe * std::cos(radians) - forward * std::sin(radians);
-        const double wz = forward * std::cos(radians) + strafe * std::sin(radians);
-        const double want = wx * wx + wz * wz;
-        const double got = done.d[0] * done.d[0] + done.d[2] * done.d[2];
-        if (want >= 1e-5 && got >= 1e-5) {
-            const double cosine = (wx * done.d[0] + wz * done.d[2]) / std::sqrt(want * got);
-            body.minor_horizontal_collision = std::acos(std::clamp(cosine, -1.0, 1.0)) < 0.13962634;
+    float block_speed_factor() const {
+        const int32_t here = level.state(block_x(), block_y(), block_z());
+        const auto& block = level.shapes.block(here);
+        float f = block.speed;
+        if (block.special != Special::Water && block.special != Special::BubbleColumn && f == 1.0f) {
+            int32_t below[3];
+            on_pos(0.500001f, below);
+            f = block_at(below).speed;
         }
-    }
-    if (hit_x) body.vx = 0.0;
-    if (hit_z) body.vz = 0.0;
-
-    if (body.on_ground) {
-        body.fall_distance = 0.0;
-    } else if (done.d[1] < 0.0) {
-        body.fall_distance -= done.d[1];
+        const auto t = static_cast<float>(stats.movement_efficiency);
+        return f + t * (1.0f - f);
     }
 
-    const auto& floor = below(world, body);
-    if (body.vertical_collision) {
-        if (floor.slime && !world.sneaking && body.vy < 0.0) {
-            body.vy = -body.vy;
-        } else if (floor.bed && !world.sneaking && body.vy < 0.0) {
-            body.vy = -body.vy * 0.66;
-        } else {
-            body.vy = 0.0;
-        }
-    }
-    if (body.on_ground && !world.sneaking && floor.slime && std::abs(body.vy) < 0.1) {
-        const double damp = 0.4 + std::abs(body.vy) * 0.2;
-        body.vx *= damp;
-        body.vz *= damp;
+    float block_jump_factor() const {
+        const float here = level.block(block_x(), block_y(), block_z()).jump;
+        int32_t below[3];
+        on_pos(0.500001f, below);
+        const float under = block_at(below).jump;
+        return here == 1.0f ? under : here;
     }
 
-    // What the body is now inside of: webs and bushes hold it, honey walls
-    // slow its slide, bubble columns carry it.
-    const Aabb inside = box_of(body.x, body.y, body.z, body.height()).shrunk(1e-5);
-    for (int32_t x = floor_i(inside.min[0]); x <= floor_i(inside.max[0]); ++x) {
-        for (int32_t y = floor_i(inside.min[1]); y <= floor_i(inside.max[1]); ++y) {
-            for (int32_t z = floor_i(inside.min[2]); z <= floor_i(inside.max[2]); ++z) {
-                const int32_t s = world.state(x, y, z);
-                if (s <= 0) continue;
-                const auto& p = world.shapes.physics(s);
-                if (p.stuck[0] != 0.0f) {
-                    body.stuck[0] = p.stuck[0];
-                    body.stuck[1] = p.stuck[1];
-                    body.stuck[2] = p.stuck[2];
-                    body.fall_distance = 0.0;
-                }
-                if (p.bubbles != 0) {
-                    const int32_t above = std::max(0, world.state(x, y + 1, z));
-                    const bool open = world.shapes.collision(above).empty() &&
-                                      world.shapes.physics(above).fluid == FluidKind::None;
-                    if (p.bubbles < 0) {
-                        body.vy = std::max(open ? -0.9 : -0.3, body.vy - 0.03);
-                    } else {
-                        body.vy = std::min(open ? 1.8 : 0.7, body.vy + (open ? 0.1 : 0.06));
+    bool on_climbable() const {
+        if (stats.spectator) return false;
+        const int32_t x = block_x();
+        const int32_t y = block_y();
+        const int32_t z = block_z();
+        const int32_t s = level.state(x, y, z);
+        if (level.tagged(s, BlockTags::kClimbable)) return true;
+        const auto& block = level.shapes.block(s);
+        if (block.special != Special::Trapdoor) return false;
+        if (level.shapes.property(s, "open") != "true") return false;
+        const int32_t below = level.state(x, y - 1, z);
+        return level.shapes.block(below).special == Special::Ladder &&
+               level.shapes.property(below, "facing") == level.shapes.property(s, "facing");
+    }
+
+    float fluid_height_at(int32_t x, int32_t y, int32_t z, const StateInfo& s) const {
+        if (level.info(x, y + 1, z).fluid == s.fluid) return 1.0f;
+        return s.fluid_height();
+    }
+
+    Vec flow(int32_t x, int32_t y, int32_t z, const StateInfo& s) const {
+        static constexpr int kSteps[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+        static constexpr int kFaces[4] = {2, 5, 3, 4};
+        const auto affects = [&](const StateInfo& n) {
+            return n.fluid == Fluid::None || n.fluid == s.fluid;
+        };
+        double dx = 0.0;
+        double dz = 0.0;
+        for (const auto& step : kSteps) {
+            const int32_t nx = x + step[0];
+            const int32_t nz = z + step[1];
+            const auto& n = level.info(nx, y, nz);
+            if (!affects(n)) continue;
+            float h = n.fluid_height();
+            float d = 0.0f;
+            if (h == 0.0f) {
+                if ((n.flags & kBlocksMotion) == 0) {
+                    const auto& under = level.info(nx, y - 1, nz);
+                    if (affects(under)) {
+                        h = under.fluid_height();
+                        if (h > 0.0f) d = s.fluid_height() - (h - 0.8888889f);
                     }
-                    body.fall_distance = 0.0;
+                }
+            } else if (h > 0.0f) {
+                d = s.fluid_height() - h;
+            }
+            if (d != 0.0f) {
+                dx += static_cast<float>(step[0]) * d;
+                dz += static_cast<float>(step[1]) * d;
+            }
+        }
+        Vec v{dx, 0.0, dz};
+        if (s.fluid_falling) {
+            const auto solid = [&](int32_t px, int32_t py, int32_t pz, int face) {
+                const int32_t st = level.state(px, py, pz);
+                const auto& info = level.shapes.state(st);
+                if (info.fluid == s.fluid) return false;
+                if (level.shapes.block(st).special == Special::Ice) return false;
+                return info.sturdy(face);
+            };
+            for (int i = 0; i < 4; ++i) {
+                const int32_t nx = x + kSteps[i][0];
+                const int32_t nz = z + kSteps[i][1];
+                if (solid(nx, y, nz, kFaces[i]) || solid(nx, y + 1, nz, kFaces[i])) {
+                    v = v.normalize();
+                    v.y += -6.0;
+                    break;
                 }
             }
         }
+        return v.normalize();
     }
-    // Honey on a wall: falling beside it is a slow slide.
-    if (!body.on_ground && body.vy < -0.08) {
-        const int32_t fy = floor_i(body.y);
-        for (const auto& [dx, dz] : {std::pair{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
-            const int32_t hx = floor_i(body.x) + dx;
-            const int32_t hz = floor_i(body.z) + dz;
-            const int32_t s = world.state(hx, fy, hz);
-            if (s <= 0 || !world.shapes.physics(s).honey) continue;
-            if (body.y > fy + 0.9375 - 1e-7) continue;
-            const double gap_x = std::abs(hx + 0.5 - body.x);
-            const double gap_z = std::abs(hz + 0.5 - body.z);
-            if (gap_x + 1e-7 <= 0.4375 + kPlayerWidth / 2.0 &&
-                gap_z + 1e-7 <= 0.4375 + kPlayerWidth / 2.0) {
-                if (body.vy < -0.13) {
-                    const double scale = -0.05 / body.vy;
-                    body.vx *= scale;
-                    body.vz *= scale;
+
+    bool touching_unloaded() const {
+        const Box box = box_of(b);
+        return !level.loaded(floor_i(box.min[0] - 1.0), floor_i(box.min[2] - 1.0),
+                             ceil_i(box.max[0] + 1.0), ceil_i(box.max[2] + 1.0));
+    }
+
+    bool fluid_push(Fluid kind, double scale) {
+        if (touching_unloaded()) return false;
+        const Box box = box_of(b).deflate(0.001);
+        const int32_t x0 = floor_i(box.min[0]);
+        const int32_t x1 = ceil_i(box.max[0]);
+        const int32_t y0 = floor_i(box.min[1]);
+        const int32_t y1 = ceil_i(box.max[1]);
+        const int32_t z0 = floor_i(box.min[2]);
+        const int32_t z1 = ceil_i(box.max[2]);
+        double height = 0.0;
+        const bool pushed = !b.flying;
+        bool found = false;
+        Vec push;
+        int count = 0;
+        for (int32_t x = x0; x < x1; ++x) {
+            for (int32_t y = y0; y < y1; ++y) {
+                for (int32_t z = z0; z < z1; ++z) {
+                    const auto& s = level.info(x, y, z);
+                    if (s.fluid != kind) continue;
+                    const double top =
+                        static_cast<double>(static_cast<float>(y) + fluid_height_at(x, y, z, s));
+                    if (!(top >= box.min[1])) continue;
+                    found = true;
+                    height = std::max(top - box.min[1], height);
+                    if (pushed) {
+                        Vec f = flow(x, y, z, s);
+                        if (height < 0.4) f = f.scale(height);
+                        push.x += f.x;
+                        push.y += f.y;
+                        push.z += f.z;
+                        ++count;
+                    }
                 }
-                body.vy = -0.05;
-                body.fall_distance = 0.0;
+            }
+        }
+        if (push.length() > 0.0) {
+            if (count > 0) push = push.scale(1.0 / count);
+            push = push.scale(scale);
+            if (std::abs(b.vx) < 0.003 && std::abs(b.vz) < 0.003 &&
+                push.length() < 0.0045000000000000005) {
+                push = push.normalize().scale(0.0045000000000000005);
+            }
+            b.vx += push.x;
+            b.vy += push.y;
+            b.vz += push.z;
+        }
+        if (kind == Fluid::Water) b.water_height = height;
+        else b.lava_height = height;
+        return found;
+    }
+
+    void water_state() {
+        if (fluid_push(Fluid::Water, 0.014)) {
+            b.fall_distance = 0.0;
+            b.touching_water = true;
+        } else {
+            b.touching_water = false;
+        }
+    }
+
+    void fluids() {
+        b.water_height = 0.0;
+        b.lava_height = 0.0;
+        water_state();
+        fluid_push(Fluid::Lava, stats.fast_lava ? 0.007 : 0.0023333333333333335);
+    }
+
+    void fluid_on_eyes() {
+        const double eye_y = b.y + static_cast<double>(b.eye_height());
+        const int32_t x = floor_i(b.x);
+        const int32_t y = floor_i(eye_y);
+        const int32_t z = floor_i(b.z);
+        const auto& s = level.info(x, y, z);
+        b.eye_in_water = false;
+        if (s.fluid == Fluid::None) return;
+        const double top = static_cast<double>(static_cast<float>(y) + fluid_height_at(x, y, z, s));
+        if (top > eye_y) b.eye_in_water = s.fluid == Fluid::Water;
+    }
+
+    void update_swimming() {
+        if (b.flying) {
+            b.swimming = false;
+        } else if (swimming()) {
+            b.swimming = b.sprinting && b.touching_water;
+        } else {
+            b.swimming = b.sprinting && b.underwater &&
+                         level.info(block_x(), block_y(), block_z()).fluid == Fluid::Water;
+        }
+    }
+
+    bool suffocates_at(int32_t x, int32_t z) const {
+        const Box bb = box_of(b);
+        const Box cell = Box{{static_cast<double>(x), bb.min[1], static_cast<double>(z)},
+                             {x + 1.0, bb.max[1], z + 1.0}}
+                             .deflate(kEpsilon);
+        return suffocating_in(level, context(), cell);
+    }
+
+    void move_towards_closest_space(double px, double pz) {
+        const int32_t x = floor_i(px);
+        const int32_t z = floor_i(pz);
+        if (!suffocates_at(x, z)) return;
+        const double fx = px - x;
+        const double fz = pz - z;
+        // West, east, north, south.
+        static constexpr int kSteps[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+        int best = -1;
+        double closest = std::numeric_limits<double>::max();
+        for (int i = 0; i < 4; ++i) {
+            const bool along_x = kSteps[i][0] != 0;
+            const bool positive = kSteps[i][0] + kSteps[i][1] > 0;
+            const double v = along_x ? fx : fz;
+            const double distance = positive ? 1.0 - v : v;
+            if (distance < closest && !suffocates_at(x + kSteps[i][0], z + kSteps[i][1])) {
+                closest = distance;
+                best = i;
+            }
+        }
+        if (best < 0) return;
+        if (kSteps[best][0] != 0) b.vx = 0.1 * kSteps[best][0];
+        else b.vz = 0.1 * kSteps[best][1];
+    }
+
+    void move_relative(float speed_, double ix, double iy, double iz) {
+        const double length2 = ix * ix + iy * iy + iz * iz;
+        if (length2 < 1.0e-7) return;
+        Vec v{ix, iy, iz};
+        if (length2 > 1.0) v = v.normalize();
+        v = v.scale(speed_);
+        const float angle = b.yaw * kRadians;
+        const float s = jmath::sin(angle);
+        const float c = jmath::cos(angle);
+        b.vx += v.x * c - v.z * s;
+        b.vy += v.y;
+        b.vz += v.z * c + v.x * s;
+    }
+
+    bool horizontal_collision_minor(const Vec& moved) const {
+        const float angle = b.yaw * kRadians;
+        const double s = jmath::sin(angle);
+        const double c = jmath::cos(angle);
+        const double wx = b.xxa * c - b.zza * s;
+        const double wz = b.zza * c + b.xxa * s;
+        const double want = wx * wx + wz * wz;
+        const double got = moved.x * moved.x + moved.z * moved.z;
+        if (want < 1.0e-5f || got < 1.0e-5f) return false;
+        const double dot = wx * moved.x + wz * moved.z;
+        return std::acos(dot / std::sqrt(want * got)) < 0.13962634f;
+    }
+
+    bool can_fall_at_least(double dx, double dz, double depth) const {
+        const Box bb = box_of(b);
+        const Box probe{{bb.min[0] + kEpsilon + dx, bb.min[1] - depth - kEpsilon,
+                         bb.min[2] + kEpsilon + dz},
+                        {bb.max[0] - kEpsilon + dx, bb.min[1], bb.max[2] - kEpsilon + dz}};
+        return no_collision(level, context(), probe);
+    }
+
+    Vec back_off_from_edge(Vec m) const {
+        const float step = stats.step_height;
+        if (b.flying || m.y > 0.0 || !keys.shift) return m;
+        const bool above_ground =
+            b.on_ground ||
+            (b.fall_distance < step && !can_fall_at_least(0.0, 0.0, step - b.fall_distance));
+        if (!above_ground) return m;
+        double dx = m.x;
+        double dz = m.z;
+        const double sx = (dx > 0.0 ? 1.0 : dx < 0.0 ? -1.0 : 0.0) * 0.05;
+        const double sz = (dz > 0.0 ? 1.0 : dz < 0.0 ? -1.0 : 0.0) * 0.05;
+        while (dx != 0.0 && can_fall_at_least(dx, 0.0, step)) {
+            if (std::abs(dx) <= 0.05) {
+                dx = 0.0;
                 break;
             }
+            dx -= sx;
+        }
+        while (dz != 0.0 && can_fall_at_least(0.0, dz, step)) {
+            if (std::abs(dz) <= 0.05) {
+                dz = 0.0;
+                break;
+            }
+            dz -= sz;
+        }
+        while (dx != 0.0 && dz != 0.0 && can_fall_at_least(dx, dz, step)) {
+            if (std::abs(dx) <= 0.05) dx = 0.0;
+            else dx -= sx;
+            if (std::abs(dz) <= 0.05) dz = 0.0;
+            else dz -= sz;
+        }
+        return {dx, m.y, dz};
+    }
+
+    Vec collide(const Vec& m) const {
+        auto& s = scratch();
+        const Box bb = box_of(b);
+        const Context c = context();
+        Vec plain = m;
+        if (m.length_sqr() != 0.0) {
+            collect(level, c, bb.expand_towards(m.x, m.y, m.z), s.plain);
+            plain = collide_with_shapes(level, m, bb, s.plain);
+        }
+        const bool hit_x = m.x != plain.x;
+        const bool hit_y = m.y != plain.y;
+        const bool hit_z = m.z != plain.z;
+        const bool landed = hit_y && m.y < 0.0;
+        const float step = stats.step_height;
+        if (step > 0.0f && (landed || b.on_ground) && (hit_x || hit_z)) {
+            const Box from = landed ? bb.move(0.0, plain.y, 0.0) : bb;
+            Box region = from.expand_towards(m.x, step, m.z);
+            if (!landed) region = region.expand_towards(0.0, static_cast<double>(-1.0e-5f), 0.0);
+            collect(level, c, region, s.step);
+            const auto plain_y = static_cast<float>(plain.y);
+            s.heights.clear();
+            for (const auto& p : s.step) {
+                for (int i = 0; i < p.v->edges[1]; ++i) {
+                    const auto h = static_cast<float>(p.edge(level.shapes, 1, i) - from.min[1]);
+                    if (h < 0.0f || h == plain_y) continue;
+                    if (h > step) break;
+                    if (std::ranges::find(s.heights, h) == s.heights.end()) s.heights.push_back(h);
+                }
+            }
+            std::ranges::sort(s.heights);
+            for (const float h : s.heights) {
+                const Vec v = collide_with_shapes(level, {m.x, h, m.z}, from, s.step);
+                if (v.horizontal_sqr() > plain.horizontal_sqr()) {
+                    const double back = bb.min[1] - from.min[1];
+                    return {v.x, v.y - back, v.z};
+                }
+            }
+        }
+        return plain;
+    }
+
+    void find_support(const Box& box, bool& found, int32_t out[3]) const {
+        found = false;
+        double best = std::numeric_limits<double>::max();
+        block_collisions(level, context(), box, false, [&](const Placed& p) {
+            const double dx = p.pos[0] + 0.5 - b.x;
+            const double dy = p.pos[1] + 0.5 - b.y;
+            const double dz = p.pos[2] + 0.5 - b.z;
+            const double d = dx * dx + dy * dy + dz * dz;
+            const auto later = [&] {
+                if (out[1] != p.pos[1]) return out[1] < p.pos[1];
+                if (out[2] != p.pos[2]) return out[2] < p.pos[2];
+                return out[0] < p.pos[0];
+            };
+            if (d < best || (d == best && (!found || later()))) {
+                out[0] = p.pos[0];
+                out[1] = p.pos[1];
+                out[2] = p.pos[2];
+                best = d;
+                found = true;
+            }
+            return true;
+        });
+    }
+
+    void check_support(const Vec* moved) {
+        if (!b.on_ground) {
+            b.on_ground_no_blocks = false;
+            b.has_support = false;
+            return;
+        }
+        const Box bb = box_of(b);
+        const Box feet{{bb.min[0], bb.min[1] - 1.0e-6, bb.min[2]}, {bb.max[0], bb.min[1], bb.max[2]}};
+        bool found = false;
+        int32_t pos[3] = {0, 0, 0};
+        find_support(feet, found, pos);
+        if (found || b.on_ground_no_blocks) {
+            b.has_support = found;
+        } else if (moved != nullptr) {
+            find_support(feet.move(-moved->x, 0.0, -moved->z), found, pos);
+            b.has_support = found;
+        }
+        if (b.has_support) std::copy(pos, pos + 3, b.support);
+        b.on_ground_no_blocks = !found;
+    }
+
+    void move(Vec m) {
+        const double x0 = b.x;
+        const double z0 = b.z;
+        if (stats.spectator) {
+            b.x += m.x;
+            b.y += m.y;
+            b.z += m.z;
+            b.horizontal_collision = b.vertical_collision = b.vertical_collision_below = false;
+            b.minor_horizontal_collision = false;
+            add_walked(x0, z0);
+            return;
+        }
+        const Vec stuck{b.stuck[0], b.stuck[1], b.stuck[2]};
+        if (stuck.length_sqr() > 1.0e-7) {
+            m = {m.x * stuck.x, m.y * stuck.y, m.z * stuck.z};
+            b.stuck[0] = b.stuck[1] = b.stuck[2] = 0.0;
+            b.vx = b.vy = b.vz = 0.0;
+        }
+        m = back_off_from_edge(m);
+        const Vec c = collide(m);
+        const double moved2 = c.length_sqr();
+        if (moved2 > 1.0e-7 || m.length_sqr() - moved2 < 1.0e-7) {
+            movement_from = {b.x, b.y, b.z};
+            movement_wanted = m;
+            moved = true;
+            b.x += c.x;
+            b.y += c.y;
+            b.z += c.z;
+        }
+        const bool hit_x = !near(m.x, c.x);
+        const bool hit_z = !near(m.z, c.z);
+        b.horizontal_collision = hit_x || hit_z;
+        b.vertical_collision = m.y != c.y;
+        b.vertical_collision_below = b.vertical_collision && m.y < 0.0;
+        b.on_ground = b.vertical_collision_below;
+        check_support(&c);
+        b.minor_horizontal_collision = b.horizontal_collision && horizontal_collision_minor(c);
+
+        int32_t on[3];
+        on_pos(0.2f, on);
+        const auto& below = block_at(on);
+        if (!b.touching_water) water_state();
+        if (!b.touching_water && c.y < 0.0) b.fall_distance -= static_cast<float>(c.y);
+        if (b.on_ground) b.fall_distance = 0.0;
+
+        if (b.horizontal_collision) {
+            if (hit_x) b.vx = 0.0;
+            if (hit_z) b.vz = 0.0;
+        }
+        if (m.y != c.y) {
+            if (below.special == Special::Slime && !keys.shift) {
+                if (b.vy < 0.0) b.vy = -b.vy * 1.0;
+            } else if (below.special == Special::Bed && !keys.shift) {
+                if (b.vy < 0.0) b.vy = -b.vy * static_cast<double>(0.66f) * 1.0;
+            } else {
+                b.vy *= 0.0;
+            }
+        }
+        const float f = block_speed_factor();
+        b.vx *= f;
+        b.vz *= f;
+
+        add_walked(x0, z0);
+    }
+
+    void add_walked(double x0, double z0) {
+        const auto dx = static_cast<float>(b.x - x0);
+        const auto dz = static_cast<float>(b.z - z0);
+        b.walk_dist += static_cast<float>(std::sqrt(dx * dx + dz * dz)) * 0.6f;
+    }
+
+    double effective_gravity() const {
+        return b.vy <= 0.0 && stats.slow_falling ? std::min(stats.gravity, 0.01) : stats.gravity;
+    }
+
+    float flying_speed() const {
+        if (b.flying) return b.sprinting ? stats.flying_speed * 2.0f : stats.flying_speed;
+        return b.sprinting ? 0.025999999f : 0.02f;
+    }
+
+    void on_climbable_clamp() {
+        if (!on_climbable()) return;
+        b.fall_distance = 0.0;
+        b.vx = std::clamp(b.vx, static_cast<double>(-0.15f), static_cast<double>(0.15f));
+        b.vz = std::clamp(b.vz, static_cast<double>(-0.15f), static_cast<double>(0.15f));
+        double y = std::max(b.vy, static_cast<double>(-0.15f));
+        const bool scaffolding =
+            level.block(block_x(), block_y(), block_z()).special == Special::Scaffolding;
+        if (y < 0.0 && !scaffolding && !b.flying && keys.shift) y = 0.0;
+        b.vy = y;
+    }
+
+    void travel_in_air(double ix, double iz) {
+        int32_t below[3];
+        on_pos(0.500001f, below);
+        const float friction = b.on_ground ? block_at(below).friction : 1.0f;
+        const float drag = friction * 0.91f;
+        const float accel = b.on_ground ? speed() * (0.21600002f / (friction * friction * friction))
+                                        : flying_speed();
+        move_relative(accel, ix, 0.0, iz);
+        on_climbable_clamp();
+        move({b.vx, b.vy, b.vz});
+        double vy = b.vy;
+        if ((b.horizontal_collision || b.jumping) &&
+            (on_climbable() || (b.was_in_powder_snow && stats.leather_boots))) {
+            vy = 0.2;
+        }
+        if (stats.levitation > 0) {
+            vy += (0.05 * stats.levitation - vy) * 0.2;
+        } else if (level.loaded(below[0], below[2])) {
+            vy -= effective_gravity();
+        } else if (b.y > level.min_y) {
+            vy = -0.1;
+        } else {
+            vy = 0.0;
+        }
+        b.vx *= drag;
+        b.vy = vy * static_cast<double>(0.98f);
+        b.vz *= drag;
+    }
+
+    bool free_at(double dx, double dy, double dz) const {
+        const Box box = box_of(b).move(dx, dy, dz);
+        if (!no_collision(level, context(), box)) return false;
+        for (int32_t x = floor_i(box.min[0]); x < ceil_i(box.max[0]); ++x) {
+            for (int32_t y = floor_i(box.min[1]); y < ceil_i(box.max[1]); ++y) {
+                for (int32_t z = floor_i(box.min[2]); z < ceil_i(box.max[2]); ++z) {
+                    if (level.info(x, y, z).fluid != Fluid::None) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void jump_out_of_fluid(double start_y) {
+        if (b.horizontal_collision &&
+            free_at(b.vx, b.vy + static_cast<double>(0.6f) - b.y + start_y, b.vz)) {
+            b.vy = static_cast<double>(0.3f);
         }
     }
 
-    const double speed = block_factor(world, body, &BlockPhysics::speed);
-    body.vx *= speed;
-    body.vz *= speed;
-}
+    double fluid_falling(double gravity, bool falling, double vy) const {
+        if (gravity == 0.0 || b.sprinting) return vy;
+        if (falling && std::abs(vy - 0.005) >= 0.003 && std::abs(vy - gravity / 16.0) < 0.003) {
+            return -0.003;
+        }
+        return vy - gravity / 16.0;
+    }
 
-// Water and lava: whether the body is in them and how deep. A fluid counts
-// once its surface is above the feet.
-void update_fluids(Body& body, const World& world) {
-    const Aabb box = box_of(body.x, body.y, body.z, body.height()).shrunk(0.001);
-    body.water_height = 0.0;
-    body.lava_height = 0.0;
-    body.in_water = false;
-    body.in_lava = false;
-    for (int32_t x = floor_i(box.min[0]); x <= floor_i(box.max[0]); ++x) {
-        for (int32_t y = floor_i(box.min[1]); y <= floor_i(box.max[1]); ++y) {
-            for (int32_t z = floor_i(box.min[2]); z <= floor_i(box.max[2]); ++z) {
-                for (const auto kind : {FluidKind::Water, FluidKind::Lava}) {
-                    const double top = world.fluid_top(x, y, z, kind);
-                    if (top < box.min[1]) continue;
-                    const double depth = top - box.min[1];
-                    if (kind == FluidKind::Water) {
-                        body.in_water = true;
-                        body.water_height = std::max(body.water_height, depth);
-                    } else {
-                        body.in_lava = true;
-                        body.lava_height = std::max(body.lava_height, depth);
+    void travel_in_fluid(double ix, double iz) {
+        const bool falling = b.vy <= 0.0;
+        const double start_y = b.y;
+        const double gravity = effective_gravity();
+        if (b.touching_water) {
+            float slow = b.sprinting ? 0.9f : 0.8f;
+            float accel = 0.02f;
+            auto efficiency = static_cast<float>(stats.water_movement_efficiency);
+            if (!b.on_ground) efficiency *= 0.5f;
+            if (efficiency > 0.0f) {
+                slow += (0.54600006f - slow) * efficiency;
+                accel += (speed() - accel) * efficiency;
+            }
+            if (stats.dolphins_grace) slow = 0.96f;
+            move_relative(accel, ix, 0.0, iz);
+            move({b.vx, b.vy, b.vz});
+            double vy = b.vy;
+            if (b.horizontal_collision && on_climbable()) vy = 0.2;
+            b.vx *= slow;
+            vy *= static_cast<double>(0.8f);
+            b.vz *= slow;
+            b.vy = fluid_falling(gravity, falling, vy);
+        } else {
+            move_relative(0.02f, ix, 0.0, iz);
+            move({b.vx, b.vy, b.vz});
+            if (b.lava_height <= fluid_jump_threshold()) {
+                b.vx *= 0.5;
+                b.vy *= static_cast<double>(0.8f);
+                b.vz *= 0.5;
+                b.vy = fluid_falling(gravity, falling, b.vy);
+            } else {
+                b.vx *= 0.5;
+                b.vy *= 0.5;
+                b.vz *= 0.5;
+            }
+            if (gravity != 0.0) b.vy += -gravity / 4.0;
+        }
+        jump_out_of_fluid(start_y);
+    }
+
+    double fluid_jump_threshold() const { return b.eye_height() < 0.4 ? 0.0 : 0.4; }
+
+    void travel(double ix, double iz) {
+        if (swimming()) {
+            const float angle = b.pitch * kRadians;
+            const double look_y = -static_cast<double>(jmath::sin(angle));
+            const double k = look_y < -0.2 ? 0.085 : 0.06;
+            const int32_t hx = floor_i(b.x);
+            const int32_t hy = floor_i(b.y + 1.0 - 0.1);
+            const int32_t hz = floor_i(b.z);
+            if (look_y <= 0.0 || b.jumping || level.info(hx, hy, hz).fluid != Fluid::None) {
+                b.vy += (look_y - b.vy) * k;
+            }
+        }
+        const double rise = b.vy;
+        if ((b.touching_water || in_lava()) && !b.flying) {
+            travel_in_fluid(ix, iz);
+        } else {
+            travel_in_air(ix, iz);
+        }
+        if (b.flying) b.vy = rise * 0.6;
+    }
+
+    void jump_from_ground() {
+        const float power = static_cast<float>(stats.jump_strength) * 1.0f * block_jump_factor() +
+                            (stats.jump_boost > 0
+                                 ? 0.1f * (static_cast<float>(stats.jump_boost - 1) + 1.0f)
+                                 : 0.0f);
+        if (power <= 1.0e-5f) return;
+        b.vy = std::max(static_cast<double>(power), b.vy);
+        if (b.sprinting) {
+            const float angle = b.yaw * kRadians;
+            b.vx += -jmath::sin(angle) * 0.2;
+            b.vz += jmath::cos(angle) * 0.2;
+        }
+    }
+
+    // What the blocks the body passed through do to it: webs and bushes
+    // hold it, bubble columns carry it, honey walls slow its fall.
+    void inside_blocks() {
+        if (b.on_ground) {
+            int32_t on[3];
+            on_pos(0.2f, on);
+            if (block_at(on).special == Special::Slime) {
+                const double vy = std::abs(b.vy);
+                if (vy < 0.1 && !keys.shift) {
+                    const double m = 0.4 + vy * 0.2;
+                    b.vx *= m;
+                    b.vz *= m;
+                }
+            }
+        }
+        const Vec to{b.x, b.y, b.z};
+        const Vec from = moved ? movement_from : Vec{b.xo, b.yo, b.zo};
+        const Box at_to = box_of(b).deflate(static_cast<double>(1.0e-5f));
+        const Vec d{to.x - from.x, to.y - from.y, to.z - from.z};
+        const bool long_move = d.length_sqr() > 0.9999900000002526 * 0.9999900000002526;
+        // The body goes one axis at a time, in the order the collision took
+        // them; every block it passes through on the way counts once.
+        std::array<int32_t, 3 * 128> seen{};
+        size_t seen_count = 0;
+        const auto first_visit = [&](int32_t x, int32_t y, int32_t z) {
+            for (size_t i = 0; i < seen_count; ++i) {
+                if (seen[i * 3] == x && seen[i * 3 + 1] == y && seen[i * 3 + 2] == z) return false;
+            }
+            if (seen_count < 128) {
+                seen[seen_count * 3] = x;
+                seen[seen_count * 3 + 1] = y;
+                seen[seen_count * 3 + 2] = z;
+                ++seen_count;
+            }
+            return true;
+        };
+        Box steps[3];
+        int step_count = 0;
+        Box cur = at_to.move(-d.x, -d.y, -d.z);
+        if (moved && d.length_sqr() > 0.0) {
+            const bool z_first = std::abs(movement_wanted.x) < std::abs(movement_wanted.z);
+            const int order[3] = {1, z_first ? 2 : 0, z_first ? 0 : 2};
+            for (const int axis : order) {
+                if (d[axis] == 0.0) continue;
+                Box next = cur;
+                next.min[axis] += d[axis];
+                next.max[axis] += d[axis];
+                Box swept = cur;
+                for (int i = 0; i < 3; ++i) {
+                    swept.min[i] = std::min(cur.min[i], next.min[i]);
+                    swept.max[i] = std::max(cur.max[i], next.max[i]);
+                }
+                steps[step_count++] = swept;
+                cur = next;
+            }
+        }
+        if (step_count == 0) {
+            Box swept = cur;
+            for (int i = 0; i < 3; ++i) {
+                swept.min[i] = std::min(cur.min[i], at_to.min[i]);
+                swept.max[i] = std::max(cur.max[i], at_to.max[i]);
+            }
+            steps[step_count++] = swept;
+        }
+        bool powder = false;
+        for (int k = 0; k < step_count; ++k) {
+        const Box& swept = steps[k];
+        for (int32_t x = floor_i(swept.min[0]); x <= floor_i(swept.max[0]); ++x) {
+            for (int32_t y = floor_i(swept.min[1]); y <= floor_i(swept.max[1]); ++y) {
+                for (int32_t z = floor_i(swept.min[2]); z <= floor_i(swept.max[2]); ++z) {
+                    const int32_t s = level.state(x, y, z);
+                    if (s == 0 || !first_visit(x, y, z)) continue;
+                    const auto& block = level.shapes.block(s);
+                    switch (block.special) {
+                        case Special::Cobweb:
+                            b.fall_distance = 0.0;
+                            if (stats.weaving) {
+                                b.stuck[0] = 0.5;
+                                b.stuck[1] = 0.25;
+                                b.stuck[2] = 0.5;
+                            } else {
+                                b.stuck[0] = 0.25;
+                                b.stuck[1] = static_cast<double>(0.05f);
+                                b.stuck[2] = 0.25;
+                            }
+                            break;
+                        case Special::SweetBerryBush:
+                            b.fall_distance = 0.0;
+                            b.stuck[0] = static_cast<double>(0.8f);
+                            b.stuck[1] = 0.75;
+                            b.stuck[2] = static_cast<double>(0.8f);
+                            break;
+                        case Special::PowderSnow:
+                            if (level.block(block_x(), block_y(), block_z()).special ==
+                                Special::PowderSnow) {
+                                b.fall_distance = 0.0;
+                                b.stuck[0] = static_cast<double>(0.9f);
+                                b.stuck[1] = 1.5;
+                                b.stuck[2] = static_cast<double>(0.9f);
+                            }
+                            powder = true;
+                            break;
+                        case Special::BubbleColumn: {
+                            if (b.flying) break;
+                            if (!long_move && !at_to.intersects(x, y, z, x + 1.0, y + 1.0, z + 1.0)) break;
+                            const bool drag = level.shapes.property(s, "drag") == "true";
+                            const auto& above = level.info(x, y + 1, z);
+                            const bool open = level.shapes.empty(above.collision) &&
+                                              above.fluid == Fluid::None;
+                            if (open) {
+                                b.vy = drag ? std::max(-0.9, b.vy - 0.03) : std::min(1.8, b.vy + 0.1);
+                            } else {
+                                b.vy = drag ? std::max(-0.3, b.vy - 0.03) : std::min(0.7, b.vy + 0.06);
+                                b.fall_distance = 0.0;
+                            }
+                            break;
+                        }
+                        case Special::Honey: honey_slide(x, y, z); break;
+                        default: break;
                     }
                 }
             }
         }
-    }
-    if (body.in_water) body.fall_distance = 0.0;
-
-    const double eye = body.y + body.eye_height() - 0.11111111;
-    const double top = world.fluid_top(floor_i(body.x), floor_i(eye), floor_i(body.z),
-                                       FluidKind::Water);
-    body.eyes_in_water = top > eye;
-}
-
-double fluid_fall(double vy, double gravity, bool sprinting) {
-    if (gravity == 0.0 || sprinting) return vy;
-    const bool falling = vy <= 0.0;
-    if (falling && std::abs(vy - 0.005) >= 0.003 && std::abs(vy - gravity / 16.0) < 0.003) {
-        return -0.003;
-    }
-    return vy - gravity / 16.0;
-}
-
-double effective_gravity(const Body& body, const Intent& intent) {
-    if (intent.slow_falling && body.vy <= 0.0) return std::min(intent.gravity, 0.01);
-    return intent.gravity;
-}
-
-void travel(Body& body, const World& world, const Intent& intent, double strafe, double forward,
-            bool jumping) {
-    const double gravity = effective_gravity(body, intent);
-    const double speed = intent.movement_speed * (body.sprinting ? 1.0 + kSprintBoost : 1.0);
-
-    if (body.swimming) {
-        const double look = -std::sin(intent.pitch_degrees * std::numbers::pi / 180.0);
-        const double pull = look < -0.2 ? 0.085 : 0.06;
-        const double head = body.y + 1.0 - 0.1;
-        const bool water_above =
-            world.fluid_top(floor_i(body.x), floor_i(head), floor_i(body.z), FluidKind::Water) >=
-            0.0;
-        if (look <= 0.0 || jumping || water_above) body.vy += (look - body.vy) * pull;
-    }
-
-    const auto climb_out = [&](double start_y) {
-        if (!body.horizontal_collision) return;
-        const Aabb box = box_of(body.x, body.y, body.z, body.height())
-                             .moved(body.vx, body.vy + 0.6 - body.y + start_y, body.vz);
-        if (world.free(box) && !world.has_fluid(box)) body.vy = 0.3;
-    };
-
-    if (body.in_water && !intent.flying) {
-        const double start_y = body.y;
-        double slow = body.sprinting ? 0.9 : 0.8;
-        double accel = 0.02;
-        double efficiency = intent.water_efficiency;
-        if (!body.on_ground) efficiency *= 0.5;
-        if (efficiency > 0.0) {
-            slow += (0.54600006 - slow) * efficiency;
-            accel += (speed - accel) * efficiency;
         }
-        if (intent.dolphins_grace) slow = 0.96;
-        move_relative(body, accel, strafe, forward, intent.yaw_degrees);
-        move(body, world, intent, strafe, forward);
-        if (body.horizontal_collision && on_climbable(world, body)) body.vy = 0.2;
-        body.vx *= slow;
-        body.vy *= 0.8;
-        body.vz *= slow;
-        body.vy = fluid_fall(body.vy, gravity, body.sprinting);
-        climb_out(start_y);
-        return;
+        if (powder) b.in_powder_snow = true;
     }
-    if (body.in_lava && !intent.flying) {
-        const double start_y = body.y;
-        move_relative(body, 0.02, strafe, forward, intent.yaw_degrees);
-        move(body, world, intent, strafe, forward);
-        if (body.lava_height <= kFluidJumpThreshold) {
-            body.vx *= 0.5;
-            body.vy *= 0.8;
-            body.vz *= 0.5;
-            body.vy = fluid_fall(body.vy, gravity, body.sprinting);
-        } else {
-            body.vx *= 0.5;
-            body.vy *= 0.5;
-            body.vz *= 0.5;
+
+    void honey_slide(int32_t x, int32_t y, int32_t z) {
+        if (b.on_ground) return;
+        if (b.y > y + 0.9375 - 1.0e-7) return;
+        const double old_vy = b.vy / static_cast<double>(0.98f) + 0.08;
+        if (old_vy >= -0.08) return;
+        const double gx = std::abs(x + 0.5 - b.x);
+        const double gz = std::abs(z + 0.5 - b.z);
+        const double reach = 0.4375 + static_cast<double>(kPlayerWidth / 2.0f);
+        if (!(gx + 1.0e-7 > reach || gz + 1.0e-7 > reach)) return;
+        const double slide = (-0.05 - 0.08) * static_cast<double>(0.98f);
+        if (old_vy < -0.13) {
+            const double m = -0.05 / old_vy;
+            b.vx *= m;
+            b.vz *= m;
         }
-        if (gravity != 0.0) body.vy -= gravity / 4.0;
-        climb_out(start_y);
+        b.vy = slide;
+        b.fall_distance = 0.0;
+    }
+
+    Vec movement_from;
+    Vec movement_wanted;
+    bool moved = false;
+};
+
+// The keys as a direction: left and forward positive, a unit vector.
+void move_vector(const Keys& k, float& mx, float& mz) {
+    const float forward = k.forward == k.backward ? 0.0f : (k.forward ? 1.0f : -1.0f);
+    const float left = k.left == k.right ? 0.0f : (k.left ? 1.0f : -1.0f);
+    const float length = std::sqrt(left * left + forward * forward);
+    if (length < 1.0e-4f) {
+        mx = mz = 0.0f;
         return;
     }
-
-    const double slip = body.on_ground ? below(world, body).friction : 1.0;
-    const double friction = slip * kAirDrag;
-    double accel;
-    if (body.on_ground) {
-        accel = speed * (0.21600002 / (slip * slip * slip));
-    } else if (intent.flying) {
-        accel = intent.flying_speed * (body.sprinting ? 2.0 : 1.0);
-    } else {
-        accel = body.sprinting ? kSprintAirAccel : kAirAccel;
-    }
-    move_relative(body, accel, strafe, forward, intent.yaw_degrees);
-
-    const bool climbing = !intent.flying && on_climbable(world, body);
-    if (climbing) {
-        body.fall_distance = 0.0;
-        body.vx = std::clamp(body.vx, -kClimbSpeed, kClimbSpeed);
-        body.vz = std::clamp(body.vz, -kClimbSpeed, kClimbSpeed);
-        body.vy = std::max(body.vy, -kClimbSpeed);
-        const bool scaffold =
-            physics_at(world, floor_i(body.x), floor_i(body.y), floor_i(body.z)).scaffolding;
-        if (body.vy < 0.0 && world.sneaking && !scaffold) body.vy = 0.0;
-    }
-
-    move(body, world, intent, strafe, forward);
-
-    if ((body.horizontal_collision || jumping) && climbing) body.vy = 0.2;
-
-    if (intent.levitation > 0) {
-        body.vy += (0.05 * intent.levitation - body.vy) * 0.2;
-    } else {
-        body.vy -= gravity;
-    }
-    body.vx *= friction;
-    body.vy *= kVerticalDrag;
-    body.vz *= friction;
-}
-
-// Standing, crouching or swimming: the pose wanted, or the next one down that
-// fits, so standing up under a low ceiling keeps you crouched.
-void update_pose(Body& body, const World& world, const Intent& intent) {
-    Pose wanted = Pose::Standing;
-    if (body.swimming) wanted = Pose::Swimming;
-    else if (intent.sneak && !intent.flying) wanted = Pose::Crouching;
-    if (wanted == Pose::Standing && !fits(body, kPlayerHeight, world.at, world.shapes)) {
-        wanted = fits(body, kCrouchHeight, world.at, world.shapes) ? Pose::Crouching
-                                                                   : Pose::Swimming;
-    } else if (wanted == Pose::Crouching && !fits(body, kCrouchHeight, world.at, world.shapes)) {
-        wanted = Pose::Swimming;
-    }
-    body.pose = wanted;
-}
-
-void update_sprint(Body& body, const Intent& intent, double forward) {
-    const bool slowed = body.pose == Pose::Crouching && !body.swimming;
-    const bool forward_impulse = forward > 1e-5;
-    const bool enough_impulse = body.eyes_in_water ? forward_impulse : forward >= 0.8;
-    const bool water_ok = !body.in_water || body.eyes_in_water;
-    if (!body.sprinting && intent.sprint && enough_impulse && intent.may_sprint &&
-        !intent.using_item && (!slowed || body.eyes_in_water) && water_ok) {
-        body.sprinting = true;
-    }
-    if (!body.sprinting) return;
-    const bool lost = !forward_impulse || !intent.may_sprint;
-    if (body.swimming) {
-        if ((!body.on_ground && !intent.sneak && lost) || !body.in_water) body.sprinting = false;
-        return;
-    }
-    if (lost || (body.horizontal_collision && !body.minor_horizontal_collision) ||
-        (body.in_water && !body.eyes_in_water)) {
-        body.sprinting = false;
-    }
-}
-
-void update_swimming(Body& body, const World& world, const Intent& intent) {
-    if (intent.flying) {
-        body.swimming = false;
-    } else if (body.swimming) {
-        body.swimming = body.sprinting && body.in_water;
-    } else {
-        const auto& here =
-            physics_at(world, floor_i(body.x), floor_i(body.y), floor_i(body.z));
-        body.swimming = body.sprinting && body.eyes_in_water && here.fluid == FluidKind::Water;
-    }
-}
-
-void jump(Body& body, const World& world, const Intent& intent) {
-    const double power = intent.jump_strength * block_factor(world, body, &BlockPhysics::jump) +
-                         0.1 * intent.jump_boost;
-    if (power <= 1e-5) return;
-    body.vy = std::max(power, body.vy);
-    if (body.sprinting) {
-        const double radians = intent.yaw_degrees * std::numbers::pi / 180.0;
-        body.vx += -std::sin(radians) * kSprintJumpBoost;
-        body.vz += std::cos(radians) * kSprintJumpBoost;
-    }
+    mx = left / length;
+    mz = forward / length;
 }
 
 } // namespace
 
-double Body::height() const { return body_height(pose); }
-
-double Body::eye_height() const { return body_eye(pose); }
-
-bool fits(const Body& body, double height, const BlockAt& at, const BlockShapes& shapes) {
-    const World world{at, shapes, body, false};
-    return world.free(box_of(body.x, body.y, body.z, height).shrunk(1e-7));
+bool BlockTags::has(const BlockInfo& block, const BlockShapes& shapes, int32_t state,
+                    uint8_t bit) const {
+    const size_t index = shapes.state(state).block;
+    (void)block;
+    return index < bits.size() && (bits[index] & bit) != 0;
 }
 
-void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockShapes& shapes) {
-    body.previous_x = body.x;
-    body.previous_y = body.y;
-    body.previous_z = body.z;
-    body.previous_eye = body.eye;
+float Body::height() const { return pose_height(pose); }
 
-    const bool sneaking = intent.sneak && !intent.flying;
-    const World world{at, shapes, body, sneaking};
+float Body::eye_height() const { return pose_eye(pose); }
 
-    update_fluids(body, world);
-    update_swimming(body, world, intent);
+float Body::eye_height(Pose p) const { return pose_eye(p); }
 
-    // The keys as the game reads them: right is negative, crouching and
-    // using an item slow them down.
-    double forward = intent.forward;
-    double strafe = -intent.strafe;
-    if (body.pose == Pose::Crouching && !body.swimming) {
-        forward *= intent.sneaking_speed;
-        strafe *= intent.sneaking_speed;
+double Body::speed(const Stats& stats, bool sprinting) {
+    return sprinting ? stats.movement_speed * (1.0 + 0.3) : stats.movement_speed;
+}
+
+void place(Body& body, double x, double y, double z) {
+    body.x = x;
+    body.y = y;
+    body.z = z;
+}
+
+bool fits(const Body& body, Pose pose, const World& world) {
+    const Level level(world);
+    Context c;
+    c.bottom = body.y;
+    c.fall_distance = body.fall_distance;
+    return no_collision(level, c, box_at(body.x, body.y, body.z, pose).deflate(kEpsilon));
+}
+
+void tick(Body& b, const Keys& keys, const Stats& stats, const World& world) {
+    const Level level(world);
+    Mover m(b, keys, stats, level);
+    b.flying_changed = false;
+    if (!stats.may_fly && b.flying) b.flying = false;
+
+    b.xo = b.x;
+    b.yo = b.y;
+    b.zo = b.z;
+    b.walk_dist_o = b.walk_dist;
+    if (stats.spectator) b.on_ground = false;
+    b.underwater = b.eye_in_water;
+
+    // The entity's base tick.
+    b.was_in_powder_snow = b.in_powder_snow;
+    b.in_powder_snow = false;
+    m.fluids();
+    m.fluid_on_eyes();
+    m.update_swimming();
+    if (m.in_lava()) b.fall_distance *= 0.5;
+    b.first_tick = false;
+
+    // The local player's own step: crouching from last tick's keys, then
+    // this tick's keys, sprinting, flight, and the push out of walls.
+    if (b.sprint_trigger_time > 0) --b.sprint_trigger_time;
+    const Keys was = b.keys;
+    const bool had_forward = b.move_z > 1.0e-5f;
+    b.crouching = !b.flying && !m.swimming() && m.fits(Pose::Crouching) &&
+                  (was.shift || !m.fits(Pose::Standing));
+    b.keys = keys;
+    move_vector(keys, b.move_x, b.move_z);
+    const bool forward = b.move_z > 1.0e-5f;
+
+    if (!stats.spectator) {
+        const double reach = static_cast<double>(kPlayerWidth) * 0.35;
+        m.move_towards_closest_space(b.x - reach, b.z + reach);
+        m.move_towards_closest_space(b.x - reach, b.z - reach);
+        m.move_towards_closest_space(b.x + reach, b.z - reach);
+        m.move_towards_closest_space(b.x + reach, b.z + reach);
     }
-    if (intent.using_item) {
-        forward *= 0.2;
-        strafe *= 0.2;
-    }
-    update_sprint(body, intent, forward);
 
-    if (intent.flying) {
-        body.vy += intent.rise * intent.flying_speed * 3.0;
-        body.fall_distance = 0.0;
-    }
-
-    if (body.jump_delay > 0) --body.jump_delay;
-    if (std::abs(body.vx) < 0.003) body.vx = 0.0;
-    if (std::abs(body.vy) < 0.003) body.vy = 0.0;
-    if (std::abs(body.vz) < 0.003) body.vz = 0.0;
-
-    const bool jumping = intent.jump && !intent.flying;
-    if (jumping) {
-        const double depth = body.in_lava ? body.lava_height : body.water_height;
-        const bool wet = body.in_water && depth > 0.0;
-        if (wet && !(body.on_ground && depth <= kFluidJumpThreshold)) {
-            body.vy += 0.04;
-        } else if (body.in_lava && !(body.on_ground && depth <= kFluidJumpThreshold)) {
-            body.vy += 0.04;
-        } else if ((body.on_ground || (wet && depth <= kFluidJumpThreshold)) &&
-                   body.jump_delay == 0) {
-            jump(body, world, intent);
-            body.jump_delay = 10;
+    if (was.shift || stats.using_item || keys.backward) b.sprint_trigger_time = 0;
+    const bool underwater = b.underwater;
+    const bool shallow = b.touching_water && !underwater;
+    const auto sprint_possible = [&](bool flying) {
+        return !stats.blind && (stats.food > 6 || stats.may_fly) && (flying || !shallow);
+    };
+    const bool crawling = b.pose == Pose::Swimming && !b.touching_water;
+    const bool moving_slowly = b.crouching || crawling;
+    if (!b.sprinting && forward && sprint_possible(b.flying) && !stats.using_item &&
+        (!moving_slowly || underwater)) {
+        if (!had_forward) {
+            if (b.sprint_trigger_time > 0) b.sprinting = true;
+            else b.sprint_trigger_time = stats.sprint_window;
         }
-    } else {
-        body.jump_delay = 0;
+        if (keys.sprint) b.sprinting = true;
+    }
+    if (b.sprinting) {
+        if (m.swimming()) {
+            if (!sprint_possible(true) || !b.touching_water ||
+                (!forward && !b.on_ground && !keys.shift)) {
+                b.sprinting = false;
+            }
+        } else if (!sprint_possible(b.flying) || !forward ||
+                   (b.horizontal_collision && !b.minor_horizontal_collision)) {
+            b.sprinting = false;
+        }
     }
 
-    forward *= kInputScale;
-    strafe *= kInputScale;
-
-    if (intent.flying) {
-        const double rise = body.vy;
-        travel(body, world, intent, strafe, forward, jumping);
-        body.vy = rise * 0.6;
-        body.fall_distance = 0.0;
-    } else {
-        travel(body, world, intent, strafe, forward, jumping);
-    }
-
-    // The view bobs with the speed the body carries out of the tick, on the
-    // ground and not swimming; the step counter follows the distance covered.
-    const double covered = std::hypot(body.x - body.previous_x, body.z - body.previous_z);
-    body.previous_walked = body.walked;
-    body.walked += covered * 0.6;
-    body.previous_sway = body.sway;
-    const double carried = std::min(kMaxSway, std::hypot(body.vx, body.vz));
-    body.sway += ((body.on_ground && !body.swimming ? carried : 0.0) - body.sway) * 0.4;
-
-    // The pose follows the move, so the keys of this tick were read with the
-    // last one's: crouching slows you from the tick after shift goes down.
-    update_pose(body, world, intent);
-    body.eye += (body.eye_height() - body.eye) * 0.5;
-}
-
-void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable& table) {
-    static std::mutex guard;
-    static std::map<const BlockTable*, std::unique_ptr<BlockShapes>> cache;
-    const BlockShapes* shapes = nullptr;
-    {
-        std::lock_guard lock(guard);
-        auto& entry = cache[&table];
-        if (!entry || entry->size() != table.state_count()) {
-            entry = std::make_unique<BlockShapes>();
-            for (size_t s = 0; s < table.state_count(); ++s) {
-                const auto state = static_cast<int32_t>(s);
-                std::string_view name = "minecraft:air";
-                if (table.fluid(state)) name = "minecraft:water";
-                else if (table.full_cube(state)) name = "minecraft:stone";
-                entry->define(state, name, {});
+    if (stats.may_fly) {
+        if (stats.spectator) {
+            if (!b.flying) {
+                b.flying = true;
+                b.flying_changed = true;
+            }
+        } else if (!was.jump && keys.jump) {
+            if (b.jump_trigger_time == 0) {
+                b.jump_trigger_time = 7;
+            } else if (!m.swimming()) {
+                b.flying = !b.flying;
+                if (b.flying && b.on_ground) m.jump_from_ground();
+                b.flying_changed = true;
+                b.jump_trigger_time = 0;
             }
         }
-        shapes = entry.get();
     }
-    tick(body, intent, at, *shapes);
+
+    if (b.touching_water && keys.shift && !b.flying) b.vy += static_cast<double>(-0.04f);
+    if (b.flying) {
+        const int rise = (keys.jump ? 1 : 0) - (keys.shift ? 1 : 0);
+        if (rise != 0) b.vy += static_cast<float>(rise) * stats.flying_speed * 3.0f;
+    }
+
+    // The bob the camera draws comes from the speed the body carried in.
+    b.bob_o = b.bob;
+    const float bob = b.on_ground && !m.swimming()
+                          ? std::min(0.1f, static_cast<float>(std::sqrt(b.vx * b.vx + b.vz * b.vz)))
+                          : 0.0f;
+    b.bob += (bob - b.bob) * 0.4f;
+
+    if (b.jump_trigger_time > 0) --b.jump_trigger_time;
+    if (b.flying) b.fall_distance = 0.0;
+
+    // The living entity's step.
+    if (b.no_jump_delay > 0) --b.no_jump_delay;
+    if (b.vx * b.vx + b.vz * b.vz < 9.0e-6) b.vx = b.vz = 0.0;
+    if (std::abs(b.vy) < 0.003) b.vy = 0.0;
+
+    float ix = b.move_x;
+    float iz = b.move_z;
+    if (ix * ix + iz * iz != 0.0f) {
+        ix *= 0.98f;
+        iz *= 0.98f;
+        if (stats.using_item) {
+            ix *= stats.item_use_speed;
+            iz *= stats.item_use_speed;
+        }
+        if (moving_slowly) {
+            const auto sneak = static_cast<float>(stats.sneaking_speed);
+            ix *= sneak;
+            iz *= sneak;
+        }
+        const float length = std::sqrt(ix * ix + iz * iz);
+        if (length > 0.0f) {
+            const float nx = ix * (1.0f / length);
+            const float nz = iz * (1.0f / length);
+            const float ax = std::abs(nx);
+            const float az = std::abs(nz);
+            const float ratio = az > ax ? ax / az : az / ax;
+            const float to_square = std::sqrt(1.0f + ratio * ratio);
+            const float scale = std::min(length * to_square, 1.0f);
+            ix = nx * scale;
+            iz = nz * scale;
+        }
+    }
+    b.xxa = ix;
+    b.zza = iz;
+    b.jumping = keys.jump;
+
+    if (b.jumping && !b.flying) {
+        const double h = m.in_lava() ? b.lava_height : b.water_height;
+        const bool in_water = b.touching_water && h > 0.0;
+        const double threshold = m.fluid_jump_threshold();
+        if (!in_water || (b.on_ground && !(h > threshold))) {
+            if (!m.in_lava() || (b.on_ground && !(h > threshold))) {
+                if ((b.on_ground || (in_water && h <= threshold)) && b.no_jump_delay == 0) {
+                    m.jump_from_ground();
+                    b.no_jump_delay = 10;
+                }
+            } else {
+                b.vy += static_cast<double>(0.04f);
+            }
+        } else {
+            b.vy += static_cast<double>(0.04f);
+        }
+    } else {
+        b.no_jump_delay = 0;
+    }
+
+    if (stats.slow_falling || stats.levitation > 0) b.fall_distance = 0.0;
+    m.travel(b.xxa, b.zza);
+    m.inside_blocks();
+
+    if (b.on_ground && b.flying && !stats.spectator) {
+        b.flying = false;
+        b.flying_changed = true;
+    }
+
+    b.x = std::clamp(b.x, -2.9999999e7, 2.9999999e7);
+    b.z = std::clamp(b.z, -2.9999999e7, 2.9999999e7);
+
+    // The pose follows the move: crouching, or the next one down that fits.
+    if (m.fits(Pose::Swimming)) {
+        const Pose wanted = m.swimming() ? Pose::Swimming
+                                         : (keys.shift && !b.flying ? Pose::Crouching : Pose::Standing);
+        if (stats.spectator || m.fits(wanted)) b.pose = wanted;
+        else if (m.fits(Pose::Crouching)) b.pose = Pose::Crouching;
+        else b.pose = Pose::Swimming;
+    }
 }
 
 } // namespace mcpp::world

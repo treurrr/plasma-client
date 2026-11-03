@@ -72,7 +72,8 @@ mcpp_shader(ui.vert UiVert)
 mcpp_shader(ui.frag UiFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
-# Hand tables from data/, compiled in: they are ours, not the game's.
+# Tables from data/, compiled in: hand tables, and numbers the game's own
+# code reported through tools/oracle.
 set(MCPP_DATA_DIR ${CMAKE_BINARY_DIR}/generated/mcpp/data)
 file(MAKE_DIRECTORY ${MCPP_DATA_DIR})
 function(mcpp_data name symbol)
@@ -87,7 +88,6 @@ function(mcpp_data name symbol)
     set(MCPP_DATA_HEADERS ${MCPP_DATA_HEADERS} ${header} PARENT_SCOPE)
 endfunction()
 mcpp_data(collision_shapes kCollisionShapes)
-mcpp_data(hardness kHardness)
 add_custom_target(mcpp_data DEPENDS ${MCPP_DATA_HEADERS})
 
 if(glfw3_FOUND)
@@ -154,7 +154,7 @@ if(glfw3_FOUND)
         src/client/sound.cpp)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
-    src/client/common.cpp ${MCPP_PLAY_SOURCES})
+    src/client/common.cpp src/client/player_rules.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
@@ -176,6 +176,8 @@ mcpp_test(protocol)
 mcpp_test(packet_ids)
 mcpp_test(assets)
 mcpp_test(player)
+target_sources(test_player PRIVATE src/client/player_rules.cpp)
+target_include_directories(test_player PRIVATE src)
 mcpp_test(jmath)
 
 # The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it

@@ -1,8 +1,6 @@
 #pragma once
-#include "mcpp/world/block_table.hpp"
-
 #include <cstdint>
-#include <filesystem>
+#include <initializer_list>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,100 +9,158 @@
 
 namespace mcpp::world {
 
-// A box inside one block, in blocks: 0 to 1 for a full cube, up to 1.5 high
-// for a fence. Relative to the block's own lowest corner.
-struct Box {
+struct Aabb {
     double min[3];
     double max[3];
 };
 
-using Properties = std::vector<std::pair<std::string, std::string>>;
+// A collision shape the way the game collides with it: the edges of its
+// cells on each axis, relative to the block's own corner, and which cells are
+// full. Two shapes that cover the same space can still collide differently
+// from inside, because the game walks cell by cell.
+struct Voxels {
+    uint32_t first[3] = {0, 0, 0};   // into BlockShapes' edge pool
+    uint8_t edges[3] = {0, 0, 0};
+    uint32_t cells = 0;              // first bit in BlockShapes' cell pool, x fastest
+    double top = 0.0;                // the highest edge of a full cell
+};
 
-enum class FluidKind : uint8_t { None, Water, Lava };
+// What a block does beyond being in the way, where it is not a number in
+// the table: the game hard-codes these by block.
+enum class Special : uint8_t {
+    None,
+    Scaffolding,
+    PowderSnow,
+    Cobweb,
+    SweetBerryBush,
+    Honey,
+    Slime,
+    Bed,
+    BubbleColumn,
+    Ice,        // ice and frosted ice: a falling fluid does not see their faces
+    Trapdoor,
+    Ladder,
+    Water,
+    Lava,
+};
 
-// What a block does to a body touching it, beyond being in the way.
-struct BlockPhysics {
+enum StateFlag : uint16_t {
+    kAir = 1,
+    kLargeCollision = 2,   // reaches out of its cell, so neighbours must be asked too
+    kSuffocating = 4,
+    kReplaceable = 8,
+    kNeedsTool = 16,
+    kFullCollision = 32,
+    kBlocksMotion = 64,
+    kSturdyDown = 256,     // then up, north, south, west, east
+};
+
+enum class Fluid : uint8_t { None, Water, Lava };
+
+struct StateInfo {
+    uint16_t block = 0;
+    uint16_t collision = 0;
+    uint16_t outline = 0;
+    uint16_t interaction = 0;
+    uint16_t flags = 0;
+    Fluid fluid = Fluid::None;
+    uint8_t fluid_amount = 0;   // eighths; 8 for a source
+    bool fluid_falling = false;
+    bool fluid_source = false;
+    float hardness = 0.0f;      // -1 cannot be broken
+
+    bool sturdy(int direction) const { return (flags & (kSturdyDown << direction)) != 0; }
+    // The fluid's own height in the cell, without looking above it.
+    float fluid_height() const { return static_cast<float>(fluid_amount) / 9.0f; }
+};
+
+struct BlockInfo {
+    std::string name;
+    int32_t registry_id = 0;   // what block tags hold
+    int32_t first = 0;
+    int32_t count = 0;
     float friction = 0.6f;
     float speed = 1.0f;
     float jump = 1.0f;
-    // A cobweb, a berry bush, powder snow: each tick's movement is scaled by
-    // this while the body is inside, and its speed is lost.
-    float stuck[3] = {0.0f, 0.0f, 0.0f};
-    bool climbable = false;
-    bool slime = false;
-    bool bed = false;
-    bool honey = false;
-    bool scaffolding = false;
-    bool powder_snow = false;
-    FluidKind fluid = FluidKind::None;
-    // Eighths of a block of fluid: 8 for a source or a falling column.
-    uint8_t fluid_amount = 0;
-    // A bubble column pulls down over magma and pushes up over soul sand.
-    int8_t bubbles = 0;
-    // Bamboo and pointed dripstone stand off-centre by a hash of where they are.
-    float offset = 0.0f;
+    // Plants and bamboo stand off the grid by a hash of where they are.
+    uint8_t offset = 0;   // 0 none, 1 sideways, 2 sideways and down
+    float max_horizontal_offset = 0.0f;
+    float max_vertical_offset = 0.0f;
+    Special special = Special::None;
+    struct Property {
+        std::string name;
+        std::vector<std::string> values;
+    };
+    std::vector<Property> properties;   // the first one changes slowest
 };
 
-// Hardness, and whether only the right tool gets a drop. -1 cannot be broken.
-struct DigInfo {
-    float hardness = 0.0f;
-    bool needs_tool = false;
-};
-
-// Every block state's collision and outline boxes and what it does to a body,
-// resolved once from the states the reports list and the hand tables in data/.
+// Every block state's shapes and the numbers movement reads from it, as the
+// game itself reported them (tools/oracle/BlockOracle.java). Read once; every
+// lookup after that is an index.
 class BlockShapes {
 public:
-    bool open(const std::filesystem::path& states, const BlockTable* models = nullptr);
-    static std::filesystem::path default_path(int32_t protocol);
+    // The table built into the program.
+    static const BlockShapes& game();
 
-    // One state from its name and properties, as open does it; tests build
-    // worlds out of these.
-    void define(int32_t state, std::string_view name, const Properties& properties,
-                const BlockTable* models = nullptr, int32_t block = -1);
-
-    bool is_open() const { return !states_.empty(); }
+    bool parse(std::string_view text);
     size_t size() const { return states_.size(); }
-    std::span<const Box> collision(int32_t state) const;
-    std::span<const Box> outline(int32_t state) const;
-    const BlockPhysics& physics(int32_t state) const;
-    const DigInfo& dig(int32_t state) const;
-    std::string_view name(int32_t state) const;
-    std::string_view property(int32_t state, std::string_view key) const;
-    // The block's id in the block registry, which is what block tags hold.
-    int32_t block(int32_t state) const;
-    // The state with these properties of the block that state belongs to, or
-    // -1; what placing a slab's top half or a stair's facing picks.
-    int32_t with(int32_t state, std::string_view key, std::string_view value) const;
-    // The first state of a block by name, or -1.
-    int32_t find(std::string_view name) const;
-    bool full_collision(int32_t state) const;
+
+    // A state id the table does not know is air.
+    const StateInfo& state(int32_t id) const {
+        return id > 0 && static_cast<size_t>(id) < states_.size() ? states_[id] : states_[0];
+    }
+    const BlockInfo& block(int32_t id) const { return blocks_[state(id).block]; }
+    std::string_view name(int32_t id) const { return block(id).name; }
+
+    bool empty(uint16_t shape) const { return shapes_[shape].empty; }
+    const Voxels& voxels(uint16_t shape) const { return shapes_[shape].voxels; }
+    std::span<const double> edges(const Voxels& v, int axis) const {
+        return {edge_pool_.data() + v.first[axis], v.edges[axis]};
+    }
+    bool full(const Voxels& v, int x, int y, int z) const {
+        const uint32_t nx = v.edges[0] - 1u;
+        const uint32_t ny = v.edges[1] - 1u;
+        const uint32_t bit = v.cells + static_cast<uint32_t>(x) +
+                             nx * (static_cast<uint32_t>(y) + ny * static_cast<uint32_t>(z));
+        return (cell_pool_[bit >> 3] >> (bit & 7)) & 1u;
+    }
+    // Outline and interaction shapes as boxes, for aiming.
+    std::span<const Aabb> boxes(uint16_t shape) const {
+        return {box_pool_.data() + shapes_[shape].box_first, shapes_[shape].box_count};
+    }
+
+    // The value of one property of a state, or empty.
+    std::string_view property(int32_t id, std::string_view key) const;
+    // The state of the same block with one property changed, or -1.
+    int32_t with(int32_t id, std::string_view key, std::string_view value) const;
+    // A block's first state by name, or -1.
+    int32_t find(std::string_view block_name) const;
+    // A block's state with these properties set and the rest at their first
+    // value, or -1: "minecraft:oak_stairs", {{"facing", "east"}, {"half", "top"}}.
+    int32_t find(std::string_view block_name,
+                 std::initializer_list<std::pair<std::string_view, std::string_view>> set) const;
+
+    // A shape the game picks by who is asking, not by state:
+    // "scaffolding_unstable_bottom", "powder_snow_falling". -1 if unknown.
+    int32_t named(std::string_view name) const;
+
+    // Where a plant stands in its block, the game's own hash of the column.
+    void offset(int32_t id, int32_t x, int32_t z, double out[3]) const;
 
 private:
-    struct State {
-        std::string name;
-        Properties properties;
-        int32_t block = -1;
-        uint32_t collision_first = 0;
-        uint32_t collision_count = 0;
-        uint32_t outline_first = 0;
-        uint32_t outline_count = 0;
-        BlockPhysics physics;
-        DigInfo dig;
+    struct Shape {
+        bool empty = true;
+        Voxels voxels;
+        uint32_t box_first = 0;
+        uint32_t box_count = 0;
     };
-    std::vector<State> states_;
-    std::vector<Box> boxes_;
+    std::vector<Shape> shapes_;
+    std::vector<double> edge_pool_;
+    std::vector<uint8_t> cell_pool_;
+    std::vector<Aabb> box_pool_;
+    std::vector<BlockInfo> blocks_;
+    std::vector<StateInfo> states_;
+    std::vector<std::pair<std::string, uint16_t>> named_;
 };
-
-// The boxes a shape family gives for one set of properties, in sixteenths
-// turned into blocks. A family is a name in data/collision_shapes.txt:
-// "full", "empty", "slab", "stair", "box:0,0,0,16,14,16|...", and so on.
-// Empty for a family it does not know, and `known` says so.
-std::vector<Box> family_shape(std::string_view family, const Properties& properties,
-                              bool* known = nullptr);
-
-// Where bamboo and pointed dripstone stand within their block: a hash of the
-// position, the way the game spreads plants so a field of them is not a grid.
-void random_offset(int32_t x, int32_t z, float max, double& dx, double& dz);
 
 } // namespace mcpp::world

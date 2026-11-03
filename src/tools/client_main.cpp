@@ -1400,15 +1400,21 @@ int do_walktest(const std::string& target, double seconds) {
     constexpr double kStep = mcpp::world::kTickSeconds;
     const auto steps = static_cast<int>(seconds / kStep);
     bool fell = false;
+    const auto& shapes = mcpp::world::BlockShapes::game();
+    const mcpp::world::BlockAt at = [&](int32_t x, int32_t y, int32_t z) {
+        const int32_t state = block_at(x, y, z);
+        return state == 1 && y < -64 ? 0 : state;
+    };
+    const mcpp::world::World walk_world{at, shapes, nullptr, -64};
     for (const float yaw : {0.0f, 90.0f, 180.0f, 270.0f}) {
         mcpp::world::Body body;
-        body.x = spawn[0];
-        body.y = spawn[1] + 6.0;
-        body.z = spawn[2];
-
-        mcpp::world::Intent intent;
-        intent.forward = 1.0;
-        intent.yaw_degrees = yaw;
+        body.x = body.xo = spawn[0];
+        body.y = body.yo = spawn[1] + 6.0;
+        body.z = body.zo = spawn[2];
+        body.yaw = yaw;
+        mcpp::world::Keys keys;
+        keys.forward = true;
+        const mcpp::world::Stats stats;
 
         double grounded = 0.0;
         double lowest = body.y;
@@ -1426,9 +1432,9 @@ int do_walktest(const std::string& target, double seconds) {
             }
             last_x = body.x;
             last_z = body.z;
-            intent.jump = stuck > 6 && body.on_ground;
+            keys.jump = stuck > 6 && body.on_ground;
 
-            mcpp::world::tick(body, intent, block_at, table);
+            mcpp::world::tick(body, keys, stats, walk_world);
             if (body.on_ground) grounded += kStep;
             lowest = std::min(lowest, body.y);
             highest = std::max(highest, body.y);

@@ -54,6 +54,21 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         // server correcting a few blocks sends 0xff with the offsets alone -
         // read as a place, that drops the player under the world at 0, 0.
         const auto relative = static_cast<uint32_t>(in.read_i32());
+        if (events_.player.on_teleport) {
+            SessionEvents::Player::Teleport t;
+            t.id = teleport;
+            t.x = x;
+            t.y = y;
+            t.z = z;
+            t.vx = vx;
+            t.vy = vy;
+            t.vz = vz;
+            t.yaw = yaw;
+            t.pitch = pitch;
+            t.relative = relative;
+            events_.player.on_teleport(t);
+            return true;
+        }
         const auto pick = [&](uint32_t bit, double value, double was) {
             return (relative & bit) != 0 ? was + value : value;
         };
@@ -66,41 +81,8 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
             events_.player.on_position(player_.last_x, player_.last_y, player_.last_z,
                                        player_.last_yaw, player_.last_pitch);
         }
-        if (events_.player.on_teleport) {
-            events_.player.on_teleport(player_.last_x, player_.last_y, player_.last_z, vx, vy, vz,
-                                       relative);
-        }
-        if (player_.announced_loaded) ++player_.teleports;
-        ByteBuffer out;
-        out.write_varint(teleport);
-        send(ids_->play_sb.accept_teleportation, out);
-        // The game answers a teleport with where it now stands, straight
-        // away: the server ignores movement until it has heard it.
-        ByteBuffer here;
-        here.write_f64(player_.last_x);
-        here.write_f64(player_.last_y);
-        here.write_f64(player_.last_z);
-        here.write_f32(player_.last_yaw);
-        here.write_f32(player_.last_pitch);
-        here.write_u8(0);
-        send(ids_->play_sb.move_player_pos_rot, here);
-        player_.sent_x = player_.last_x;
-        player_.sent_y = player_.last_y;
-        player_.sent_z = player_.last_z;
-        player_.sent_yaw = player_.last_yaw;
-        player_.sent_pitch = player_.last_pitch;
-        player_.sent_on_ground = false;
-        player_.sent_collision = false;
-        player_.position_reminder = 0;
-        // Since 1.21.2 the server keeps the player hidden from everyone else
-        // until the client says it has finished loading. Without this you are
-        // in the world, you can walk and chat, and nobody can see you.
-        if (!player_.announced_loaded) {
-            player_.announced_loaded = true;
-            ByteBuffer loaded;
-            send(ids_->play_sb.player_loaded, loaded);
-            status("told the server we are loaded");
-        }
+        accept_teleport(teleport, player_.last_x, player_.last_y, player_.last_z,
+                        player_.last_yaw, player_.last_pitch);
         return true;
     }
     if (packet.id == cb.player_abilities) {
@@ -186,8 +168,6 @@ void Session::send_position(double x, double y, double z, float yaw, float pitch
     player_.last_yaw = yaw;
     player_.last_pitch = pitch;
 
-    send(ids_->play_sb.client_tick_end, ByteBuffer{});
-
     ByteBuffer out;
     out.write_f64(x);
     out.write_f64(y);
@@ -197,6 +177,122 @@ void Session::send_position(double x, double y, double z, float yaw, float pitch
     // One flags byte since 1.21.4: bit 0 on ground, bit 1 horizontal collision.
     out.write_u8(on_ground ? 1 : 0);
     send(ids_->play_sb.move_player_pos_rot, out);
+    send(ids_->play_sb.client_tick_end, ByteBuffer{});
+}
+
+void Session::accept_teleport(int32_t id, double x, double y, double z, float yaw, float pitch) {
+    player_.last_x = x;
+    player_.last_y = y;
+    player_.last_z = z;
+    player_.last_yaw = yaw;
+    player_.last_pitch = pitch;
+    if (player_.announced_loaded) ++player_.teleports;
+    ByteBuffer out;
+    out.write_varint(id);
+    send(ids_->play_sb.accept_teleportation, out);
+    // The game answers a teleport with where it now stands, straight away,
+    // neither on the ground nor against a wall. What it last sent stays as
+    // it was, so the next tick reports the new place again.
+    ByteBuffer here;
+    here.write_f64(x);
+    here.write_f64(y);
+    here.write_f64(z);
+    here.write_f32(yaw);
+    here.write_f32(pitch);
+    here.write_u8(0);
+    send(ids_->play_sb.move_player_pos_rot, here);
+    // Since 1.21.2 the server keeps the player hidden from everyone else
+    // until the client says it has finished loading. Without this you are
+    // in the world, you can walk and chat, and nobody can see you.
+    if (!player_.announced_loaded) {
+        player_.announced_loaded = true;
+        send(ids_->play_sb.player_loaded, ByteBuffer{});
+        status("told the server we are loaded");
+    }
+}
+
+void Session::send_movement(const Movement& m) {
+    if (state_ != SessionState::Play) return;
+    auto& p = player_;
+    if (m.keys != p.sent_keys) {
+        ByteBuffer keys;
+        keys.write_u8(m.keys);
+        send(ids_->play_sb.player_input, keys);
+        p.sent_keys = m.keys;
+    }
+    if (m.sprinting != p.sent_sprinting) {
+        ByteBuffer command;
+        command.write_varint(entity_id());
+        command.write_varint(m.sprinting ? 1 : 2);   // start or stop sprinting
+        command.write_varint(0);
+        send(ids_->play_sb.player_command, command);
+        p.sent_sprinting = m.sprinting;
+    }
+    const double dx = m.x - p.sent_x;
+    const double dy = m.y - p.sent_y;
+    const double dz = m.z - p.sent_z;
+    const double dyaw = static_cast<double>(m.yaw) - static_cast<double>(p.sent_yaw);
+    const double dpitch = static_cast<double>(m.pitch) - static_cast<double>(p.sent_pitch);
+    ++p.position_reminder;
+    const bool moved = dx * dx + dy * dy + dz * dz > 2.0e-4 * 2.0e-4 || p.position_reminder >= 20;
+    const bool turned = dyaw != 0.0 || dpitch != 0.0;
+    const uint8_t flags = static_cast<uint8_t>((m.on_ground ? 1 : 0) | (m.horizontal_collision ? 2 : 0));
+    ByteBuffer out;
+    if (moved) {
+        out.write_f64(m.x);
+        out.write_f64(m.y);
+        out.write_f64(m.z);
+    }
+    if (turned) {
+        out.write_f32(m.yaw);
+        out.write_f32(m.pitch);
+    }
+    if (moved || turned || m.on_ground != p.sent_on_ground ||
+        m.horizontal_collision != p.sent_collision) {
+        out.write_u8(flags);
+        const auto id = moved && turned ? ids_->play_sb.move_player_pos_rot
+                        : moved          ? ids_->play_sb.move_player_pos
+                        : turned         ? ids_->play_sb.move_player_rot
+                                         : ids_->play_sb.move_player_status_only;
+        send(id, out);
+    }
+    if (moved) {
+        p.sent_x = m.x;
+        p.sent_y = m.y;
+        p.sent_z = m.z;
+        p.position_reminder = 0;
+    }
+    if (turned) {
+        p.sent_yaw = m.yaw;
+        p.sent_pitch = m.pitch;
+    }
+    p.sent_on_ground = m.on_ground;
+    p.sent_collision = m.horizontal_collision;
+    p.last_x = m.x;
+    p.last_y = m.y;
+    p.last_z = m.z;
+    p.last_yaw = m.yaw;
+    p.last_pitch = m.pitch;
+}
+
+void Session::send_tick_end() {
+    if (state_ != SessionState::Play) return;
+    send(ids_->play_sb.client_tick_end, ByteBuffer{});
+}
+
+void Session::send_flying(bool flying) {
+    ByteBuffer out;
+    out.write_u8(flying ? 0x02 : 0x00);
+    send(ids_->play_sb.player_abilities, out);
+    player_.abilities.flying = flying;
+}
+
+int32_t Session::effect_level(std::string_view name) const {
+    for (const auto& [id, effect] : effects(entity_id())) {
+        const auto* entry = registries().at("minecraft:mob_effect", id);
+        if (entry != nullptr && entry->name == name) return effect.amplifier + 1;
+    }
+    return 0;
 }
 
 void Session::send_held_slot(int32_t slot) {
@@ -214,6 +310,15 @@ void Session::send_dig(int32_t x, int32_t y, int32_t z, int32_t face, bool finis
     out.write_i64(pack_position(x, y, z));
     out.write_u8(static_cast<uint8_t>(face));
     out.write_varint(++player_.sequence);
+    send(ids_->play_sb.player_action, out);
+}
+
+void Session::send_dig_action(int32_t action, int32_t x, int32_t y, int32_t z, int32_t face) {
+    ByteBuffer out;
+    out.write_varint(action);
+    out.write_i64(pack_position(x, y, z));
+    out.write_u8(static_cast<uint8_t>(face));
+    out.write_varint(action == 1 ? 0 : ++player_.sequence);
     send(ids_->play_sb.player_action, out);
 }
 
