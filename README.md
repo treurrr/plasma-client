@@ -176,6 +176,13 @@ It is not ready to play on. See the state section above.
 that were worth writing down - a depth test that drew the back of the world, an
 atlas that bled between tiles, a face winding that hid every top face.
 
+## About
+
+I'm Jerome, and I'm still in secondary school. I'm building Plasma to learn
+C++, to see what Minecraft can really do when the client is pushed to its full
+potential, and to take Minecraft PvP in a completely new direction by building
+it myself.
+
 ## Licence
 
 GPL-3.0; see [COPYING.md](COPYING.md). The Plasma Client name and the marks in
