@@ -12,7 +12,7 @@ import net.minecraft.world.level.block.SoundType;
 
 // Asks the game which sound type each block's default state has, and prints
 // one tab-separated row per block, sorted by registry name, for
-// tools/gen_block_sounds.py to write to data/block_sounds.txt.
+// tools/gen_block_sounds.py to write.
 public class BlockSoundsExport {
     static String event(SoundEvent sound) {
         return sound.location().getPath();

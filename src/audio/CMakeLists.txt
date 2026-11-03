@@ -8,14 +8,6 @@ target_include_directories(mcpp_audio_vendor SYSTEM PUBLIC ${CMAKE_SOURCE_DIR}/t
 target_compile_options(mcpp_audio_vendor PRIVATE -w)
 target_link_libraries(mcpp_audio_vendor PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
 
-# The block sound table is compiled in, so the client never looks for it.
-set(MCPP_BLOCK_SOUNDS_FILE ${CMAKE_SOURCE_DIR}/data/block_sounds.txt)
-file(READ ${MCPP_BLOCK_SOUNDS_FILE} MCPP_BLOCK_SOUNDS)
-configure_file(block_sounds_data.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/block_sounds_data.cpp @ONLY)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MCPP_BLOCK_SOUNDS_FILE})
-set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/block_sounds_data.cpp
-    PROPERTIES COMPILE_OPTIONS -Wno-overlength-strings)
-
 add_library(mcpp_audio STATIC
     sounds.cpp
     block_sounds.cpp
@@ -25,8 +17,7 @@ add_library(mcpp_audio STATIC
     engine.cpp
     footsteps.cpp
     level_events.cpp
-    ambience.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/block_sounds_data.cpp)
+    ambience.cpp)
 target_include_directories(mcpp_audio PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(mcpp_audio PUBLIC mcpp_net mcpp_audio_vendor)
 mcpp_defaults(mcpp_audio)

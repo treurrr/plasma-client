@@ -222,7 +222,7 @@ void sound_tick(Game& game) {
         const int32_t state = game.world.block_at ? game.world.block_at(x, y, z) : -1;
         return state < 0 || game.table.full_cube(state);
     };
-    for (const auto& step : sound->footsteps.tick(input, mcpp::audio::BlockSounds::builtin(), world,
+    for (const auto& step : sound->footsteps.tick(input, mcpp::audio::BlockSounds::installed(), world,
                                                   sound->level_random)) {
         play_at(game, step.event, mcpp::audio::Category::Player, step.x, step.y, step.z, step.volume,
                 step.pitch);
@@ -309,7 +309,7 @@ void sound_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t state, mcp
                                       game.session->registries(), sound->level_random);
         return;
     }
-    const auto cue = mcpp::audio::cue(mcpp::audio::BlockSounds::builtin().find(name), kind);
+    const auto cue = mcpp::audio::cue(mcpp::audio::BlockSounds::installed().find(name), kind);
     if (!cue) return;
     play_at(game, cue->event, mcpp::audio::Category::Block, x + 0.5, y + 0.5, z + 0.5, cue->volume, cue->pitch);
 }

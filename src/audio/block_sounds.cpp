@@ -1,13 +1,17 @@
 #include "audio/block_sounds.hpp"
 
 #include "audio/sounds.hpp"
+#include "mcpp/protocol_versions.hpp"
 
 #include <charconv>
+#include <cstdlib>
+#include <format>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 #include <vector>
 
 namespace mcpp::audio {
-
-extern const char* const kBlockSoundsText;
 
 namespace {
 
@@ -60,13 +64,35 @@ std::optional<BlockSoundCue> cue(const BlockSoundType& type, BlockSoundKind kind
     return result;
 }
 
-const BlockSounds& BlockSounds::builtin() {
+std::filesystem::path BlockSounds::default_path(int32_t protocol) {
+    std::filesystem::path base;
+    if (const char* data_home = std::getenv("XDG_DATA_HOME")) {
+        base = data_home;
+    } else if (const char* home = std::getenv("HOME")) {
+        base = std::filesystem::path(home) / ".local" / "share";
+    }
+    return base / "plasma-client" / "data" / std::format("block_sounds-{}.txt", protocol);
+}
+
+const BlockSounds& BlockSounds::installed() {
     static const BlockSounds table = [] {
-        BlockSounds parsed;
-        parsed.parse(kBlockSoundsText);
-        return parsed;
+        BlockSounds loaded;
+        const auto path = default_path(protocol::kProtocol_1_21_11);
+        if (!loaded.load(path)) {
+            std::cerr << std::format("no block sounds at {}; every block sounds silent until "
+                                     "tools/bake_all.py bakes them\n", path.string());
+        }
+        return loaded;
     }();
     return table;
+}
+
+bool BlockSounds::load(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    if (!input) return false;
+    std::stringstream text;
+    text << input.rdbuf();
+    return parse(text.str());
 }
 
 bool BlockSounds::parse(std::string_view text) {

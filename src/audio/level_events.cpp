@@ -111,7 +111,7 @@ std::optional<PlayRequest> level_event_sound(const LevelEvent& e, Random& r) {
     case 1505: return at_block(e, "item.bone_meal.use", B, 1.0f, 1.0f, false);
     case 2001: {
         if (is_air(e.data_block)) return std::nullopt;
-        const auto sound = cue(BlockSounds::builtin().find(e.data_block), BlockSoundKind::Break);
+        const auto sound = cue(BlockSounds::installed().find(e.data_block), BlockSoundKind::Break);
         if (!sound) return std::nullopt;
         return at_block(e, sound->event, B, sound->volume, sound->pitch, false);
     }

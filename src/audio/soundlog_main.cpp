@@ -328,7 +328,7 @@ int do_replay(const std::string& file, bool realtime) {
         input.on_ground = entity.on_ground;
         last = {entity.x, entity.y, entity.z};
         const auto sounds =
-            walker.tick(input, mcpp::audio::BlockSounds::builtin(), step_world, walker_random);
+            walker.tick(input, mcpp::audio::BlockSounds::installed(), step_world, walker_random);
         for (const auto& sound : sounds) {
             ++predicted;
             std::cout << std::format("{:8.3f} model   {} at {:.3f} {:.3f} {:.3f} volume {:.4f} pitch {:.4f}\n",

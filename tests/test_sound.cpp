@@ -188,7 +188,7 @@ void test_categories() {
 }
 
 void test_block_sounds() {
-    const auto& table = BlockSounds::builtin();
+    const auto& table = BlockSounds::installed();
     check(table.size() == 1166, std::format("one row per block of 1.21.11, got {}", table.size()));
     const auto& stone = table.find("minecraft:stone");
     check(stone.name == "stone" && stone.step == "block.stone.step", "stone");
@@ -238,7 +238,7 @@ struct TestWorld {
 };
 
 void test_footsteps() {
-    const auto& table = BlockSounds::builtin();
+    const auto& table = BlockSounds::installed();
     jmath::LegacyRandom random(1);
 
     // Walking at 0.21585 a tick counts 0.12951 a tick (in floats): past 1 on
@@ -683,9 +683,14 @@ int main() {
     test_sounds_json();
     test_attenuation();
     test_categories();
-    test_block_sounds();
-    test_footsteps();
-    test_level_events();
+    if (BlockSounds::installed().empty()) {
+        std::cout << "skipped: no block sounds at " << BlockSounds::default_path(mcpp::protocol::kProtocol_1_21_11).string()
+                  << "; bake them with tools/bake_all.py\n";
+    } else {
+        test_block_sounds();
+        test_footsteps();
+        test_level_events();
+    }
     test_mixer();
     time_full_mixer();
     test_engine_on_assets();
