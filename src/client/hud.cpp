@@ -21,10 +21,6 @@ struct HudArea {
     mcpp::ui::hud::Gui gui;
     mcpp::ui::hud::Player player;
     std::vector<mcpp::ui::hud::TabEntry> players;
-    // Until the screens area shares its own, the hud reads the same files.
-    mcpp::Options options;
-    mcpp::Translations lang;
-    mcpp::Keybinds keybinds;
     mcpp::ui::ItemTable items;
 
     // The client's own copy of what LocalPlayer keeps for the hud.
@@ -104,7 +100,7 @@ void fill_player(Game& game, HudArea& hud) {
     player.selected = std::clamp(inventory.held, 0, 8);
     const auto& held = player.hotbar[static_cast<size_t>(player.selected)];
     player.selected_name = held.empty() ? mcpp::ui::Component{} : item_name(hud, held.id);
-    player.left_handed = hud.options.get_string("mainHand") == "left";
+    player.left_handed = game.screens.options.get_string("mainHand") == "left";
 
     const double speed = session.attribute(self, "minecraft:attack_speed", 4.0);
     player.attack_delay = static_cast<float>(1.0 / speed * 20.0);
@@ -151,11 +147,6 @@ void hud_bind(Game& game, mcpp::SessionEvents& events) {
                                    present(header), present(footer));
     };
     auto& hud = *game.hud;
-    hud.lang.load(mcpp::Translations::default_path());
-    if (!hud.options.load(mcpp::Options::default_path())) {
-        if (const auto vanilla = mcpp::Options::vanilla_path()) hud.options.load(*vanilla);
-    }
-    hud.keybinds.load(hud.options);
     hud.items.load(mcpp::ui::ItemTable::default_path(mcpp::protocol::kTargetProtocol));
 }
 
@@ -199,7 +190,7 @@ void hud_tick(Game& game) {
     }
     hud.hotbar_seen = true;
     fill_player(game, hud);
-    hud.gui.tick(hud.player, hud.options);
+    hud.gui.tick(hud.player, game.screens.options);
 }
 
 void hud_render(Game& game) {
@@ -210,19 +201,19 @@ void hud_render(Game& game) {
     auto& session = *game.session;
     fill_player(game, hud);
     if (!hud.pending_chat.empty()) {
-        const mcpp::ui::Font font(*game.screens.quads, &hud.lang);
+        const mcpp::ui::Font font(*game.screens.quads, &game.screens.lang);
         for (const auto& [line, tag] : hud.pending_chat) {
-            hud.gui.chat().add(line, tag, hud.gui.ticks(), font, hud.options, window.typing());
+            hud.gui.chat().add(line, tag, hud.gui.ticks(), font, game.screens.options, window.typing());
         }
         hud.pending_chat.clear();
     }
 
     const int scale = mcpp::ui::gui_scale(static_cast<int>(window.width()),
                                           static_cast<int>(window.height()),
-                                          hud.options.get_int("guiScale"), false);
+                                          game.screens.options.get_int("guiScale"), false);
     const int gw = mcpp::ui::gui_extent(static_cast<int>(window.width()), scale);
     const int gh = mcpp::ui::gui_extent(static_cast<int>(window.height()), scale);
-    mcpp::ui::GuiGraphics gfx(*game.screens.quads, scale, gw, gh, &hud.lang);
+    mcpp::ui::GuiGraphics gfx(*game.screens.quads, scale, gw, gh, &game.screens.lang);
 
     hud.players.clear();
     mcpp::ui::hud::TabEntry self;
@@ -238,16 +229,16 @@ void hud_render(Game& game) {
     frame.own_name = session.profile_name();
     frame.scoreboard = &session.scoreboard();
     frame.players = &hud.players;
-    const auto* list_key = hud.keybinds.find("key.playerlist");
+    const auto* list_key = game.screens.keybinds.find("key.playerlist");
     frame.player_list_down = !window.typing() && list_key != nullptr &&
                              list_key->current.type == mcpp::InputKey::Type::Keyboard &&
                              window.key_down(list_key->current.code);
     frame.screen_shows_effects = game.screens.inventory_open;
-    hud.gui.render(gfx, hud.player, hud.options, frame);
+    hud.gui.render(gfx, hud.player, game.screens.options, frame);
 
     if (window.typing()) {
         // The chat screen's input line until the screens area draws its own.
-        hud.gui.chat().render(gfx, hud.options, hud.gui.ticks(), true, -1, -1);
+        hud.gui.chat().render(gfx, game.screens.options, hud.gui.ticks(), true, -1, -1);
         gfx.fill(2, gh - 14, gw - 2, gh - 2, 0x80000000u);
         gfx.draw_string(window.typed() + "_", 4, gh - 12, 0xFFE0E0E0u, true);
     }
