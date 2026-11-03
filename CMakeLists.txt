@@ -124,6 +124,9 @@ add_library(mcpp_net STATIC
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp
+    src/ui/hud/gui.cpp
+    src/ui/hud/chat.cpp
+    src/ui/hud/tab_list.cpp
     src/proto/packet_ids_gen.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
