@@ -178,10 +178,20 @@ atlas that bled between tiles, a face winding that hid every top face.
 
 ## About
 
-I'm Jerome, and I'm still in secondary school. I'm building Plasma to learn
-C++, to see what Minecraft can really do when the client is pushed to its full
-potential, and to take Minecraft PvP in a completely new direction by building
-it myself.
+I'm Jerome, and I'm still in secondary school. Plasma is how I'm learning C++:
+not through exercises, but by building something hard enough that every
+shortcut shows.
+
+I want to see what Minecraft can really do. The game runs on a client that
+leaves a lot of speed on the table, and I want to know what it feels like when
+every frame, every input and every chunk is as fast as the hardware allows,
+without changing the game itself.
+
+And I want to take Minecraft PvP in a new direction. Not with cheats, and not
+with a client that only looks different, but with one that is exactly vanilla
+where it counts and simply better everywhere else: lower input latency, no
+stutter, instant joins. Something servers can allow and players notice. I'm
+building that myself, in the open, with every number measured and published.
 
 ## Licence
 
