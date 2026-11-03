@@ -446,6 +446,25 @@ void test_mixer() {
     check(null.stats().callbacks > 0, "the device called the mixer");
 }
 
+// Not a check: what one 10 ms callback costs with every slot playing, 247
+// mono sounds at odd pitches and 8 stereo ones, for the report.
+void time_full_mixer() {
+    Mixer mixer;
+    const auto mono = tone(1, 48000 * 4, 1000);
+    const auto stereo = tone(2, 48000 * 4, 1000);
+    for (uint32_t slot = 0; slot < Mixer::kSlots; ++slot) {
+        const bool two = slot >= SoundEngine::kStaticVoices;
+        mixer.start(slot, two ? stereo : mono, 0.5f + 0.006f * static_cast<float>(slot), 0.3f, 0.2f, 0.25f,
+                    true);
+    }
+    std::vector<float> out(480 * 2);
+    for (int i = 0; i < 200; ++i) mixer.mix(out.data(), 480);
+    const auto stats = mixer.stats();
+    std::cout << std::format("mixer: 255 voices, 480 frames: {:.1f} us a callback on average, worst {:.1f} us\n",
+                             static_cast<double>(stats.nanoseconds) / static_cast<double>(stats.callbacks) / 1000.0,
+                             static_cast<double>(stats.worst_nanoseconds) / 1000.0);
+}
+
 // The engine against the player's own files, when the launcher has them.
 void test_engine_on_assets() {
     const auto store = mcpp::assets::ObjectStore::for_version(mcpp::protocol::kTargetVersionName);
@@ -668,6 +687,7 @@ int main() {
     test_footsteps();
     test_level_events();
     test_mixer();
+    time_full_mixer();
     test_engine_on_assets();
     if (failures == 0) std::cout << "all sound tests passed\n";
     return failures == 0 ? 0 : 1;
