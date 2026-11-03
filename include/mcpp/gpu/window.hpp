@@ -33,6 +33,7 @@ struct FrameInput {
     bool start_typing = false;
     bool submit_text = false;
     bool cancel_text = false;
+    bool toggle_fly = false;
 };
 
 // GLFW only for the surface and the key state; everything after the surface is
@@ -110,6 +111,7 @@ private:
     std::deque<std::chrono::steady_clock::time_point> right_clicks_;
     bool typing_ = false;
     bool chat_key_down_ = false;
+    bool fly_key_down_ = false;
     bool enter_down_ = false;
     bool escape_down_ = false;
     bool backspace_down_ = false;

@@ -19,6 +19,7 @@
 #include "mcpp/world/biomes.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/mesher.hpp"
+#include "mcpp/world/physics.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -456,6 +457,11 @@ int do_play(const std::string& target, size_t chunk_limit) {
     std::mutex chat_guard;
     std::vector<std::string> chat;
 
+    // Kept so the player has something to stand on; the mesher hands them over
+    // once it has turned them into triangles.
+    std::mutex world_guard;
+    std::map<std::pair<int32_t, int32_t>, mcpp::world::Chunk> world;
+
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
     events.on_chat = [&](std::string_view line) {
@@ -511,6 +517,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
     double mesh_ms = 0.0;
     const auto combined = mesh_world(chunks, table, &mesh_ms);
+    {
+        std::lock_guard lock(world_guard);
+        for (const auto& chunk : chunks) world.insert_or_assign({chunk.x, chunk.z}, chunk);
+    }
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options gpu_options;
@@ -588,8 +598,15 @@ int do_play(const std::string& target, size_t chunk_limit) {
             }
             double batch_ms = 0.0;
             auto pieces = mesh_world(arrived, table, &batch_ms);
+            const size_t count = arrived.size();
+            {
+                std::lock_guard lock(world_guard);
+                for (auto& chunk : arrived) {
+                    world.insert_or_assign({chunk.x, chunk.z}, std::move(chunk));
+                }
+            }
             std::lock_guard lock(ready_guard);
-            ready.push_back(Batch{std::move(pieces), arrived.size()});
+            ready.push_back(Batch{std::move(pieces), count});
         }
     });
 
@@ -601,8 +618,26 @@ int do_play(const std::string& target, size_t chunk_limit) {
     int menu_filter = -1;
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
-                 "  left control to sprint, t to chat, m for the feature menu, "
-                 "escape to leave\n";
+                 "  left control to sprint, f to fly, t to chat, m for the feature menu,\n"
+                 "  escape to leave\n";
+
+    mcpp::world::Body body;
+    body.x = eye[0];
+    body.y = eye[1] - mcpp::world::kEyeHeight;
+    body.z = eye[2];
+    bool flying = false;
+
+    // Unloaded counts as solid, so nobody falls out of the world while a chunk
+    // is still on its way.
+    const auto block_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
+        const int32_t index = y + 64;
+        if (index < 0) return 1;
+        std::lock_guard lock(world_guard);
+        const auto found = world.find({x >> 4, z >> 4});
+        if (found == world.end()) return -1;
+        if (index >= static_cast<int32_t>(found->second.sections.size()) * 16) return 0;
+        return found->second.block_state(x & 15, index, z & 15);
+    };
 
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
@@ -628,6 +663,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
             menu_open = !menu_open;
             window.capture_cursor(!menu_open);
         }
+        if (input.toggle_fly) flying = !flying;
         if (input.start_typing && !menu_open) window.begin_typing();
         if (window.typing()) {
             if (input.submit_text) {
@@ -658,11 +694,28 @@ int do_play(const std::string& target, size_t chunk_limit) {
                                   std::sin(yr) * std::cos(pr)};
         const float right[3] = {-std::sin(yr), 0.0f, std::cos(yr)};
 
-        const float speed = (input.sprint ? 46.0f : 14.0f) * dt;
-        for (int i = 0; i < 3; ++i) {
-            eye[i] += forward[i] * input.forward * speed + right[i] * input.right * speed;
+        if (flying) {
+            const float speed = (input.sprint ? 46.0f : 14.0f) * dt;
+            for (int i = 0; i < 3; ++i) {
+                eye[i] += forward[i] * input.forward * speed + right[i] * input.right * speed;
+            }
+            eye[1] += input.up * speed;
+            body.x = eye[0];
+            body.y = eye[1] - mcpp::world::kEyeHeight;
+            body.z = eye[2];
+            body.vx = body.vy = body.vz = 0.0;
+        } else {
+            mcpp::world::Intent intent;
+            intent.forward = input.forward;
+            intent.strafe = input.right;
+            intent.yaw_degrees = yaw;
+            intent.jump = input.up > 0.0f;
+            intent.sprint = input.sprint;
+            mcpp::world::step(body, intent, block_at, table, dt);
+            eye[0] = static_cast<float>(body.x);
+            eye[1] = static_cast<float>(body.y + mcpp::world::kEyeHeight);
+            eye[2] = static_cast<float>(body.z);
         }
-        eye[1] += input.up * speed;
 
         mcpp::gpu::Camera camera{};
         for (int i = 0; i < 3; ++i) {

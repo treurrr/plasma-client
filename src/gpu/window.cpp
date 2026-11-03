@@ -279,6 +279,10 @@ FrameInput Window::poll() {
     // game on the very next frame.
     input.quit = escape_edge;
 
+    const bool fly_now = down(GLFW_KEY_F);
+    input.toggle_fly = fly_now && !fly_key_down_;
+    fly_key_down_ = fly_now;
+
     const bool menu_now = down(GLFW_KEY_M);
     input.toggle_menu = menu_now && !menu_key_down_;
     menu_key_down_ = menu_now;

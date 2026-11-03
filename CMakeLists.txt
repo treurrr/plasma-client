@@ -87,6 +87,7 @@ add_library(mcpp_net STATIC
     src/world/chunk.cpp
     src/world/block_table.cpp
     src/world/mesher.cpp
+    src/world/physics.cpp
     src/world/atlas.cpp
     src/world/biomes.cpp
     src/gpu/device.cpp

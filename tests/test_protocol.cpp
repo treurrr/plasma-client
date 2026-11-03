@@ -6,6 +6,7 @@
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
 #include "mcpp/world/mesher.hpp"
+#include "mcpp/world/physics.hpp"
 
 #include <cassert>
 #include <filesystem>
@@ -325,9 +326,9 @@ void test_block_table() {
     std::filesystem::remove(path);
 }
 
-// One section of solid full cubes: every interior face must go, and exactly the
-// shell must stay. Chunk edges count as open, so all four sides are kept.
-void test_mesher_culls_interiors() {
+// A table with one block: state 1 is an opaque full cube, state 0 is air.
+// Both the mesher and the physics need one, and neither needs more.
+std::filesystem::path write_cube_table(const char* filename) {
     std::vector<uint8_t> file;
     const auto append = [&](const void* data, size_t bytes) {
         const auto* src = static_cast<const uint8_t*>(data);
@@ -357,7 +358,6 @@ void test_mesher_culls_interiors() {
         quad.tint = -1;
     }
     append(quads.data(), quads.size() * sizeof(mcpp::world::BakedQuad));
-
     append_u32s({0});                             // one texture, one block name
     append_u32s({0});
     append_u32s({0, 0});
@@ -367,12 +367,70 @@ void test_mesher_culls_interiors() {
     append(flags, sizeof(flags));
     append(strings.data(), strings.size());
 
-    const auto path = std::filesystem::temp_directory_path() / "plasma-test-mesher.plbk";
-    {
-        std::ofstream out(path, std::ios::binary);
-        out.write(reinterpret_cast<const char*>(file.data()),
-                  static_cast<std::streamsize>(file.size()));
+    const auto path = std::filesystem::temp_directory_path() / filename;
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(file.data()),
+              static_cast<std::streamsize>(file.size()));
+    return path;
+}
+
+// Ground at y below 64, open air above. Outside the columns we know about the
+// world is unloaded, which physics must treat as solid.
+void test_physics_stands_and_stops() {
+    const auto path = write_cube_table("plasma-test-physics.plbk");
+    mcpp::world::BlockTable table;
+    check(table.open(path), "the physics table opens");
+
+    const auto flat = [](int32_t, int32_t y, int32_t) -> int32_t { return y < 64 ? 1 : 0; };
+
+    mcpp::world::Body body;
+    body.x = 8.5;
+    body.y = 70.0;
+    body.z = 8.5;
+    for (int i = 0; i < 200; ++i) {
+        mcpp::world::step(body, {}, flat, table, 1.0 / 60.0);
     }
+    check(std::abs(body.y - 64.0) < 0.01,
+          std::format("a falling player lands on the floor, not through it: y={:.3f}", body.y));
+    check(body.on_ground, "and knows it is standing");
+
+    // A wall at x >= 10 stops a walk east without stopping the fall.
+    const auto walled = [](int32_t x, int32_t y, int32_t) -> int32_t {
+        if (y < 64) return 1;
+        return x >= 10 ? 1 : 0;
+    };
+    body = {};
+    body.x = 8.5;
+    body.y = 64.0;
+    body.z = 8.5;
+    mcpp::world::Intent intent;
+    intent.forward = 1.0;
+    intent.yaw_degrees = 90.0;    // facing east
+    for (int i = 0; i < 200; ++i) {
+        mcpp::world::step(body, intent, walled, table, 1.0 / 60.0);
+    }
+    check(body.x < 10.0 && body.x > 9.0,
+          std::format("a wall stops the walk at its face: x={:.3f}", body.x));
+    check(std::abs(body.y - 64.0) < 0.01, "and the player is still standing on the floor");
+
+    // Jumping leaves the ground and comes back to it.
+    intent = {};
+    intent.jump = true;
+    mcpp::world::step(body, intent, walled, table, 1.0 / 60.0);
+    check(!body.on_ground, "a jump leaves the ground");
+    intent.jump = false;
+    for (int i = 0; i < 200; ++i) {
+        mcpp::world::step(body, intent, walled, table, 1.0 / 60.0);
+    }
+    check(body.on_ground && std::abs(body.y - 64.0) < 0.01, "and lands back on it");
+
+    std::filesystem::remove(path);
+}
+
+// One section of solid full cubes: every interior face must go, and exactly the
+// shell must stay. Chunk edges count as open, so all four sides are kept.
+void test_mesher_culls_interiors() {
+    const auto path = write_cube_table("plasma-test-mesher.plbk");
 
     mcpp::world::BlockTable table;
     check(table.open(path), "the mesher's table opens");
@@ -464,6 +522,7 @@ int main() {
     test_paletted_container();
     test_block_table();
     test_mesher_culls_interiors();
+    test_physics_stands_and_stops();
     test_packet_tables();
     test_server_hash();
     test_stream_cipher();
