@@ -9,4 +9,8 @@ namespace client {
 // with what building its interface cost the cpu.
 int screenshot(const std::vector<std::string>& args);
 
+// `plasma-client clicktest <host:port> <console fifo> [name]`: inventory clicks
+// predicted here and checked against what the server does with them.
+int clicktest(const std::vector<std::string>& args);
+
 } // namespace client

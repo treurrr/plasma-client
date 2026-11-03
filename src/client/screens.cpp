@@ -2,12 +2,49 @@
 
 #include "mcpp/features.hpp"
 #include "mcpp/protocol_versions.hpp"
+#include "mcpp/ui/container_screen.hpp"
 #include "mcpp/ui/menu.hpp"
+
+#include <GLFW/glfw3.h>
 
 #include <format>
 #include <iostream>
 
 namespace client {
+namespace {
+
+int gui_scale_of(const Game& game) {
+    const auto& window = *game.window;
+    return mcpp::ui::gui_scale(static_cast<int>(window.width()), static_cast<int>(window.height()),
+                               game.screens.options.get_int("guiScale"), false);
+}
+
+// Copies what the server last said into the menu the screens click in. The
+// session already holds the client's prediction of every click it sent.
+void sync_menu(Game& game) {
+    auto& screens = game.screens;
+    const auto& inventory = game.session->inventory();
+    for (size_t i = 0; i < mcpp::Inventory::kSlots; ++i) screens.menu.slots[i] = inventory.slots[i];
+    screens.menu.carried = inventory.carried;
+    screens.menu.state_id = game.session->container_state();
+    screens.menu.creative = game.session->vitals().game_mode == 1;
+    screens.world.game_mode = game.session->vitals().game_mode;
+}
+
+void open_screen(Game& game, std::shared_ptr<mcpp::ui::Screen> screen) {
+    auto& screens = game.screens;
+    screens.manager.set_screen(std::move(screen));
+    screens.manager.apply_pending();
+    screens.opened = std::chrono::steady_clock::now();
+}
+
+bool bound(const Game& game, std::string_view name, int key) {
+    const auto* bind = game.screens.keybinds.find(name);
+    return bind != nullptr && bind->current.type == mcpp::InputKey::Type::Keyboard &&
+           bind->current.code == key;
+}
+
+} // namespace
 
 void screens_bind(Game& game, mcpp::SessionEvents& events) {
     events.ui.on_chat = [&game](std::string_view line) {
@@ -15,6 +52,11 @@ void screens_bind(Game& game, mcpp::SessionEvents& events) {
         std::lock_guard lock(screens.chat_guard);
         screens.chat.emplace_back(line);
         if (screens.chat.size() > 64) screens.chat.erase(screens.chat.begin());
+    };
+    events.ui.on_container_close = [&game](int32_t) {
+        if (dynamic_cast<mcpp::ui::AbstractContainerScreen*>(game.screens.manager.current())) {
+            game.screens.manager.close();
+        }
     };
 }
 
@@ -27,23 +69,121 @@ void screens_start(Game& game) {
         game.device, window.colour_format(),
         mcpp::gpu::UiRenderer::default_items_path(mcpp::protocol::kTargetProtocol),
         mcpp::gpu::UiRenderer::default_gui_path(mcpp::protocol::kTargetProtocol));
+
+    screens.lang.load(mcpp::Translations::default_path());
+    if (!screens.options.load(mcpp::Options::default_path())) {
+        if (const auto vanilla = mcpp::Options::vanilla_path()) screens.options.load(*vanilla);
+    }
+    screens.keybinds.load(screens.options);
+    screens.items.load(mcpp::ui::ItemTable::default_path(mcpp::protocol::kTargetProtocol));
+
+    auto& manager = screens.manager;
+    manager.lang = &screens.lang;
+    manager.options = &screens.options;
+    manager.keybinds = &screens.keybinds;
+    manager.in_world = true;
+    manager.world = &screens.world;
+    manager.key_name = [&game](std::string_view name) {
+        const auto* bind = game.screens.keybinds.find(name);
+        return bind != nullptr ? bind->current.name() : std::string(name);
+    };
+
+    auto& world = screens.world;
+    world.menu = &screens.menu;
+    world.items = &screens.items;
+    world.click = [&game](int slot, int button, mcpp::ui::ClickType type,
+                          const std::vector<std::pair<int16_t, mcpp::ItemStack>>& changed) {
+        auto& menu = game.screens.menu;
+        auto& session = *game.session;
+        session.send_container_click(menu.container_id, static_cast<int16_t>(slot),
+                                     static_cast<int8_t>(button), static_cast<int32_t>(type),
+                                     changed, menu.carried);
+        std::array<mcpp::ItemStack, mcpp::Inventory::kSlots> slots{};
+        for (size_t i = 0; i < slots.size() && i < menu.slots.size(); ++i) slots[i] = menu.slots[i];
+        session.predict_inventory(slots, menu.carried);
+    };
+    world.close_container = [&game](int container) {
+        game.session->send_container_close(container);
+    };
+    world.creative_set = [&game](int16_t slot, const mcpp::ItemStack& stack) {
+        game.session->send_creative_slot(slot, stack);
+    };
+    manager.platform.get_clipboard = [&window]() { return window.clipboard(); };
+    manager.platform.set_clipboard = [&window](const std::string& text) {
+        window.set_clipboard(text);
+    };
 }
 
 void screens_input(Game& game) {
     auto& screens = game.screens;
     auto& window = *game.window;
-    const auto& input = game.input;
+    auto& manager = screens.manager;
+    auto& input = game.input;
 
-    if (input.quit) {
-        screens.inventory_open = false;
-        screens.menu_open = false;
-        window.capture_cursor(true);
+    const int scale = gui_scale_of(game);
+    const double pixels = window.content_scale();
+    manager.resize(mcpp::ui::gui_extent(static_cast<int>(window.width()), scale),
+                   mcpp::ui::gui_extent(static_cast<int>(window.height()), scale));
+    sync_menu(game);
+
+    const double now = std::chrono::duration<double>(game.now.time_since_epoch()).count();
+    for (const auto& event : window.take_events()) {
+        using Type = mcpp::gpu::InputEvent::Type;
+        const double gx = event.x * pixels / scale;
+        const double gy = event.y * pixels / scale;
+        if (event.type == Type::Key) {
+            if (event.key == GLFW_KEY_LEFT_SHIFT || event.key == GLFW_KEY_RIGHT_SHIFT) {
+                manager.shift_down = event.action != GLFW_RELEASE;
+            }
+            if (event.key == GLFW_KEY_LEFT_CONTROL || event.key == GLFW_KEY_RIGHT_CONTROL) {
+                manager.control_down = event.action != GLFW_RELEASE;
+            }
+        }
+        if (manager.current() == nullptr) {
+            if (event.type == Type::Key && event.action == GLFW_PRESS && !window.typing() &&
+                !screens.menu_open && bound(game, "key.inventory", event.key)) {
+                open_screen(game, std::make_shared<mcpp::ui::InventoryScreen>());
+            }
+            continue;
+        }
+        switch (event.type) {
+        case Type::Key: manager.key(event.key, event.scancode, event.action, event.mods); break;
+        case Type::Char: manager.character(static_cast<uint32_t>(event.key), event.mods); break;
+        case Type::Button:
+            manager.button(event.key, event.action == GLFW_PRESS, event.mods, gx, gy, now);
+            break;
+        case Type::Scroll: manager.scroll(manager.mouse_x, manager.mouse_y, event.x, event.y); break;
+        case Type::Move: manager.move(gx, gy); break;
+        }
     }
-    if (input.toggle_menu) {
-        screens.menu_open = !screens.menu_open;
-        window.capture_cursor(!screens.menu_open && !screens.inventory_open);
+    manager.apply_pending();
+
+    const bool screen = manager.current() != nullptr;
+    screens.inventory_open = screen;
+    if (screen) {
+        // A screen has the keyboard and the pointer; the game sees nothing.
+        input.forward = input.right = input.up = 0.0f;
+        input.yaw_delta = input.pitch_delta = 0.0f;
+        input.sprint = input.sprint_key = input.jump = input.sneak = false;
+        input.attack = input.use = false;
+        input.attack_clicks = input.use_clicks = input.pick_item_clicks = 0;
+        input.drop = input.drop_stack = input.swap_offhand = false;
+        input.toggle_inventory = input.toggle_menu = input.toggle_fly = false;
+        input.start_typing = false;
+        input.wheel = 0;
+        input.pick_slot = -1;
+        input.screen_open = true;
     }
-    if (input.start_typing && !screens.menu_open) window.begin_typing();
+    window.capture_cursor(!screen && !screens.menu_open && !window.typing());
+
+    if (!screen) {
+        // The Plasma feature menu exists only in the Plasma profile.
+        const bool plasma = mcpp::features::Registry::instance().profile() ==
+                            mcpp::features::Profile::Plasma;
+        if (input.toggle_menu && plasma) screens.menu_open = !screens.menu_open;
+        if (input.quit) screens.menu_open = false;
+        if (input.start_typing && !screens.menu_open) window.begin_typing();
+    }
     if (window.typing()) {
         if (input.submit_text) {
             const auto line = window.typed();
@@ -67,16 +207,9 @@ void screens_tick(Game& game) {
     auto& session = *game.session;
     const auto& input = game.input;
 
-    if (input.toggle_inventory && !window.typing()) {
-        screens.inventory_open = !screens.inventory_open;
-        window.capture_cursor(!screens.inventory_open && !screens.menu_open);
-    }
-    if (input.toggle_menu && screens.inventory_open) {
-        screens.inventory_open = false;
-        window.capture_cursor(!screens.menu_open);
-    }
+    if (game.tick_due) screens.manager.tick();
 
-    if (!window.typing() && !screens.inventory_open) {
+    if (!window.typing() && screens.manager.current() == nullptr) {
         if (input.pick_slot >= 0) {
             session.send_held_slot(input.pick_slot);
         } else if (input.wheel != 0) {
@@ -130,18 +263,6 @@ void screens_draw(Game& game) {
         state.level = vitals.level;
         state.in_world = true;
         state.survival_bars = session.vitals().survival_bars();
-        state.inventory_open = screens.inventory_open;
-        state.pointer_x = input.cursor_x;
-        state.pointer_y = input.cursor_y;
-        for (size_t i = 0; i < mcpp::Inventory::kSlots; ++i) {
-            state.slots[i] = inventory.slots[i].id;
-            state.slot_counts[i] = inventory.slots[i].count;
-            state.slot_names[i] = inventory.slots[i].count > 0
-                                      ? item_display_name(quads.item_name(inventory.slots[i].id))
-                                      : std::string{};
-        }
-        state.cursor_item = inventory.carried.id;
-        state.cursor_count = inventory.carried.count;
         state.armour = 0;
         for (size_t i = 0; i < mcpp::Inventory::kArmourSlots; ++i) {
             const auto& piece = inventory.slots[mcpp::Inventory::kArmourFirst + i];
@@ -160,6 +281,17 @@ void screens_draw(Game& game) {
     quads.begin();
     mcpp::ui::draw_hud(quads, hud, static_cast<float>(window.width()),
                        static_cast<float>(window.height()), state);
+
+    if (auto* screen = screens.manager.current()) {
+        const int scale = gui_scale_of(game);
+        mcpp::ui::GuiGraphics gfx(quads, scale, screens.manager.gui_width,
+                                  screens.manager.gui_height, &screens.lang);
+        gfx.key_name = screens.manager.key_name;
+        gfx.seconds =
+            std::chrono::duration<double>(game.now - screens.opened).count();
+        screen->render_with_tooltip(gfx, screens.manager.mouse_x, screens.manager.mouse_y);
+    }
+
     if (screens.menu_open) {
         mcpp::ui::Pointer pointer{input.cursor_x, input.cursor_y, input.click};
         mcpp::ui::MenuState menu;
@@ -189,6 +321,10 @@ void screens_record(Game& game, VkCommandBuffer command, uint32_t width, uint32_
     game.screens.hud->record(command, width, height);
 }
 
-void screens_stop(Game&) {}
+void screens_stop(Game& game) {
+    auto& screens = game.screens;
+    screens.keybinds.store(screens.options);
+    screens.options.save(mcpp::Options::default_path());
+}
 
 } // namespace client

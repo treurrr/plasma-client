@@ -429,6 +429,13 @@ std::vector<InputEvent> Window::take_events() {
     return out;
 }
 
+std::string Window::clipboard() const {
+    const char* text = glfwGetClipboardString(window_);
+    return text != nullptr ? std::string(text) : std::string{};
+}
+
+void Window::set_clipboard(const std::string& text) { glfwSetClipboardString(window_, text.c_str()); }
+
 double Window::content_scale() const {
     int window_w = 0, window_h = 0, frame_w = 0, frame_h = 0;
     glfwGetWindowSize(window_, &window_w, &window_h);

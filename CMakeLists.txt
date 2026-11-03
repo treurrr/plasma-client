@@ -148,7 +148,8 @@ if(glfw3_FOUND)
         src/client/sound.cpp)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
-    src/client/common.cpp src/client/screenshot.cpp ${MCPP_PLAY_SOURCES})
+    src/client/common.cpp src/client/screenshot.cpp
+    src/client/clicktest.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
