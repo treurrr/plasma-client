@@ -578,6 +578,116 @@ int entityreplay(int argc, char** argv) {
     return 0;
 }
 
+// A crowd of players walking in a grid, for what entities cost: the tick,
+// the posing and the gpu, each against the same frame with no one in it.
+int entitybench(int argc, char** argv) {
+    const int count = argc > 2 ? std::stoi(argv[2]) : 200;
+    mcpp::entity::Assets assets;
+    mcpp::world::Atlas atlas;
+    if (!assets.open(mcpp::entity::Assets::default_path(kProtocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(kProtocol))) {
+        std::cerr << "baked data missing\n";
+        return 1;
+    }
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options gpu_options;
+    device.create(gpu_options);
+    mcpp::gpu::WorldRenderer world(device, 1280, 720, atlas);
+    mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
+    renderer.load(assets);
+    auto types = mcpp::entity::load_entity_types(mcpp::entity::default_registries_path(kProtocol));
+    int32_t player = -1;
+    for (size_t i = 0; i < types.size(); ++i) {
+        if (types[i] == "minecraft:player") player = static_cast<int32_t>(i);
+    }
+    mcpp::entity::Scene scene(types, nullptr);
+    scene.bind(renderer);
+    const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count))));
+    for (int i = 0; i < count; ++i) {
+        mcpp::Entity e;
+        e.id = i + 1;
+        e.type = player;
+        e.uuid[0] = 0x1234567800000000ull + static_cast<uint64_t>(i);
+        e.uuid[1] = 0x9abcdef000000000ull + static_cast<uint64_t>(i) * 7919;
+        e.x = (i % side) * 1.5;
+        e.z = 6.0 + (i / side) * 1.5;
+        mcpp::PlayerInfo info;
+        info.uuid = mcpp::uuid_string(e.uuid);
+        info.name = std::format("Plasma{}", i);
+        scene.player_info(info);
+        scene.add(e);
+    }
+    mcpp::gpu::Camera camera{};
+    camera.eye[0] = static_cast<float>(side) * 0.75f;
+    camera.eye[1] = 6.0f;
+    camera.eye[2] = 0.0f;
+    camera.target[0] = camera.eye[0];
+    camera.target[1] = 0.0f;
+    camera.target[2] = 6.0f + static_cast<float>(side) * 0.75f;
+    mcpp::entity::View view;
+    for (int axis = 0; axis < 3; ++axis) {
+        view.eye[axis] = camera.eye[axis];
+        view.forward[axis] = camera.target[axis] - camera.eye[axis];
+    }
+    const auto light = [](int32_t, int32_t, int32_t) -> std::array<uint8_t, 2> { return {15, 0}; };
+    bool draw_entities = true;
+    world.set_in_world([&](VkCommandBuffer command, const float* view_projection, uint32_t w,
+                           uint32_t h, const float* fog, const mcpp::gpu::Camera& cam) {
+        if (!draw_entities) return;
+        const double at[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
+        renderer.record(command, view_projection, at, w, h, fog, 0.0f, 0.0f);
+    });
+    double tick_ms = 0.0;
+    double pose_ms = 0.0;
+    double gpu_with = 0.0;
+    double gpu_without = 0.0;
+    constexpr int kFrames = 120;
+    for (int frame = 0; frame < kFrames; ++frame) {
+        const auto t0 = Clock::now();
+        for (int i = 0; i < count; ++i) {
+            mcpp::EntityMove m;
+            m.id = i + 1;
+            m.x = (i % side) * 1.5 + 0.2 * frame;
+            m.z = 6.0 + (i / side) * 1.5;
+            m.yaw = -90.0f;
+            m.has_position = m.has_rotation = true;
+            scene.moved(m);
+        }
+        scene.tick();
+        const auto t1 = Clock::now();
+        view.partial = 0.5f;
+        renderer.begin();
+        scene.draw(renderer, view, light);
+        const auto t2 = Clock::now();
+        draw_entities = true;
+        world.render(camera);
+        const double with = world.last_gpu_ms();
+        draw_entities = false;
+        world.render(camera);
+        const double without = world.last_gpu_ms();
+        if (frame >= 20) {
+            tick_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
+            pose_ms += std::chrono::duration<double, std::milli>(t2 - t1).count();
+            gpu_with += with;
+            gpu_without += without;
+        }
+    }
+    const double n = kFrames - 20;
+    std::cout << std::format(
+        "- {} players, {} drawn, {} part matrices a frame\n"
+        "- cpu: tick {:.3f} ms (packets and one tick), pose and queue {:.3f} ms a frame\n"
+        "- gpu: {:.3f} ms with them, {:.3f} ms without, {:.3f} ms for the players\n",
+        count, scene.stats().drawn, scene.stats().parts, tick_ms / n, pose_ms / n, gpu_with / n,
+        gpu_without / n, (gpu_with - gpu_without) / n);
+    if (argc > 3) {
+        draw_entities = true;
+        renderer.begin();
+        scene.draw(renderer, view, light);
+        mcpp::write_png(argv[3], 1280, 720, world.render(camera));
+    }
+    return 0;
+}
+
 } // namespace
 
 int entity_command(int argc, char** argv) {
@@ -587,6 +697,7 @@ int entity_command(int argc, char** argv) {
     if (command == "entitybot") return entitybot(argc, argv);
     if (command == "entityrecord") return entityrecord(argc, argv);
     if (command == "entityreplay") return entityreplay(argc, argv);
+    if (command == "entitybench") return entitybench(argc, argv);
     return -1;
 }
 
