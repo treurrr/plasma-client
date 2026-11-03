@@ -17,3 +17,4 @@ __pycache__/
 # Recorded worlds: server output, made locally with `plasma-client record`.
 /corpus/*
 !/corpus/README
+/.claude/
