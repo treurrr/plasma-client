@@ -72,48 +72,63 @@ const SoundEventDefinition* SoundIndex::find(std::string_view event) const {
     return found == events_.end() ? nullptr : &found->second;
 }
 
+void SoundIndex::prune(const std::function<bool(std::string_view)>& exists) {
+    for (auto& [name, definition] : events_) {
+        std::erase_if(definition.entries, [&](const SoundEntry& entry) {
+            return !entry.is_event && !exists(file_name(entry.name));
+        });
+    }
+}
+
 int32_t SoundIndex::total_weight(std::string_view event) const {
-    const auto* definition = find(event);
-    if (definition == nullptr) return 0;
+    return total_weight(find(event), 0);
+}
+
+int32_t SoundIndex::total_weight(const SoundEventDefinition* definition, int depth) const {
+    if (definition == nullptr || depth > kMaxDepth) return 0;
     int32_t total = 0;
-    for (const auto& entry : definition->entries) total += entry.weight;
+    for (const auto& entry : definition->entries) total += weight_of(entry, depth);
     return total;
+}
+
+// A reference weighs what the whole event it names weighs, not its own weight.
+int32_t SoundIndex::weight_of(const SoundEntry& entry, int depth) const {
+    return entry.is_event ? total_weight(find(entry.name), depth + 1) : entry.weight;
 }
 
 std::optional<ResolvedSound> SoundIndex::pick(std::string_view event,
                                               jmath::LegacyRandom& random) const {
-    return pick(event, random, 0);
+    auto sound = pick(find(event), random, 0);
+    if (sound) sound->event = std::string(bare_name(event));
+    return sound;
 }
 
-std::optional<ResolvedSound> SoundIndex::pick(std::string_view event, jmath::LegacyRandom& random,
-                                              int depth) const {
-    const auto* definition = find(event);
-    const int32_t total = total_weight(event);
-    if (definition == nullptr || total <= 0 || depth > kMaxDepth) return std::nullopt;
+std::optional<ResolvedSound> SoundIndex::pick(const SoundEventDefinition* definition,
+                                              jmath::LegacyRandom& random, int depth) const {
+    const int32_t total = total_weight(definition, depth);
+    if (definition == nullptr || definition->entries.empty() || total == 0) return std::nullopt;
     int32_t left = random.next_int(total);
-    const SoundEntry* chosen = &definition->entries.back();
     for (const auto& entry : definition->entries) {
-        left -= entry.weight;
-        if (left < 0) {
-            chosen = &entry;
-            break;
+        left -= weight_of(entry, depth);
+        if (left >= 0) continue;
+        if (!entry.is_event) {
+            ResolvedSound sound;
+            sound.file = file_name(entry.name);
+            sound.volume = entry.volume;
+            sound.pitch = entry.pitch;
+            sound.stream = entry.stream;
+            sound.attenuation_distance = entry.attenuation_distance;
+            sound.preload = entry.preload;
+            return sound;
         }
+        auto sound = pick(find(entry.name), random, depth + 1);
+        if (!sound) return std::nullopt;
+        sound->volume *= entry.volume;
+        sound->pitch *= entry.pitch;
+        sound->stream = sound->stream || entry.stream;
+        return sound;
     }
-    ResolvedSound sound;
-    if (chosen->is_event) {
-        auto inner = pick(chosen->name, random, depth + 1);
-        if (!inner) return std::nullopt;
-        sound = std::move(*inner);
-    } else {
-        sound.file = file_name(chosen->name);
-        sound.stream = chosen->stream;
-        sound.attenuation_distance = chosen->attenuation_distance;
-        sound.preload = chosen->preload;
-    }
-    sound.event = std::string(bare_name(event));
-    sound.volume *= chosen->volume;
-    sound.pitch *= chosen->pitch;
-    return sound;
+    return std::nullopt;
 }
 
 } // namespace mcpp::audio

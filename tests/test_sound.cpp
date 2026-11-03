@@ -86,13 +86,16 @@ constexpr std::string_view kSounds = R"({
                     "preload": true}]
     },
     "music.test": {"sounds": [{"name": "other:music/song", "stream": true}]},
-    "block.empty": {"sounds": []}
+    "block.empty": {"sounds": []},
+    "block.test.dangling": {"sounds": ["step/stone1", {"name": "no.such.event", "type": "event"}]},
+    "block.test.mixed": {"sounds": [{"name": "block.test.step", "type": "event", "stream": true},
+                                    "step/gone"]}
 })";
 
 void test_sounds_json() {
     SoundIndex index;
     index.parse(kSounds);
-    check(index.size() == 5, "five events");
+    check(index.size() == 7, "seven events");
     const auto* step = index.find("minecraft:block.test.step");
     check(step != nullptr && step->entries.size() == 2, "both entries of an event");
     check(step && step->subtitle == "subtitles.block.generic.footsteps", "the subtitle key");
@@ -100,6 +103,16 @@ void test_sounds_json() {
     check(step && near(step->entries[1].volume, 0.5) && near(step->entries[0].volume, 1.0),
           "volume defaults to one");
     check(index.total_weight("block.test.step") == 4, "total weight");
+    check(index.total_weight("block.test.alias") == 4, "a reference weighs what its event weighs");
+    check(index.total_weight("block.test.dangling") == 1, "a reference to nothing weighs nothing");
+    check(index.total_weight("block.test.mixed") == 5, "before the missing file is dropped");
+    index.prune([](std::string_view file) { return file != "minecraft/sounds/step/gone.ogg"; });
+    check(index.total_weight("block.test.mixed") == 4, "a file the assets lack is dropped");
+    {
+        jmath::LegacyRandom seeded(3);
+        const auto mixed = index.pick("block.test.mixed", seeded);
+        check(mixed && mixed->stream, "a reference's stream flag carries over");
+    }
     const auto* portal = index.find("block.portal.ambient");
     check(portal && portal->entries[0].attenuation_distance == 10 && portal->entries[0].stream &&
               portal->entries[0].preload,
@@ -250,6 +263,51 @@ void test_engine_on_assets() {
     SoundIndex index;
     index.parse(std::string_view(reinterpret_cast<const char*>(text->data()), text->size()));
     check(index.size() == 1837, std::format("1837 events in sounds.json, got {}", index.size()));
+    index.prune([&](std::string_view name) { return store->find(name) != nullptr; });
+    // Each row is what an independent Java implementation of the game's
+    // weighted pick, run on java.util.Random over the same sounds.json, chose.
+    // music.creative mixes references to music.game with its own tracks, so
+    // it only comes out right when a reference weighs its whole event.
+    const struct {
+        const char* event;
+        int64_t seed;
+        int32_t total;
+        const char* file;
+        float volume;
+        float pitch;
+        bool stream;
+    } oracle[] = {
+        {"music.creative", 0LL, 33, "music/game/wet_hands", 1.0f, 1.0f, true},
+        {"music.creative", 42LL, 33, "music/game/creative/blind_spots", 1.0f, 1.0f, true},
+        {"music.creative", -4490259591351732256LL, 33, "music/game/dry_hands", 1.0f, 1.0f, true},
+        {"music.creative", 7LL, 33, "music/game/broken_clocks", 0.4f, 1.0f, true},
+        {"block.note_block.imitate.creeper", 7LL, 1, "random/fuse", 1.0f, 0.5f, false},
+        {"ambient.basalt_deltas.additions", 123456789LL, 574,
+         "ambient/nether/basalt_deltas/long_debris1", 0.35f, 1.0f, false},
+        {"ambient.basalt_deltas.additions", -1LL, 574, "ambient/nether/basalt_deltas/debris3",
+         0.35f, 1.0f, false},
+        {"block.anvil.land", 5LL, 1, "random/anvil_land", 0.5f, 1.0f, false},
+        {"block.cave_vines.pick_berries", 99LL, 2, "item/sweet_berries/pick_from_bush1", 1.0f,
+         1.0f, false},
+        {"ambient.cave", -2678199317400689785LL, 23, "ambient/cave/cave6", 1.0f, 1.0f, false},
+        {"block.stone.step", -7939870404668536451LL, 6, "step/stone4", 1.0f, 1.0f, false},
+        {"intentionally_empty", 1LL, 0, nullptr, 0.0f, 0.0f, false},
+    };
+    for (const auto& row : oracle) {
+        jmath::LegacyRandom seeded(row.seed);
+        const auto sound = index.pick(row.event, seeded);
+        check(index.total_weight(row.event) == row.total,
+              std::format("{} weighs {}", row.event, row.total));
+        if (row.file == nullptr) {
+            check(!sound, std::format("{} plays nothing", row.event));
+            continue;
+        }
+        check(sound && sound->file == std::format("minecraft/sounds/{}.ogg", row.file) &&
+                  near(sound->volume, row.volume) && near(sound->pitch, row.pitch) &&
+                  sound->stream == row.stream,
+              std::format("{} with seed {} picks {}, got {}", row.event, row.seed, row.file,
+                          sound ? sound->file : std::string("nothing")));
+    }
     size_t subtitles = 0;
     for (const auto* name : {"block.anvil.land", "block.note_block.harp", "ambient.cave"}) {
         check(index.find(name) != nullptr, name);

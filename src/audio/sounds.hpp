@@ -1,6 +1,7 @@
 #pragma once
 #include "mcpp/jmath.hpp"
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -50,7 +51,11 @@ public:
 
     size_t size() const { return events_.size(); }
     const SoundEventDefinition* find(std::string_view event) const;
-    // The event's weights summed: what nextInt is asked for.
+    // Drops the files the player's assets do not have, as the game does when
+    // it loads sounds.json; what is left decides the weights.
+    void prune(const std::function<bool(std::string_view)>& exists);
+    // The event's weights summed: what nextInt is asked for. A reference to
+    // another event counts that event's whole weight.
     int32_t total_weight(std::string_view event) const;
     // Picks a variant the way the weights say, one draw per level, following
     // event references to the file they end in. Nothing when the event is not
@@ -58,8 +63,10 @@ public:
     std::optional<ResolvedSound> pick(std::string_view event, jmath::LegacyRandom& random) const;
 
 private:
-    std::optional<ResolvedSound> pick(std::string_view event, jmath::LegacyRandom& random,
-                                      int depth) const;
+    std::optional<ResolvedSound> pick(const SoundEventDefinition* definition,
+                                      jmath::LegacyRandom& random, int depth) const;
+    int32_t total_weight(const SoundEventDefinition* definition, int depth) const;
+    int32_t weight_of(const SoundEntry& entry, int depth) const;
     std::map<std::string, SoundEventDefinition, std::less<>> events_;
 };
 
