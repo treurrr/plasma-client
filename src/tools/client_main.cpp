@@ -453,8 +453,16 @@ int do_play(const std::string& target, size_t chunk_limit) {
     float spawn_pitch = 0.0f;
     bool placed = false;
 
+    std::mutex chat_guard;
+    std::vector<std::string> chat;
+
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.on_chat = [&](std::string_view line) {
+        std::lock_guard lock(chat_guard);
+        chat.emplace_back(line);
+        if (chat.size() > 64) chat.erase(chat.begin());
+    };
     events.on_position = [&](double x, double y, double z, float yaw, float pitch) {
         spawn[0] = x;
         spawn[1] = y;
@@ -593,7 +601,8 @@ int do_play(const std::string& target, size_t chunk_limit) {
     int menu_filter = -1;
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
-                 "  left control to sprint, m for the feature menu, escape to leave\n";
+                 "  left control to sprint, t to chat, m for the feature menu, "
+                 "escape to leave\n";
 
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
@@ -610,10 +619,30 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
     while (window.open() && !g_stop.load()) {
         const auto input = window.poll();
-        if (input.quit) break;
+        if (input.quit) {
+            if (!menu_open) break;
+            menu_open = false;
+            window.capture_cursor(true);
+        }
         if (input.toggle_menu) {
             menu_open = !menu_open;
             window.capture_cursor(!menu_open);
+        }
+        if (input.start_typing && !menu_open) window.begin_typing();
+        if (window.typing()) {
+            if (input.submit_text) {
+                const auto line = window.typed();
+                if (!line.empty()) {
+                    try {
+                        session.send_chat(line);
+                    } catch (const std::exception& error) {
+                        std::cerr << std::format("chat failed: {}\n", error.what());
+                    }
+                }
+                window.end_typing();
+            } else if (input.cancel_text) {
+                window.end_typing();
+            }
         }
 
         const auto now = std::chrono::steady_clock::now();
@@ -715,6 +744,12 @@ int do_play(const std::string& target, size_t chunk_limit) {
         state.jump = input.up > 0.0f;
         state.sections = renderer.drawn_sections();
         state.entities = session.entity_count();
+        state.typing = window.typing();
+        state.compose = window.typed();
+        {
+            std::lock_guard lock(chat_guard);
+            state.chat = chat;
+        }
 
         hud.begin();
         quads.begin();

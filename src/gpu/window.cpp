@@ -72,6 +72,15 @@ Window::Window(Device& device, uint32_t width, uint32_t height, const std::strin
                                nullptr, nullptr);
     if (window_ == nullptr) throw std::runtime_error("could not create a window");
 
+    glfwSetWindowUserPointer(window_, this);
+    glfwSetCharCallback(window_, [](GLFWwindow* handle, unsigned int code) {
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
+        if (self == nullptr || !self->typing_) return;
+        if (code >= 32 && code < 127 && self->typed_.size() < 256) {
+            self->typed_ += static_cast<char>(code);
+        }
+    });
+
     check(glfwCreateWindowSurface(device_.instance(), window_, nullptr, &surface_),
           "glfwCreateWindowSurface");
 
@@ -237,6 +246,28 @@ FrameInput Window::poll() {
     FrameInput input;
 
     const auto down = [&](int key) { return glfwGetKey(window_, key) == GLFW_PRESS; };
+
+    const bool enter = down(GLFW_KEY_ENTER);
+    const bool escape = down(GLFW_KEY_ESCAPE);
+    const bool backspace = down(GLFW_KEY_BACKSPACE);
+    const bool enter_edge = enter && !enter_down_;
+    const bool escape_edge = escape && !escape_down_;
+    const bool backspace_edge = backspace && !backspace_down_;
+    enter_down_ = enter;
+    escape_down_ = escape;
+    backspace_down_ = backspace;
+
+    if (typing_) {
+        input.submit_text = enter_edge;
+        input.cancel_text = escape_edge;
+        if (backspace_edge && !typed_.empty()) typed_.pop_back();
+        return input;
+    }
+
+    const bool chat_now = down(GLFW_KEY_T);
+    input.start_typing = chat_now && !chat_key_down_;
+    chat_key_down_ = chat_now;
+
     if (down(GLFW_KEY_W)) input.forward += 1.0f;
     if (down(GLFW_KEY_S)) input.forward -= 1.0f;
     if (down(GLFW_KEY_D)) input.right += 1.0f;
@@ -244,7 +275,9 @@ FrameInput Window::poll() {
     if (down(GLFW_KEY_SPACE)) input.up += 1.0f;
     if (down(GLFW_KEY_LEFT_SHIFT)) input.up -= 1.0f;
     input.sprint = down(GLFW_KEY_LEFT_CONTROL);
-    input.quit = down(GLFW_KEY_ESCAPE);
+    // Edge-triggered, or leaving a chat line with escape would also leave the
+    // game on the very next frame.
+    input.quit = escape_edge;
 
     const bool menu_now = down(GLFW_KEY_M);
     input.toggle_menu = menu_now && !menu_key_down_;
@@ -275,6 +308,18 @@ FrameInput Window::poll() {
     while (!left_clicks_.empty() && left_clicks_.front() < second_ago) left_clicks_.pop_front();
     while (!right_clicks_.empty() && right_clicks_.front() < second_ago) right_clicks_.pop_front();
     return input;
+}
+
+void Window::begin_typing() {
+    typing_ = true;
+    typed_.clear();
+    capture_cursor(false);
+}
+
+void Window::end_typing() {
+    typing_ = false;
+    typed_.clear();
+    capture_cursor(true);
 }
 
 int Window::clicks_per_second(bool right_button) const {

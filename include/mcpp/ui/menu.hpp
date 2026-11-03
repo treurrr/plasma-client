@@ -3,6 +3,7 @@
 #include "mcpp/gpu/ui.hpp"
 
 #include <string>
+#include <vector>
 
 namespace mcpp::ui {
 
@@ -43,6 +44,10 @@ struct HudState {
     bool jump = false;
     size_t sections = 0;
     size_t entities = 0;
+    // Newest last. Only the last few are drawn.
+    std::vector<std::string> chat;
+    bool typing = false;
+    std::string compose;
 };
 
 void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,

@@ -30,6 +30,9 @@ struct FrameInput {
     bool click = false;
     // Edge-triggered: true on the frame the key goes down, not while held.
     bool toggle_menu = false;
+    bool start_typing = false;
+    bool submit_text = false;
+    bool cancel_text = false;
 };
 
 // GLFW only for the surface and the key state; everything after the surface is
@@ -56,6 +59,12 @@ public:
     bool cursor_captured() const { return cursor_captured_; }
     // Clicks in the last second, which is what every pvp client calls cps.
     int clicks_per_second(bool right_button) const;
+    // While typing, the keyboard belongs to the line being written and not to
+    // the player's movement.
+    void begin_typing();
+    void end_typing();
+    bool typing() const { return typing_; }
+    const std::string& typed() const { return typed_; }
     // `overlay`, when given, is recorded over the swapchain image after the
     // world, at screen resolution rather than scaled up from the render target.
     using Overlay = std::function<void(VkCommandBuffer, uint32_t, uint32_t)>;
@@ -99,6 +108,12 @@ private:
     bool right_down_ = false;
     std::deque<std::chrono::steady_clock::time_point> left_clicks_;
     std::deque<std::chrono::steady_clock::time_point> right_clicks_;
+    bool typing_ = false;
+    bool chat_key_down_ = false;
+    bool enter_down_ = false;
+    bool escape_down_ = false;
+    bool backspace_down_ = false;
+    std::string typed_;
     bool cursor_captured_ = false;
     double last_frame_ms_ = 0.0;
 };

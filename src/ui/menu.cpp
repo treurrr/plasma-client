@@ -353,6 +353,27 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
         cap("SPACE", base_x, base_y + 62.0f, 100.0f, 20.0f, state.jump);
     }
 
+    // Chat sits above the keystrokes, oldest at the top, the way the game puts
+    // it, and the line being written stays visible while it is written.
+    {
+        constexpr size_t kLines = 8;
+        const size_t first = state.chat.size() > kLines ? state.chat.size() - kLines : 0;
+        float line_y = kDesignHeight - 168.0f -
+                       static_cast<float>(state.chat.size() - first) * 17.0f;
+        for (size_t i = first; i < state.chat.size(); ++i) {
+            const float w = paint.measure(state.chat[i], 12.0f) + 16.0f;
+            paint.rect(24.0f, line_y - 3.0f, w, 19.0f, 4.0f, 0x08080A99u);
+            paint.middle(state.chat[i], 32.0f, line_y + 6.5f, 12.0f, 0xE4E6E9FFu);
+            line_y += 17.0f;
+        }
+        if (state.typing) {
+            const std::string line = state.compose + "_";
+            const float w = std::max(paint.measure(line, 12.5f) + 20.0f, 260.0f);
+            paint.rect(24.0f, kDesignHeight - 164.0f, w, 24.0f, 6.0f, kGlass, kAccentLit, 1.0f);
+            paint.middle(line, 34.0f, kDesignHeight - 152.0f, 12.5f, kText);
+        }
+    }
+
     const std::string trace = std::format("{} sections   {} entities", state.sections,
                                           state.entities);
     paint.right(trace, kDesignWidth - 24.0f, kDesignHeight - 28.0f, 10.0f, 0xC8CCD2CCu,
