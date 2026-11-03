@@ -3,6 +3,7 @@
 #include "mcpp/packet_io.hpp"
 #include "mcpp/nbt.hpp"
 #include "mcpp/proto/packet_ids.hpp"
+#include "mcpp/registries.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/translations.hpp"
 #include "mcpp/world/biomes.hpp"
@@ -151,6 +152,8 @@ public:
     // Biomes in the order the server sent them, which is the order a chunk's
     // palette indexes into.
     const world::BiomeTable& biomes() const { return biomes_; }
+    // Every registry the server sent in configuration.
+    const Registries& registries() const { return registries_; }
     const Inventory& inventory() const { return inventory_; }
 
     // What the hud shows about the player. Health and food are in half units,
@@ -194,6 +197,7 @@ private:
     bool light_format_warned_ = false;
     bool slot_format_warned_ = false;
     Inventory inventory_;
+    Registries registries_;
     Vitals vitals_;
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;

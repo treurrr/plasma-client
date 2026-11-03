@@ -1829,6 +1829,48 @@ int do_uishot(const std::string& out_path) {
     return 0;
 }
 
+// Joins and says what the server sent, without drawing anything, so a mistake
+// in the data is visible rather than plausible-looking on screen.
+int do_inspect(const std::string& target) {
+    const auto address = parse_address(target);
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    std::string username = "PlasmaShot";
+    options.profile = signed_in_profile(username);
+    options.username = username;
+    bool in_world = false;
+    mcpp::SessionEvents events;
+    events.on_position = [&](double, double, double, float, float) { in_world = true; };
+    mcpp::Session session(options, events);
+    session.connect();
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (!in_world && std::chrono::steady_clock::now() < until) {
+        try {
+            if (!session.pump()) break;
+        } catch (const mcpp::TimeoutError&) {
+            break;
+        }
+    }
+    session.close();
+
+    const auto& registries = session.registries();
+    size_t with_bodies = 0;
+    size_t entries = 0;
+    for (const auto& [name, list] : registries.all()) {
+        entries += list.size();
+        for (const auto& entry : list) {
+            if (entry.data.has_value()) ++with_bodies;
+        }
+    }
+    std::cout << std::format("{} registries, {} entries, {} of them with a body\n",
+                             registries.size(), entries, with_bodies);
+    for (const auto& [name, list] : registries.all()) {
+        std::cout << std::format("  {:5}  {}\n", list.size(), name);
+    }
+    return 0;
+}
+
 int do_render(const std::string& out_path, uint32_t width, uint32_t height) {
     using clock = std::chrono::steady_clock;
     const auto ms = [](auto from, auto to) {
@@ -2686,6 +2728,9 @@ int main(int argc, char** argv) {
             const std::string overlay = command == "worldshot" ? "none"
                                                                : command.substr(0, 4);
             return do_worldshot(argv[2], out, limit, view, overlay);
+        }
+        if (command == "inspect" && argc > 2) {
+            return do_inspect(argv[2]);
         }
         if (command == "uishot") {
             return do_uishot(argc > 2 ? argv[2] : "ui.png");

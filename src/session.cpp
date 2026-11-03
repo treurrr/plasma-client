@@ -349,53 +349,64 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
         return true;
     }
     if (packet.id == cb.registry_data) {
-        const std::string registry = in.read_string();
+        // Read every registry whole, whatever it is, and keep it: the order of
+        // its entries is what ids elsewhere index into.
+        std::string registry = in.read_string();
         const int32_t count = in.read_varint();
         if (count < 0) fail("negative registry entry count");
-        if (registry != "minecraft:worldgen/biome") return true;
-
-        biomes_.clear();
+        std::vector<RegistryEntry> entries;
+        entries.reserve(static_cast<size_t>(count));
         for (int32_t i = 0; i < count; ++i) {
-            world::Biome biome;
-            biome.name = in.read_string();
-            if (in.read_bool()) {
-                const auto tag = nbt::read_network_tag(in);
-                if (const auto* value = tag.find("temperature"); value != nullptr) {
-                    biome.temperature = static_cast<float>(value->as_double().value_or(0.5));
-                }
-                if (const auto* value = tag.find("downfall"); value != nullptr) {
-                    biome.downfall = static_cast<float>(value->as_double().value_or(0.5));
-                }
-                if (const auto* effects = tag.find("effects"); effects != nullptr) {
-                    if (const auto* value = effects->find("grass_color"); value != nullptr) {
-                        if (const auto rgb = read_colour(*value)) {
-                            biome.fixed_grass = true;
-                            biome.grass = *rgb;
-                        }
-                    }
-                    if (const auto* value = effects->find("foliage_color"); value != nullptr) {
-                        if (const auto rgb = read_colour(*value)) {
-                            biome.fixed_foliage = true;
-                            biome.foliage = *rgb;
-                        }
-                    }
-                    if (const auto* value = effects->find("grass_color_modifier");
-                        value != nullptr) {
-                        const std::string* kind = value->as_string();
-                        if (kind != nullptr && *kind == "swamp") {
-                            biome.grass_modifier = world::Biome::GrassModifier::Swamp;
-                        } else if (kind != nullptr && *kind == "dark_forest") {
-                            biome.grass_modifier = world::Biome::GrassModifier::DarkForest;
-                        }
-                    }
-                    if (const auto* value = effects->find("water_color"); value != nullptr) {
-                        biome.water = read_colour(*value).value_or(0x3F76E4u);
-                    }
-                }
-            }
-            biomes_.add(std::move(biome));
+            RegistryEntry entry;
+            entry.name = in.read_string();
+            if (in.read_bool()) entry.data = nbt::read_network_tag(in);
+            entries.push_back(std::move(entry));
         }
-        status(std::format("{} biomes from the server", biomes_.size()));
+        if (registry == "minecraft:worldgen/biome") {
+            biomes_.clear();
+            for (const auto& entry : entries) {
+                world::Biome biome;
+                biome.name = entry.name;
+                if (entry.data.has_value()) {
+                    const auto& tag = *entry.data;
+                    if (const auto* value = tag.find("temperature"); value != nullptr) {
+                        biome.temperature = static_cast<float>(value->as_double().value_or(0.5));
+                    }
+                    if (const auto* value = tag.find("downfall"); value != nullptr) {
+                        biome.downfall = static_cast<float>(value->as_double().value_or(0.5));
+                    }
+                    if (const auto* effects = tag.find("effects"); effects != nullptr) {
+                        if (const auto* value = effects->find("grass_color"); value != nullptr) {
+                            if (const auto rgb = read_colour(*value)) {
+                                biome.fixed_grass = true;
+                                biome.grass = *rgb;
+                            }
+                        }
+                        if (const auto* value = effects->find("foliage_color"); value != nullptr) {
+                            if (const auto rgb = read_colour(*value)) {
+                                biome.fixed_foliage = true;
+                                biome.foliage = *rgb;
+                            }
+                        }
+                        if (const auto* value = effects->find("grass_color_modifier");
+                            value != nullptr) {
+                            const std::string* kind = value->as_string();
+                            if (kind != nullptr && *kind == "swamp") {
+                                biome.grass_modifier = world::Biome::GrassModifier::Swamp;
+                            } else if (kind != nullptr && *kind == "dark_forest") {
+                                biome.grass_modifier = world::Biome::GrassModifier::DarkForest;
+                            }
+                        }
+                        if (const auto* value = effects->find("water_color"); value != nullptr) {
+                            biome.water = read_colour(*value).value_or(0x3F76E4u);
+                        }
+                    }
+                }
+                biomes_.add(std::move(biome));
+            }
+            status(std::format("{} biomes from the server", biomes_.size()));
+        }
+        registries_.set(std::move(registry), std::move(entries));
         return true;
     }
     if (packet.id == cb.resource_pack_push) {
