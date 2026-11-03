@@ -545,7 +545,7 @@ void WorldRenderer::create_pipeline() {
     VkVertexInputAttributeDescription attributes[3]{};
     attributes[0] = {0, 0, VK_FORMAT_R16G16B16A16_UINT, offsetof(world::Vertex, position)};
     attributes[1] = {1, 0, VK_FORMAT_R16G16_UNORM, offsetof(world::Vertex, uv)};
-    attributes[2] = {2, 0, VK_FORMAT_R16_UINT, offsetof(world::Vertex, texture)};
+    attributes[2] = {2, 0, VK_FORMAT_R16G16_UINT, offsetof(world::Vertex, texture)};
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
