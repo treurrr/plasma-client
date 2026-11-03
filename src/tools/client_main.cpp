@@ -250,7 +250,7 @@ std::vector<mcpp::world::Chunk> load_chunks(const Address& address, size_t limit
     if (!quiet) {
         events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
     }
-    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+    events.world.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         std::lock_guard lock(guard);
         if (chunks.size() < limit) chunks.push_back(chunk);
         if (chunks.size() >= limit) enough.store(true);
@@ -459,7 +459,7 @@ int do_record(const std::string& target, const std::string& file, size_t chunk_l
     size_t chunks = 0;
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
-    events.on_chunk = [&](const mcpp::world::Chunk&) { ++chunks; };
+    events.world.on_chunk = [&](const mcpp::world::Chunk&) { ++chunks; };
     mcpp::Session session(options, events);
     session.connect();
     std::optional<std::chrono::steady_clock::time_point> enough;
@@ -650,12 +650,12 @@ int do_play(const std::string& target, size_t chunk_limit) {
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
 
-    events.on_chat = [&](std::string_view line) {
+    events.ui.on_chat = [&](std::string_view line) {
         std::lock_guard lock(chat_guard);
         chat.emplace_back(line);
         if (chat.size() > 64) chat.erase(chat.begin());
     };
-    events.on_position = [&](double x, double y, double z, float yaw, float pitch) {
+    events.player.on_position = [&](double x, double y, double z, float yaw, float pitch) {
         spawn[0] = x;
         spawn[1] = y;
         spawn[2] = z;
@@ -666,18 +666,18 @@ int do_play(const std::string& target, size_t chunk_limit) {
     };
     std::vector<mcpp::world::Chunk> pending;
     std::set<std::pair<int32_t, int32_t>> seen;
-    events.on_entity_add = [&](const mcpp::Entity& entity) {
+    events.entities.on_add = [&](const mcpp::Entity& entity) {
         std::cout << std::format("- entity {} of type {} appeared at {:.2f} {:.2f} {:.2f}\n",
                                  entity.id, entity.type, entity.x, entity.y, entity.z);
     };
-    events.on_entity_remove = [&](int32_t id) {
+    events.entities.on_remove = [&](int32_t id) {
         std::cout << std::format("- entity {} gone\n", id);
     };
     // Chunks whose geometry stopped matching the world. A set, because a wall
     // of changes in one chunk is still one remesh.
     std::set<std::pair<int32_t, int32_t>> dirty;
     std::mutex dirty_guard;
-    events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
+    events.world.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const int32_t chunk_x = x >> 4;
         const int32_t chunk_z = z >> 4;
         std::set<std::pair<int32_t, int32_t>> relit;
@@ -703,7 +703,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
     // Chunks let go while the mesher may still be holding them. It checks this
     // after meshing, so a chunk forgotten mid-flight does not come back.
     std::set<std::pair<int32_t, int32_t>> gone;
-    events.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
+    events.world.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
         {
             std::lock_guard lock(world_guard);
             world.erase({chunk_x, chunk_z});
@@ -726,7 +726,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
     // A new dimension is a new world: nothing the client held is still there.
     // Every chunk goes the way a forgotten one goes, so the renderer hands back
     // its room and the mesher drops anything it is still holding.
-    events.on_respawn = [&](const mcpp::Dimension&) {
+    events.world.on_respawn = [&](const mcpp::Dimension&) {
         std::vector<std::pair<int32_t, int32_t>> held;
         {
             std::lock_guard lock(world_guard);
@@ -736,10 +736,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
             std::lock_guard lock(guard);
             for (const auto& chunk : pending) held.emplace_back(chunk.x, chunk.z);
         }
-        for (const auto& [chunk_x, chunk_z] : held) events.on_chunk_forget(chunk_x, chunk_z);
+        for (const auto& [chunk_x, chunk_z] : held) events.world.on_chunk_forget(chunk_x, chunk_z);
     };
 
-    events.on_chunk_area = [&](int32_t centre_x, int32_t centre_z, int32_t radius) {
+    events.world.on_chunk_area = [&](int32_t centre_x, int32_t centre_z, int32_t radius) {
         // A couple of chunks of slack past the edge: dropping one the server
         // still counts as ours leaves a hole until it is sent again, and
         // keeping one a little longer costs only memory.
@@ -755,11 +755,11 @@ int do_play(const std::string& target, size_t chunk_limit) {
             }
         }
         for (const auto& [chunk_x, chunk_z] : outside) {
-            events.on_chunk_forget(chunk_x, chunk_z);
+            events.world.on_chunk_forget(chunk_x, chunk_z);
         }
     };
 
-    events.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
+    events.world.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
         {
             std::lock_guard lock(world_guard);
             const auto found = world.find({chunk_x, chunk_z});
@@ -770,7 +770,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
         dirty.insert({chunk_x, chunk_z});
     };
 
-    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+    events.world.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         std::lock_guard lock(guard);
         // A server re-sends a chunk whenever it changes. Without this the same
         // geometry is appended again and again until the buffer is full.
@@ -1415,7 +1415,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
 
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
-    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+    events.world.on_chunk = [&](const mcpp::world::Chunk& chunk) {
     std::lock_guard lock(guard);
     if (chunks.size() < chunk_limit) chunks.push_back(chunk);
     if (chunks.size() >= chunk_limit) enough.store(true);
@@ -1862,7 +1862,7 @@ int do_inspect(const std::string& target) {
     options.username = username;
     bool in_world = false;
     mcpp::SessionEvents events;
-    events.on_position = [&](double, double, double, float, float) { in_world = true; };
+    events.player.on_position = [&](double, double, double, float, float) { in_world = true; };
     mcpp::Session session(options, events);
     session.connect();
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(8);
@@ -2071,27 +2071,27 @@ int do_digtest(const std::string& target) {
 
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
-    events.on_position = [&](double x, double y, double z, float, float) {
+    events.player.on_position = [&](double x, double y, double z, float, float) {
         spawn[0] = x;
         spawn[1] = y;
         spawn[2] = z;
         placed = true;
     };
-    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+    events.world.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         world.insert_or_assign({chunk.x, chunk.z}, chunk);
         if (world.size() >= 25 && placed) ready.store(true);
     };
     mcpp::world::LightEngine light(table);
     std::vector<std::string> said_in_chat;
     std::vector<std::string> said_over_hotbar;
-    events.on_chat = [&](std::string_view line) { said_in_chat.emplace_back(line); };
-    events.on_action_bar = [&](std::string_view line) { said_over_hotbar.emplace_back(line); };
+    events.ui.on_chat = [&](std::string_view line) { said_in_chat.emplace_back(line); };
+    events.ui.on_action_bar = [&](std::string_view line) { said_over_hotbar.emplace_back(line); };
     std::function<void(int32_t, int32_t)> events_forget_hook;
-    events.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
+    events.world.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
         if (events_forget_hook) events_forget_hook(chunk_x, chunk_z);
     };
     std::vector<std::string> journeys;
-    events.on_respawn = [&](const mcpp::Dimension& dimension) {
+    events.world.on_respawn = [&](const mcpp::Dimension& dimension) {
         journeys.push_back(std::format("{} from y {}, {} chunks let go", dimension.name,
                                        dimension.min_y, world.size()));
         world.clear();
@@ -2100,7 +2100,7 @@ int do_digtest(const std::string& target) {
     // net would have caught the old area even with no forget sent at all.
     size_t outside_area = 0;
     int32_t area_reach = -1;
-    events.on_chunk_area = [&](int32_t centre_x, int32_t centre_z, int32_t radius) {
+    events.world.on_chunk_area = [&](int32_t centre_x, int32_t centre_z, int32_t radius) {
         area_reach = radius + 2;
         outside_area = 0;
         for (const auto& [key, chunk] : world) {
@@ -2110,7 +2110,7 @@ int do_digtest(const std::string& target) {
             }
         }
     };
-    events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
+    events.world.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const auto found = world.find({x >> 4, z >> 4});
         if (found != world.end() && found->second.set_block_state(x & 15, found->second.index_of(y), z & 15, state)) {
             light.relight(world, x, y, z);
@@ -2119,7 +2119,7 @@ int do_digtest(const std::string& target) {
                                       table.block_name(state)));
     };
     size_t relit = 0;
-    events.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
+    events.world.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
         const auto found = world.find({chunk_x, chunk_z});
         if (found == world.end()) return;
         mcpp::world::read_light_into(in, found->second);
@@ -2324,13 +2324,13 @@ int do_walktest(const std::string& target, double seconds) {
 
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
-    events.on_position = [&](double x, double y, double z, float, float) {
+    events.player.on_position = [&](double x, double y, double z, float, float) {
         spawn[0] = x;
         spawn[1] = y;
         spawn[2] = z;
         placed = true;
     };
-    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+    events.world.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         world.insert_or_assign({chunk.x, chunk.z}, chunk);
         if (world.size() >= 64 && placed) enough.store(true);
     };
@@ -2632,9 +2632,9 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
 
     mcpp::SessionEvents events;
     events.on_status = [&](std::string_view line) { print('-', line); };
-    events.on_chat = [&](std::string_view line) { print('|', line); };
+    events.ui.on_chat = [&](std::string_view line) { print('|', line); };
     events.on_disconnect = [&](std::string_view line) { print('x', line); };
-    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+    events.world.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         ++chunks;
         sections += chunk.non_empty_sections();
         for (const auto& section : chunk.sections) {

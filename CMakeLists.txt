@@ -84,6 +84,12 @@ add_library(mcpp_net STATIC
     src/json.cpp
     src/nbt.cpp
     src/session.cpp
+    src/session_world.cpp
+    src/session_entities.cpp
+    src/session_player.cpp
+    src/session_ui.cpp
+    src/session_sound.cpp
+    src/session_data.cpp
     src/registries.cpp
     src/translations.cpp
     src/auth.cpp

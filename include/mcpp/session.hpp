@@ -122,38 +122,58 @@ struct Attribute {
     }
 };
 
+// What the session tells the client, one struct per area of the game. An area
+// adds its events to its own struct, so two of them never edit the same lines.
 struct SessionEvents {
     std::function<void(std::string_view)> on_status;
-    std::function<void(std::string_view)> on_chat;
-    std::function<void(std::string_view)> on_action_bar;
     std::function<void(std::string_view)> on_disconnect;
-    std::function<void(const world::Chunk&)> on_chunk;
-    // Where the server says we are. It decides, not us: starting anywhere else
-    // makes the first movement packet look like a teleport.
-    std::function<void(double, double, double, float, float)> on_position;
-    // Other things in the world. type is the registry id from the server's own
-    // report; we do not pretend to know what it means yet.
-    std::function<void(const Entity&)> on_entity_add;
-    std::function<void(const Entity&)> on_entity_move;
-    std::function<void(int32_t)> on_entity_remove;
-    // A block changed under us. The renderer has to remesh the section it is
-    // in, and the sections next to it when it sits on a seam.
-    std::function<void(int32_t, int32_t, int32_t, int32_t)> on_block_change;
-    // New light for a chunk that is already loaded. Breaking a block changes
-    // what the sky reaches, and a chunk meshed against the old light is a
-    // chunk with a shadow where there is nothing to cast one.
-    std::function<void(int32_t, int32_t, ByteBuffer&)> on_light_update;
-    // The server has stopped tracking this chunk for us. Without honouring it
-    // nothing is ever let go: every chunk ever seen stays in memory and on the
-    // gpu until the reservation is full.
-    std::function<void(int32_t, int32_t)> on_chunk_forget;
-    // Where the server centres the area it keeps loaded for us, and how far it
-    // reaches. A proxy may never send forget_level_chunk; this is how the
-    // client knows what to let go of anyway.
-    std::function<void(int32_t, int32_t, int32_t)> on_chunk_area;
-    // The player moved to another dimension, or respawned. Everything the
-    // client held belongs to the world it left: chunks, light, entities.
-    std::function<void(const Dimension&)> on_respawn;
+
+    struct World {
+        std::function<void(const world::Chunk&)> on_chunk;
+        // A block changed under us. The renderer has to remesh the section it is
+        // in, and the sections next to it when it sits on a seam.
+        std::function<void(int32_t, int32_t, int32_t, int32_t)> on_block_change;
+        // New light for a chunk that is already loaded. Breaking a block changes
+        // what the sky reaches, and a chunk meshed against the old light is a
+        // chunk with a shadow where there is nothing to cast one.
+        std::function<void(int32_t, int32_t, ByteBuffer&)> on_light_update;
+        // The server has stopped tracking this chunk for us. Without honouring it
+        // nothing is ever let go: every chunk ever seen stays in memory and on the
+        // gpu until the reservation is full.
+        std::function<void(int32_t, int32_t)> on_chunk_forget;
+        // Where the server centres the area it keeps loaded for us, and how far it
+        // reaches. A proxy may never send forget_level_chunk; this is how the
+        // client knows what to let go of anyway.
+        std::function<void(int32_t, int32_t, int32_t)> on_chunk_area;
+        // The player moved to another dimension, or respawned. Everything the
+        // client held belongs to the world it left: chunks, light, entities.
+        std::function<void(const Dimension&)> on_respawn;
+    } world;
+
+    struct Entities {
+        // Other things in the world. type is the registry id from the server's own
+        // report; we do not pretend to know what it means yet.
+        std::function<void(const Entity&)> on_add;
+        std::function<void(const Entity&)> on_move;
+        std::function<void(int32_t)> on_remove;
+    } entities;
+
+    struct Player {
+        // Where the server says we are. It decides, not us: starting anywhere else
+        // makes the first movement packet look like a teleport.
+        std::function<void(double, double, double, float, float)> on_position;
+    } player;
+
+    struct Ui {
+        std::function<void(std::string_view)> on_chat;
+        std::function<void(std::string_view)> on_action_bar;
+    } ui;
+
+    struct Sound {
+    } sound;
+
+    struct Data {
+    } data;
 };
 
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false
@@ -187,6 +207,11 @@ struct Inventory {
 
 // Offline mode only: a server in online-mode sends an encryption request, which
 // needs a Microsoft session we do not have yet.
+//
+// The connection, login and configuration live in session.cpp. The play state
+// is split by area: each area handles its own packets in src/session_<area>.cpp
+// and keeps its own state in its own struct below, and handle_play asks each
+// area in a fixed order.
 class Session {
 public:
     Session(SessionOptions options, SessionEvents events);
@@ -195,23 +220,36 @@ public:
     bool pump();
     // Lets a render loop drain whatever arrived without blocking on an idle socket.
     bool has_data() const;
+    void close();
+
+    SessionState state() const { return state_; }
+    const std::string& profile_name() const { return profile_name_; }
+    const std::string& profile_uuid() const { return profile_uuid_; }
+    int32_t entity_id() const { return entity_id_; }
+
+    // World: session_world.cpp.
+    // Biomes in the order the server sent them, which is the order a chunk's
+    // palette indexes into.
+    const world::BiomeTable& biomes() const { return world_.biomes; }
+    const Dimension& dimension() const { return world_.dimension; }
+
+    // Entities: session_entities.cpp.
     // True between the two delimiters of a bundle. The server bundles what has
     // to land together - a player's spawn with its skin and equipment - and a
     // frame drawn in the middle shows one frame of a naked default player.
-    bool in_bundle() const { return in_bundle_; }
-    size_t entity_count() const { return entities_.size(); }
-    const std::map<int32_t, Entity>& entities() const { return entities_; }
+    bool in_bundle() const { return entities_.in_bundle; }
+    size_t entity_count() const { return entities_.entities.size(); }
+    const std::map<int32_t, Entity>& entities() const { return entities_.entities; }
     // What the server says our latency is, or -1 before it has said.
-    int32_t ping_ms() const { return ping_ms_; }
-    void close();
-    // Biomes in the order the server sent them, which is the order a chunk's
-    // palette indexes into.
-    const world::BiomeTable& biomes() const { return biomes_; }
-    // Every registry the server sent in configuration.
-    const Registries& registries() const { return registries_; }
-    const Dimension& dimension() const { return dimension_; }
-    const Inventory& inventory() const { return inventory_; }
+    int32_t ping_ms() const { return entities_.ping_ms; }
+    // What the server put on an entity, ours included; empty for one it has
+    // said nothing about.
+    const std::map<int32_t, MobEffect>& effects(int32_t entity) const;
+    const std::map<std::string, Attribute, std::less<>>& attributes(int32_t entity) const;
+    // An attribute's value, or the fallback when the server never sent it.
+    double attribute(int32_t entity, std::string_view name, double fallback) const;
 
+    // Player: session_player.cpp.
     // What the hud shows about the player. Health and food are in half units,
     // the way the game counts hearts and drumsticks.
     struct Vitals {
@@ -237,25 +275,15 @@ public:
         float flying_speed = 0.05f;
         float walking_speed = 0.1f;
     };
-    const Abilities& abilities() const { return abilities_; }
-    // Peaceful, easy, normal, hard.
-    int32_t difficulty() const { return difficulty_; }
-    bool difficulty_locked() const { return difficulty_locked_; }
-    bool hardcore() const { return hardcore_; }
-    const Tags& tags() const { return tags_; }
-    // What the server put on an entity, ours included; empty for one it has
-    // said nothing about.
-    const std::map<int32_t, MobEffect>& effects(int32_t entity) const;
-    const std::map<std::string, Attribute, std::less<>>& attributes(int32_t entity) const;
-    // An attribute's value, or the fallback when the server never sent it.
-    double attribute(int32_t entity, std::string_view name, double fallback) const;
-    const Vitals& vitals() const { return vitals_; }
+    const Inventory& inventory() const { return player_.inventory; }
+    const Vitals& vitals() const { return player_.vitals; }
+    const Abilities& abilities() const { return player_.abilities; }
+    bool hardcore() const { return player_.hardcore; }
     // Switches the hand locally and tells the server, the way the wheel does.
     void send_held_slot(int32_t slot);
     // One tick of being a player rather than a viewer. Vanilla wants the tick
     // marker before the position, or it ignores the movement entirely.
     void send_position(double x, double y, double z, float yaw, float pitch, bool on_ground);
-
     // Mining and building. The game numbers every one of these and the server
     // acknowledges the number, which is how it undoes a block the player was
     // not allowed to change without the client having to guess.
@@ -264,51 +292,90 @@ public:
                     float cursor_y, float cursor_z);
     void send_swing();
 
+    // Ui: session_ui.cpp.
     void send_chat(std::string_view message);
     void send_command(std::string_view command);
 
-    SessionState state() const { return state_; }
-    const std::string& profile_name() const { return profile_name_; }
-    const std::string& profile_uuid() const { return profile_uuid_; }
-    int32_t entity_id() const { return entity_id_; }
+    // Data: session_data.cpp.
+    // Every registry the server sent in configuration.
+    const Registries& registries() const { return data_.registries; }
+    const Tags& tags() const { return data_.tags; }
+    // Peaceful, easy, normal, hard.
+    int32_t difficulty() const { return data_.difficulty; }
+    bool difficulty_locked() const { return data_.difficulty_locked; }
 
 private:
-    bool light_format_warned_ = false;
-    bool slot_format_warned_ = false;
-    Inventory inventory_;
-    Registries registries_;
-    Dimension dimension_;
+    // Each returns whether the packet was its area's. A new packet goes in the
+    // area it belongs to; handle_play itself only knows the connection's own.
+    bool handle_world(PacketConnection::Packet& packet);
+    bool handle_entities(PacketConnection::Packet& packet);
+    bool handle_player(PacketConnection::Packet& packet);
+    bool handle_ui(PacketConnection::Packet& packet);
+    bool handle_sound(PacketConnection::Packet& packet);
+    bool handle_data(PacketConnection::Packet& packet);
+
+    struct WorldState {
+        Dimension dimension;
+        world::BiomeTable biomes;
+        bool light_format_warned = false;
+        int32_t area_x = 0;
+        int32_t area_z = 0;
+        int32_t area_radius = -1;
+    };
+    WorldState world_;
     void read_spawn_info(ByteBuffer& in);
-    Vitals vitals_;
-    Abilities abilities_;
-    int32_t difficulty_ = 2;
-    bool difficulty_locked_ = false;
-    bool hardcore_ = false;
-    Tags tags_;
+
+    struct EntityState {
+        std::map<int32_t, Entity> entities;
+        std::map<int32_t, std::map<int32_t, MobEffect>> effects;
+        std::map<int32_t, std::map<std::string, Attribute, std::less<>>> attributes;
+        bool in_bundle = false;
+        bool player_list_broken = false;
+        int32_t ping_ms = -1;
+    };
+    EntityState entities_;
+    void read_player_list(ByteBuffer& in);
+
+    struct PlayerState {
+        Inventory inventory;
+        Vitals vitals;
+        Abilities abilities;
+        bool hardcore = false;
+        bool slot_format_warned = false;
+        int32_t sequence = 0;
+        bool announced_loaded = false;
+        // Where the player last was, by the server's word or by our own movement:
+        // what a relative teleport is an offset from.
+        double last_x = 0.0;
+        double last_y = 0.0;
+        double last_z = 0.0;
+        float last_yaw = 0.0f;
+        float last_pitch = 0.0f;
+    };
+    PlayerState player_;
+
+    struct UiState {
+    };
+    [[maybe_unused]] UiState ui_;
+
+    struct SoundState {
+    };
+    [[maybe_unused]] SoundState sound_;
+
+    struct DataState {
+        Registries registries;
+        Tags tags;
+        int32_t difficulty = 2;
+        bool difficulty_locked = false;
+    };
+    DataState data_;
     void read_tags(ByteBuffer& in);
-    std::map<int32_t, std::map<int32_t, MobEffect>> effects_;
-    std::map<int32_t, std::map<std::string, Attribute, std::less<>>> attributes_;
-    int32_t sequence_ = 0;
-    bool announced_loaded_ = false;
-    bool in_bundle_ = false;
+
     std::ofstream recording_;
     std::ifstream playback_;
     bool next_from_playback(PacketConnection::Packet& packet);
     std::set<int32_t> part_read_;
-    // Where the player last was, by the server's word or by our own movement:
-    // what a relative teleport is an offset from.
-    double last_x_ = 0.0;
-    double last_y_ = 0.0;
-    double last_z_ = 0.0;
-    float last_yaw_ = 0.0f;
-    float last_pitch_ = 0.0f;
-    int32_t area_x_ = 0;
-    int32_t area_z_ = 0;
-    int32_t area_radius_ = -1;
-    bool player_list_broken_ = false;
-    int32_t ping_ms_ = -1;
 
-    void read_player_list(ByteBuffer& in);
     void handshake();
     void run_login();
     void begin_configuration();
@@ -324,14 +391,12 @@ private:
     const proto::PacketIds* ids_ = nullptr;
     Translations translations_;
     nbt::TranslateLookup lookup_;
-    world::BiomeTable biomes_;
     PacketConnection connection_;
     std::mutex send_mutex_;
     SessionState state_ = SessionState::Handshaking;
     std::string profile_name_;
     std::string profile_uuid_;
     int32_t entity_id_ = -1;
-    std::map<int32_t, Entity> entities_;
 };
 
 } // namespace mcpp
