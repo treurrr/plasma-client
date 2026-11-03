@@ -1,8 +1,10 @@
 #pragma once
 #include "audio/categories.hpp"
+#include "audio/decoder.hpp"
 #include "audio/mixer.hpp"
-#include "mcpp/jmath.hpp"
 #include "audio/sounds.hpp"
+
+#include "mcpp/jmath.hpp"
 
 #include <array>
 #include <cstdint>
@@ -34,18 +36,30 @@ struct PlayRequest {
     double z = 0.0;
     float volume = 1.0f;
     float pitch = 1.0f;
-    // At the listener and never attenuated: the interface, music.
+    // The position is measured from the listener, not the world: the
+    // interface and music sit at 0 0 0, right on top of it.
     bool relative = false;
+    // Linear fall-off to the range; off, a sound is as loud anywhere.
+    bool attenuate = true;
     bool looping = false;
     // Follows this entity while it plays; -1 for a sound that stays put.
     int32_t entity = -1;
+    // Waits this many game ticks before it starts.
+    int32_t delay = 0;
+    // Starts even with its sliders at zero, so turning them up is heard.
+    bool start_silent = false;
+
+    // The game's own kinds of sound that are not placed in the world.
+    static PlayRequest ui(std::string_view event, float pitch, float volume = 0.25f);
+    static PlayRequest music(std::string_view event);
+    static PlayRequest ambience(std::string_view event, float pitch, float volume);
 };
 
 // One line of the voice log: what started, stopped or was turned away, and
 // how loud, how high and where it was at that moment.
 struct VoiceLog {
     double time = 0.0;
-    std::string what;   // start, stop, end, drop, missing
+    std::string what;   // start, stop, end, drop, missing, silent, delay
     uint64_t id = 0;
     std::string event;
     std::string file;
@@ -64,19 +78,31 @@ struct VoiceLog {
     int32_t entity = -1;
 };
 
-// Reads a file out of the player's own assets, by its object store name.
-using FileSource = std::function<std::optional<std::vector<uint8_t>>(std::string_view)>;
 // Where an entity is now, or nothing once it has gone.
 using EntityPosition = std::function<std::optional<std::array<double, 3>>(int32_t)>;
 
 class SoundEngine {
 public:
-    // How many voices play at once: 247 for sounds, 8 for streams.
     static constexpr size_t kStaticVoices = 247;
     static constexpr size_t kStreamVoices = 8;
 
+    struct Stats {
+        size_t cached_sounds = 0;
+        size_t cache_bytes = 0;
+        size_t decodes = 0;
+        double decode_ms = 0.0;
+        double worst_decode_ms = 0.0;
+        std::string worst_decode;
+    };
+
+    SoundEngine() = default;
+    ~SoundEngine();
+    SoundEngine(const SoundEngine&) = delete;
+    SoundEngine& operator=(const SoundEngine&) = delete;
+
     // Takes the parsed sounds.json and where to read the files from. The
-    // mixer is opened with the options; without a device it still mixes.
+    // mixer is opened with the options; without a device it still mixes, and
+    // then decoding happens on the caller's thread, the same way every time.
     bool open(SoundIndex index, FileSource files, const Mixer::Options& options);
     void close();
 
@@ -86,7 +112,7 @@ public:
     // The packet's seed, or the client's own random for sounds it makes itself.
     uint64_t play(const PlayRequest& request, jmath::LegacyRandom& random);
     uint64_t play(const PlayRequest& request);
-    // An empty event stops every event; no category stops every category.
+    // No category and an empty event stop everything; either narrows it.
     void stop(std::optional<Category> category, std::string_view event);
     void stop_voice(uint64_t id);
     bool playing(uint64_t id) const { return voices_.contains(id); }
@@ -94,13 +120,19 @@ public:
 
     void set_listener(const Listener& listener) { listener_ = listener; }
     const Listener& listener() const { return listener_; }
-    // Once a tick: follows entities, applies the sliders and the listener's
-    // movement to every voice, and lets go of the ones that ended.
+    // Once a frame: decoded sounds start, finished voices are let go, and every
+    // voice is heard from where the listener is now.
+    void pump();
+    // Once a game tick: delayed sounds come due and voices on entities follow
+    // them. Also pumps.
     void update(const EntityPosition& entity_position = {});
     // The clock the log is written against, in seconds.
     void set_time(double seconds) { time_ = seconds; }
+    // Decodes every sound sounds.json marks for loading up front.
+    void preload();
+    Stats stats() const { return stats_; }
 
-    // The options screen writes these; they take effect on the next update.
+    // The options screen writes these; they are heard on the next frame.
     CategoryVolumes volumes;
     std::function<void(const VoiceLog&)> on_log;
 
@@ -108,30 +140,54 @@ private:
     struct Active {
         PlayRequest request;
         ResolvedSound sound;
-        float base_gain = 0.0f;
+        uint32_t slot = 0;
+        bool started = false;
+        float volume = 1.0f;   // the request's times the sound's own
         float range = 16.0f;
         float pitch = 1.0f;
-        bool positional = true;
-        int channels = 1;
+        int channels = 0;
     };
     struct Gains {
         float distance = 0.0f;
         float gain = 0.0f;
         float left = 0.0f;
         float right = 0.0f;
+        float flat = 0.0f;
     };
+    struct Delayed {
+        PlayRequest request;
+        jmath::LegacyRandom random;
+        int64_t due = 0;
+    };
+
+    uint64_t start(const PlayRequest& request, jmath::LegacyRandom& random);
     Gains gains_of(const Active& voice) const;
-    std::shared_ptr<const Pcm> load(const std::string& file);
+    void begin(uint64_t id, Active& voice, std::shared_ptr<const Pcm> pcm);
+    void finish(uint64_t id, std::string_view what);
     void log(std::string_view what, uint64_t id, const Active& voice, const Gains& gains);
 
     SoundIndex index_;
     FileSource files_;
+    Mixer::Options options_;
     Mixer mixer_;
+    std::unique_ptr<Decoder> decoder_;
+    bool threaded_ = false;
     Listener listener_;
     jmath::LegacyRandom own_random_{0};
+
     std::map<std::string, std::shared_ptr<const Pcm>, std::less<>> cache_;
+    std::map<std::string, std::vector<uint64_t>, std::less<>> waiting_;
     std::map<uint64_t, Active> voices_;
+    std::array<uint64_t, Mixer::kSlots> slot_owner_{};
+    std::array<bool, Mixer::kSlots> slot_stream_{};
+    std::vector<uint32_t> free_slots_;
+    std::vector<uint32_t> released_;
+    size_t streams_ = 0;
+    std::vector<Delayed> delayed_;
+    int64_t ticks_ = 0;
+    uint64_t next_id_ = 1;
     double time_ = 0.0;
+    Stats stats_;
 };
 
 } // namespace mcpp::audio

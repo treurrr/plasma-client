@@ -218,38 +218,58 @@ std::shared_ptr<Pcm> tone(int channels, size_t frames, int16_t value) {
 void test_mixer() {
     Mixer mixer;
     std::vector<float> out(64 * 2);
-    const auto id = mixer.start(tone(1, 100, 16384), 1.0f, 0.5f, 0.25f, false);
+    std::vector<uint32_t> released;
+    mixer.start(0, tone(1, 100, 16384), 1.0f, 0.5f, 0.25f, 1.0f, false);
     mixer.mix(out.data(), 64);
     check(near(out[0], 0.25) && near(out[1], 0.125), "gain per side");
     mixer.mix(out.data(), 64);
     check(near(out[2 * 35], 0.25) && near(out[2 * 40], 0.0), "ends after its frames");
-    const auto ended = mixer.finished();
-    check(ended.size() == 1 && ended[0] == id, "and is reported as finished");
+    mixer.released(released);
+    check(released.size() == 1 && released[0] == 0, "and hands its slot back");
 
-    const auto fast = mixer.start(tone(1, 100, 16384), 2.0f, 1.0f, 1.0f, false);
+    released.clear();
+    mixer.start(1, tone(1, 100, 16384), 2.0f, 1.0f, 1.0f, 1.0f, false);
     mixer.mix(out.data(), 64);
     check(near(out[2 * 49], 0.5) && near(out[2 * 51], 0.0), "pitch two plays twice as fast");
-    (void)fast;
-    mixer.finished();
+    mixer.released(released);
 
-    const auto loop = mixer.start(tone(2, 10, 8192), 1.0f, 1.0f, 1.0f, true);
+    released.clear();
+    mixer.start(2, tone(2, 10, 8192), 1.0f, 0.0f, 0.0f, 1.0f, true);
     mixer.mix(out.data(), 64);
-    check(near(out[2 * 63], 0.25) && mixer.finished().empty(), "a loop keeps going");
-    mixer.stop(loop);
-    check(mixer.voices() == 0, "stopped");
+    mixer.released(released);
+    check(near(out[2 * 63], 0.25) && released.empty(),
+          "a loop keeps going, and two channels play at the flat gain");
+    mixer.stop(2);
+    mixer.mix(out.data(), 64);
+    mixer.released(released);
+    check(released.size() == 1 && released[0] == 2 && near(out[0], 0.0), "stopped");
+
+    // A gain change glides over one callback instead of jumping.
+    released.clear();
+    mixer.start(3, tone(1, 1000, 16384), 1.0f, 0.0f, 0.0f, 0.0f, false);
+    mixer.mix(out.data(), 64);
+    mixer.set(3, 1.0f, 1.0f, 1.0f, 1.0f);
+    mixer.mix(out.data(), 64);
+    check(near(out[0], 0.0) && near(out[2 * 32], 0.25) && out[2 * 63] < 0.5f,
+          "a new gain is reached by the end of the callback");
+    mixer.stop(3);
+    mixer.released(released);
 
     // The null device pulls the stream at the real rate and plays nothing.
     Mixer null;
     Mixer::Options options;
     options.null_output = true;
     check(null.open(options), "the null device opens");
-    const auto short_one = null.start(tone(1, 2400, 1000), 1.0f, 1.0f, 1.0f, false);
+    null.start(7, tone(1, 2400, 1000), 1.0f, 1.0f, 1.0f, 1.0f, false);
     bool finished = false;
     for (int i = 0; i < 100 && !finished; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        for (const auto done : null.finished()) finished |= done == short_one;
+        released.clear();
+        null.released(released);
+        for (const auto slot : released) finished |= slot == 7;
     }
     check(finished, "a 50 ms sound ends on the null device");
+    check(null.stats().callbacks > 0, "the device called the mixer");
 }
 
 // The engine against the player's own files, when the launcher has them.
@@ -316,7 +336,7 @@ void test_engine_on_assets() {
 
     SoundEngine engine;
     Mixer::Options options;
-    options.null_output = true;
+    options.no_device = true;
     engine.open(std::move(index), [&](std::string_view name) { return store->read(name); },
                 options);
     std::vector<VoiceLog> lines;
@@ -350,13 +370,77 @@ void test_engine_on_assets() {
     engine.stop(Category::Block, "");
     check(engine.active() == 0, "stop by category");
 
-    request.event = "ui.button.click";
-    request.category = Category::Ui;
-    request.relative = true;
-    request.volume = 0.25f;
-    engine.play(request, random);
-    check(!lines.empty() && near(lines.back().gain, 0.25) && near(lines.back().left, lines.back().right),
+    engine.play(PlayRequest::ui("ui.button.click", 1.0f), random);
+    check(!lines.empty() && lines.back().what == "start" && near(lines.back().gain, 0.25) &&
+              near(lines.back().left, lines.back().right),
           "the interface plays centred, never attenuated");
+
+    // sounds.json makes the bell 12 loud; rung at 2 that is 24, which carries
+    // 24 times 16 blocks and is no louder for it.
+    request = {};
+    request.event = "block.bell.use";
+    request.category = Category::Block;
+    request.x = 20.0;
+    request.y = 64.0;
+    request.volume = 2.0f;
+    engine.play(request, random);
+    check(!lines.empty() && near(lines.back().range, 384.0) &&
+              near(lines.back().gain, 1.0 - 20.0 / 384.0, 1e-4),
+          std::format("bell range {} gain {}", lines.empty() ? 0.0f : lines.back().range,
+                      lines.empty() ? 0.0f : lines.back().gain));
+
+    engine.volumes[Category::Hostile] = 0.0f;
+    request.event = "entity.zombie.ambient";
+    request.category = Category::Hostile;
+    check(engine.play(request, random) == 0 && lines.back().what == "silent",
+          "a sound whose slider is at zero never starts");
+    engine.volumes[Category::Music] = 0.0f;
+    check(engine.play(PlayRequest::music("music.creative"), random) != 0 &&
+              lines.back().what == "start" && lines.back().stream,
+          "music starts anyway, as a stream");
+    engine.stop(std::nullopt, "minecraft:music.creative");
+    check(lines.back().what == "stop" && lines.back().event == "music.creative", "stop by name");
+
+    request.event = "block.stone.step";
+    request.category = Category::Player;
+    request.delay = 3;
+    engine.play(request, random);
+    check(lines.back().what == "delay", "a delayed sound waits");
+    engine.update();
+    engine.update();
+    check(lines.back().what == "delay", "for its ticks");
+    engine.update();
+    check(lines.back().what == "start" && lines.back().event == "block.stone.step", "then plays");
+    request.delay = 0;
+
+    engine.stop(std::nullopt, "");
+    engine.update();
+    size_t started = 0;
+    size_t dropped = 0;
+    engine.on_log = [&](const VoiceLog& line) {
+        started += line.what == "start";
+        dropped += line.what == "drop";
+    };
+    for (int i = 0; i < 300; ++i) engine.play(request, random);
+    check(started == SoundEngine::kStaticVoices && dropped == 300 - SoundEngine::kStaticVoices,
+          std::format("247 at once, the rest turned away: {} started, {} dropped", started, dropped));
+    engine.stop(std::nullopt, "");
+    engine.update();
+
+    request.entity = 9;
+    engine.on_log = [&](const VoiceLog& line) { lines.push_back(line); };
+    engine.play(request, random);
+    engine.update([](int32_t id) -> std::optional<std::array<double, 3>> {
+        if (id == 9) return std::array<double, 3>{1.0, 64.0, 1.0};
+        return std::nullopt;
+    });
+    check(engine.active() == 1, "a sound on an entity plays while it is there");
+    engine.update([](int32_t) -> std::optional<std::array<double, 3>> { return std::nullopt; });
+    check(engine.active() == 0 && lines.back().what == "stop", "and stops when it goes");
+    std::cout << std::format("engine: {} sounds decoded in {:.1f} ms, worst {:.2f} ms ({}), cache {} KiB\n",
+                             engine.stats().decodes, engine.stats().decode_ms,
+                             engine.stats().worst_decode_ms, engine.stats().worst_decode,
+                             engine.stats().cache_bytes / 1024);
 }
 
 } // namespace

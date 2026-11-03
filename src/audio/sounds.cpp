@@ -2,6 +2,7 @@
 
 #include "mcpp/json.hpp"
 
+#include <algorithm>
 #include <format>
 
 namespace mcpp::audio {
@@ -78,6 +79,18 @@ void SoundIndex::prune(const std::function<bool(std::string_view)>& exists) {
             return !entry.is_event && !exists(file_name(entry.name));
         });
     }
+}
+
+std::vector<std::string> SoundIndex::preload_files() const {
+    std::vector<std::string> files;
+    for (const auto& [name, definition] : events_) {
+        for (const auto& entry : definition.entries) {
+            if (entry.preload && !entry.is_event) files.push_back(file_name(entry.name));
+        }
+    }
+    std::sort(files.begin(), files.end());
+    files.erase(std::unique(files.begin(), files.end()), files.end());
+    return files;
 }
 
 int32_t SoundIndex::total_weight(std::string_view event) const {

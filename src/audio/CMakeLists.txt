@@ -20,6 +20,7 @@ add_library(mcpp_audio STATIC
     sounds.cpp
     block_sounds.cpp
     pcm.cpp
+    decoder.cpp
     mixer.cpp
     engine.cpp
     footsteps.cpp

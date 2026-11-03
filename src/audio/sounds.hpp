@@ -54,6 +54,8 @@ public:
     // Drops the files the player's assets do not have, as the game does when
     // it loads sounds.json; what is left decides the weights.
     void prune(const std::function<bool(std::string_view)>& exists);
+    // Every file an entry asks to have decoded before it is first played.
+    std::vector<std::string> preload_files() const;
     // The event's weights summed: what nextInt is asked for. A reference to
     // another event counts that event's whole weight.
     int32_t total_weight(std::string_view event) const;

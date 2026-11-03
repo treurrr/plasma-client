@@ -232,10 +232,11 @@ int do_replay(const std::string& file, bool realtime) {
 
     mcpp::audio::SoundEngine engine;
     mcpp::audio::Mixer::Options mixer_options;
-    mixer_options.null_output = true;
+    mixer_options.null_output = realtime;
+    mixer_options.no_device = !realtime;
+    index.prune([&](std::string_view name) { return store->find(name) != nullptr; });
     const bool device = engine.open(std::move(index), [&](std::string_view name) { return store->read(name); },
                                     mixer_options);
-    if (!realtime) engine.mixer().close();
     std::cout << std::format("# mixer: {}\n", realtime && device ? "null device (" + engine.mixer().device_name() + ")"
                                                                   : std::string("no device, mixed by hand"));
     engine.on_log = [](const mcpp::audio::VoiceLog& line) {
@@ -387,9 +388,15 @@ int do_replay(const std::string& file, bool realtime) {
         while (next_tick <= until) {
             engine.set_time(next_tick);
             if (!realtime) {
-                const auto frames = static_cast<uint32_t>((next_tick - mixed_until) * engine.mixer().rate());
-                scratch.resize(static_cast<size_t>(frames) * 2);
-                if (frames > 0) engine.mixer().mix(scratch.data(), frames);
+                // In the 10 ms pieces a device asks for.
+                auto frames = static_cast<uint32_t>((next_tick - mixed_until) * engine.mixer().rate());
+                scratch.resize(480 * 2);
+                while (frames > 0) {
+                    const uint32_t piece = std::min<uint32_t>(frames, 480);
+                    engine.pump();
+                    engine.mixer().mix(scratch.data(), piece);
+                    frames -= piece;
+                }
                 mixed_until = next_tick;
             }
             engine.update([&](int32_t id) -> std::optional<std::array<double, 3>> {
@@ -413,6 +420,16 @@ int do_replay(const std::string& file, bool realtime) {
     (void)session_ptr;
     std::cout << std::format("# {} packets, {} voices still playing, {} footsteps from the model\n",
                              packet, engine.active(), predicted);
+    const auto mixing = engine.mixer().stats();
+    const auto sounds = engine.stats();
+    std::cout << std::format(
+        "# mixer: {} callbacks, {:.1f} frames each, {:.2f} us average, worst {:.2f} us with {} voices\n"
+        "# decoder: {} sounds in {:.1f} ms, {:.3f} ms each, worst {:.2f} ms ({}); cache {} sounds, {} KiB\n",
+        mixing.callbacks, mixing.callbacks ? double(mixing.frames) / double(mixing.callbacks) : 0.0,
+        mixing.callbacks ? double(mixing.nanoseconds) / double(mixing.callbacks) / 1000.0 : 0.0,
+        double(mixing.worst_nanoseconds) / 1000.0, mixing.worst_voices, sounds.decodes,
+        sounds.decode_ms, sounds.decodes ? sounds.decode_ms / double(sounds.decodes) : 0.0,
+        sounds.worst_decode_ms, sounds.worst_decode, sounds.cached_sounds, sounds.cache_bytes / 1024);
     return 0;
 }
 
