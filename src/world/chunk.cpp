@@ -293,7 +293,7 @@ Chunk read_chunk(ByteBuffer& in, int32_t min_y) {
         entity.z = (chunk.z << 4) + (packed_xz & 0x0F);
         entity.y = static_cast<int16_t>(in.read_u16());
         entity.type = in.read_varint();
-        nbt::read_network_tag(in);
+        entity.data = nbt::read_network_tag(in);
         chunk.block_entities.push_back(entity);
     }
 

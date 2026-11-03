@@ -10,6 +10,7 @@ between neighbouring tiles as soon as minification filters across their shared
 edge, which no amount of padding fully fixes.
 """
 import io
+import json
 import struct
 import sys
 import zipfile
@@ -19,7 +20,7 @@ import numpy as np
 from PIL import Image
 
 MAGIC = b"PLAT"
-VERSION = 3
+VERSION = 4
 # Four levels takes a 32px tile down to 4px; below that neighbouring tiles
 # start to matter even though a box filter stays inside tile boundaries.
 MIP_LEVELS = 4
@@ -40,7 +41,7 @@ def read_texture_names(path):
 
     at = HEADER_BYTES
     at = align8(at + (states + 1) * 4)   # quad offsets
-    at = align8(at + quads * 28)         # quads
+    at = align8(at + quads * 36)         # quads
     texture_offsets_at = at
     at = align8(at + textures * 4)
     at = align8(at + blocks * 4)         # block name offsets
@@ -60,19 +61,43 @@ def asset_path(name):
     return f"assets/minecraft/textures/{name.split(':')[-1]}.png"
 
 
-def load_tile(archive, name, size):
+def load_frames(archive, name, size):
+    """Every frame of a texture, the first one first: an animation is a
+    vertical strip of square frames."""
     try:
         raw = archive.read(asset_path(name))
     except KeyError:
         return None
+    frames = []
     with Image.open(io.BytesIO(raw)) as image:
         image = image.convert("RGBA")
-        # An animation is a vertical strip of square frames; take the first.
-        if image.height > image.width:
-            image = image.crop((0, 0, image.width, image.width))
-        if image.size != (size, size):
-            image = image.resize((size, size), Image.NEAREST)
-        return image.copy()
+        side = image.width
+        for top in range(0, max(image.height // side, 1) * side, side):
+            frame = image.crop((0, top, side, top + side))
+            if frame.size != (size, size):
+                frame = frame.resize((size, size), Image.NEAREST)
+            frames.append(frame.copy())
+    return frames
+
+
+def animation_of(archive, name, frame_count):
+    """The texture's .mcmeta animation as (interpolate, [(frame, ticks)]), or
+    None for a still texture."""
+    try:
+        meta = json.loads(archive.read(asset_path(name) + ".mcmeta"))
+    except KeyError:
+        return None
+    animation = meta.get("animation")
+    if animation is None or frame_count < 2:
+        return None
+    default_time = animation.get("frametime", 1)
+    frames = []
+    for entry in animation.get("frames", range(frame_count)):
+        if isinstance(entry, dict):
+            frames.append((entry["index"], entry.get("time", default_time)))
+        else:
+            frames.append((entry, default_time))
+    return bool(animation.get("interpolate", False)), frames
 
 
 def to_linear(srgb):
@@ -168,12 +193,29 @@ def main(args):
     tiles = []
     missing = 0
     fallback = missing_tile(tile_size)
+    strips = []
     for name in names:
-        tile = load_tile(archive, name, tile_size)
-        if tile is None:
-            tile = fallback
+        frames = load_frames(archive, name, tile_size)
+        if frames is None:
+            frames = [fallback]
             missing += 1
-        tiles.append(bleed(tile))
+        strips.append([bleed(frame) for frame in frames])
+        tiles.append(strips[-1][0])
+
+    # A texture's other frames go after every texture's first one, so a
+    # texture id is still its first frame's layer.
+    animations = []
+    for texture, (name, frames) in enumerate(zip(names, strips)):
+        animation = animation_of(archive, name, len(frames))
+        if animation is None:
+            continue
+        interpolate, sequence = animation
+        layer_of = [texture]
+        for frame in frames[1:]:
+            layer_of.append(len(tiles))
+            tiles.append(frame)
+        animations.append((texture, interpolate,
+                           [(layer_of[index % len(frames)], max(time, 1)) for index, time in sequence]))
 
     mips = 1
     while mips < MIP_LEVELS and (tile_size >> mips) >= 1:
@@ -190,13 +232,18 @@ def main(args):
             chunks.append(tile.tobytes())
     pixels = b"".join(chunks)
 
-    header = MAGIC + struct.pack("<6I", VERSION, protocol, tile_size, len(tiles), mips,
-                                 len(pixels))
+    header = MAGIC + struct.pack("<7I", VERSION, protocol, tile_size, len(tiles), mips,
+                                 len(pixels), len(names))
     header += b"\0" * (align8(len(header)) - len(header))
 
-    Path(out_path).write_bytes(header + pixels)
+    table = struct.pack("<I", len(animations))
+    for texture, interpolate, sequence in animations:
+        table += struct.pack("<3I", texture, int(interpolate), len(sequence))
+        for layer, time in sequence:
+            table += struct.pack("<2I", layer, time)
+    Path(out_path).write_bytes(header + pixels + table)
     print(f"{out_path}: {(len(header) + len(pixels)) / 1e6:.2f} MB")
-    print(f"  {len(tiles)} layers of {tile_size}px, {mips} mip levels")
+    print(f"  {len(tiles)} layers of {tile_size}px, {mips} mip levels, {len(animations)} animated")
     if missing:
         print(f"  {missing} textures not found; those got the missing-texture tile")
 

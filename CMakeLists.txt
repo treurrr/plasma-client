@@ -66,6 +66,8 @@ mcpp_shader(text.vert TextVert)
 mcpp_shader(text.frag TextFrag)
 mcpp_shader(sky.vert SkyVert)
 mcpp_shader(sky.frag SkyFrag)
+mcpp_shader(clouds.vert CloudsVert)
+mcpp_shader(clouds.frag CloudsFrag)
 mcpp_shader(outline.vert OutlineVert)
 mcpp_shader(outline.frag OutlineFrag)
 mcpp_shader(ui.vert UiVert)
@@ -102,10 +104,14 @@ add_library(mcpp_net STATIC
     src/world/light.cpp
     src/world/atlas.cpp
     src/world/biomes.cpp
+    src/world/environment.cpp
+    src/world/atmosphere.cpp
+    src/world/render_table.cpp
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
     src/gpu/sky.cpp
+    src/gpu/vk_util.cpp
     src/gpu/outline.cpp
     src/gpu/text.cpp
     src/gpu/ui.cpp
@@ -148,6 +154,7 @@ if(glfw3_FOUND)
     set(MCPP_PLAY_SOURCES
         src/client/play.cpp
         src/client/world.cpp
+        src/client/worldbench.cpp
         src/client/entities.cpp
         src/client/player.cpp
         src/client/screens.cpp
@@ -179,6 +186,7 @@ mcpp_test(assets)
 mcpp_test(ui)
 mcpp_test(jmath)
 mcpp_test(data)
+mcpp_test(world)
 mcpp_test(sound)
 add_subdirectory(src/audio)
 
@@ -192,5 +200,6 @@ endfunction()
 
 mcpp_probe(jmath_probe)
 mcpp_probe(codec_probe)
+mcpp_probe(timeline_probe)
 mcpp_probe(sound_probe)
 target_link_libraries(sound_probe PRIVATE mcpp_audio)

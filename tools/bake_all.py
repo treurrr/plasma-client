@@ -65,6 +65,8 @@ def main(args):
         out / f"items-{protocol}.plit")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu",
         Path(report).parent / "registries.json", Path(report).parent / "items.json")
+    run("bake_datapack.py", jar, out / f"datapack-{protocol}")
+    ask_the_game("bake_block_render.py", out / f"block-render-{protocol}.txt")
     ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")
     ask_the_game("gen_block_sounds.py", out / f"block_sounds-{protocol}.txt")
     # The registries the client has built in, in id order: what an attribute,

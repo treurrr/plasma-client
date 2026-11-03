@@ -3,8 +3,8 @@
 layout(push_constant) uniform Push {
     mat4 view_projection;
     vec4 origin;   // the section's corner in world space
-    vec4 eye;      // camera in world space, w is where the fog starts
-    vec4 sky;      // what the fog fades into, w is where it finishes
+    vec4 eye;      // camera in world space, w the alpha below which a texel is cut
+    vec4 extra;
 } push;
 
 // Four colours per biome - grass, foliage, water, dry foliage - each 0xRRGGBB,
@@ -12,6 +12,9 @@ layout(push_constant) uniform Push {
 layout(set = 0, binding = 1) uniform Biomes {
     uvec4 colour[256];
 } biomes;
+
+// The game's lightmap: block light along u, sky light along v, filtered.
+layout(set = 0, binding = 3) uniform sampler2D lightmap;
 
 layout(location = 0) in uvec4 in_position;   // xyz fixed point, w packed flags
 layout(location = 1) in vec2 in_uv;
@@ -21,61 +24,37 @@ const float kPositionScale = 2048.0;
 const float kPositionBias = 1.0;
 
 layout(location = 0) out vec3 out_uv;
-layout(location = 1) out float out_shade;
-layout(location = 2) out vec3 out_tint;
-layout(location = 3) out float out_distance;
-layout(location = 4) out vec3 out_light;
+layout(location = 1) out vec4 out_colour;
+layout(location = 2) out float out_spherical;
+layout(location = 3) out float out_cylindrical;
 
 // Minecraft shades a face by its direction alone.
 const float kFaceShade[6] = float[](0.50, 1.00, 0.80, 0.80, 0.60, 0.60);
 
-// The game's own light curve: the last few levels fall away far faster than
-// the first ones, which is why a torch lights a small bright circle rather
-// than a wide dim one.
 vec3 unpack(uint rgb) {
     return vec3((rgb >> 16) & 0xFFu, (rgb >> 8) & 0xFFu, rgb & 0xFFu) / 255.0;
 }
 
-float brightness(float level) {
-    float f = level / 15.0;
-    return f / (4.0 - 3.0 * f);
-}
-
-// Block light is warm and sky light is not, so a torch-lit wall and a sunlit
-// one do not end up the same colour.
-vec3 lightmap(float sky_level, float block_level) {
-    float sky = brightness(sky_level);
-    float block = brightness(block_level);
-    vec3 warm = vec3(block, block * ((block * 0.6 + 0.4) * 0.6 + 0.4),
-                     block * (block * block * 0.6 + 0.4));
-    vec3 lit = clamp(warm + vec3(sky * 0.99, sky, sky), 0.0, 1.0);
-    return lit * 0.96 + 0.03;
+vec4 sample_lightmap(vec2 uv) {
+    return texture(lightmap, clamp(uv / 256.0 + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
 }
 
 void main() {
     vec3 local = vec3(in_position.xyz) / kPositionScale - kPositionBias;
     vec3 world = local + push.origin.xyz;
     gl_Position = push.view_projection * vec4(world, 1.0);
-    // Horizontal distance, the way the game measures it: fog should not thicken
-    // when you look down from a tower.
-    out_distance = length(world.xz - push.eye.xz);
+    vec3 relative = world - push.eye.xyz;
+    out_spherical = length(relative);
+    out_cylindrical = max(length(relative.xz), abs(relative.y));
 
     out_uv = vec3(in_uv, float(in_texture_light.x));
     uint flags = in_position.w;
     uint face = flags & 7u;
 
-    // Smooth lighting: 0 is a fully enclosed corner, 3 is open.
     const float kCornerLight[4] = float[](0.52, 0.68, 0.84, 1.0);
-    // A model may ask for no directional shading at all, which is what keeps
-    // grass and flowers the same colour from every side.
     float directional = (flags & 0x0100u) != 0u ? 1.0 : kFaceShade[min(face, 5u)];
-    out_shade = directional * kCornerLight[(flags >> 6) & 3u];
-    out_light = lightmap(float(in_texture_light.y & 0x0Fu),
-                         float((in_texture_light.y >> 4) & 0x0Fu));
+    float shade = directional * kCornerLight[(flags >> 6) & 3u];
 
-    // Tinted faces ship as greyscale and are multiplied by a colour the block
-    // decides. Three of them are fixed whatever the climate; the rest the game
-    // looks up per biome, so a swamp's grass and a badlands' are not the same.
     const vec3 kFixedTint[8] = vec3[](vec3(1.0), vec3(1.0), vec3(1.0), vec3(1.0),
                                       vec3(0.3804, 0.6000, 0.3804),   // spruce
                                       vec3(0.5020, 0.6549, 0.3333),   // birch
@@ -84,7 +63,11 @@ void main() {
     const int kBiomeChannel[8] = int[](-1, 0, 1, 2, -1, -1, -1, 3);
     uint tint = (flags >> 3) & 7u;
     int channel = kBiomeChannel[tint];
-    out_tint = channel < 0
+    vec3 tint_colour = channel < 0
         ? kFixedTint[tint]
         : unpack(biomes.colour[(in_texture_light.y >> 8) & 0xFFu][channel]);
+
+    uint sky = in_texture_light.y & 0x0Fu;
+    uint block = (in_texture_light.y >> 4) & 0x0Fu;
+    out_colour = vec4(tint_colour * shade, 1.0) * sample_lightmap(vec2(block * 16u, sky * 16u));
 }

@@ -14,7 +14,7 @@ namespace mcpp::world {
 namespace {
 
 constexpr char kMagic[4] = {'P', 'L', 'A', 'T'};
-constexpr uint32_t kVersion = 3;
+constexpr uint32_t kVersion = 4;
 constexpr size_t kHeaderBytes = 32;
 
 } // namespace
@@ -74,7 +74,47 @@ bool Atlas::open(const std::filesystem::path& path) {
         close();
         throw ProtocolError("atlas pixels do not match the dimensions");
     }
+    textures_ = header[6];
+    animations_.clear();
+    size_t at = kHeaderBytes + pixel_bytes_;
+    const auto next = [&]() -> uint32_t {
+        if (at + 4 > size_) throw ProtocolError("atlas animation table is cut short");
+        uint32_t value = 0;
+        std::memcpy(&value, base_ + at, 4);
+        at += 4;
+        return value;
+    };
+    const uint32_t count = next();
+    for (uint32_t i = 0; i < count; ++i) {
+        Animation animation;
+        animation.texture = next();
+        animation.interpolate = next() != 0;
+        const uint32_t frames = next();
+        for (uint32_t f = 0; f < frames; ++f) {
+            const uint32_t layer = next();
+            const uint32_t time = next();
+            animation.frames.emplace_back(layer, time);
+            animation.length += time;
+        }
+        if (!animation.frames.empty()) animations_.push_back(std::move(animation));
+    }
     return true;
+}
+
+Atlas::Frame Atlas::frame_at(const Animation& animation, uint64_t ticks) {
+    uint64_t into = animation.length > 0 ? ticks % animation.length : 0;
+    size_t index = 0;
+    while (index + 1 < animation.frames.size() && into >= animation.frames[index].second) {
+        into -= animation.frames[index].second;
+        ++index;
+    }
+    Frame frame;
+    frame.layer = animation.frames[index].first;
+    frame.next = animation.frames[(index + 1) % animation.frames.size()].first;
+    if (animation.interpolate) {
+        frame.fade = static_cast<float>(into) / static_cast<float>(animation.frames[index].second);
+    }
+    return frame;
 }
 
 size_t Atlas::level_bytes(uint32_t mip) const {
