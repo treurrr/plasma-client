@@ -15,6 +15,10 @@ struct GLFWwindow;
 namespace mcpp::gpu {
 
 // What the player did since the last frame, in the units the camera wants.
+// The screen stack sees every key and click first and hands on only what is
+// left for the game: while a screen is open, every gameplay field here is
+// zero, the way vanilla releases every binding when a screen opens. Keys come
+// from the keybind registry, so a field means its binding, not a fixed key.
 struct FrameInput {
     float forward = 0.0f;
     float right = 0.0f;
@@ -43,6 +47,19 @@ struct FrameInput {
     // -1, 0 or 1 for the wheel this frame, and 0..8 for a number key, or -1.
     int32_t wheel = 0;
     int32_t pick_slot = -1;
+    // Presses since the last frame, the way vanilla counts clicks: two quick
+    // clicks inside one frame are two attacks, not one held button.
+    int32_t attack_clicks = 0;
+    int32_t use_clicks = 0;
+    int32_t pick_item_clicks = 0;
+    bool swap_offhand = false;
+    // Drop with the control key held throws the whole stack.
+    bool drop_stack = false;
+    // The sprint binding alone; `sprint` also counts a double-tapped forward.
+    bool sprint_key = false;
+    bool jump = false;
+    // A screen has the keyboard and the pointer this frame.
+    bool screen_open = false;
 };
 
 // GLFW only for the surface and the key state; everything after the surface is
