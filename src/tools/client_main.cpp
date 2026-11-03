@@ -1868,6 +1868,22 @@ int do_inspect(const std::string& target) {
     for (const auto& [name, list] : registries.all()) {
         std::cout << std::format("  {:5}  {}\n", list.size(), name);
     }
+    // The shape of every dimension, as the server describes it.
+    if (const auto* types = registries.find("minecraft:dimension_type")) {
+        for (const auto& entry : *types) {
+            if (!entry.data.has_value()) continue;
+            const auto number = [&](std::string_view key) {
+                const auto* value = entry.data->find(key);
+                return value != nullptr ? value->as_int().value_or(0) : 0;
+            };
+            std::cout << std::format("  dimension {:28} min_y {:4}  height {:3}  sky {}  ceiling {}\n",
+                                     entry.name, number("min_y"), number("height"),
+                                     number("has_skylight"), number("has_ceiling"));
+        }
+    }
+    const auto& dimension = session.dimension();
+    std::cout << std::format("  standing in {} ({}), {} sections from y {}\n", dimension.name,
+                             dimension.type, dimension.section_count(), dimension.min_y);
     return 0;
 }
 

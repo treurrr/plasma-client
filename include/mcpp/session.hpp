@@ -101,6 +101,21 @@ struct SessionEvents {
     std::function<void(int32_t, int32_t, int32_t)> on_chunk_area;
 };
 
+// Which world the player is in and what shape it has. min_y and height decide
+// where a chunk's lowest section sits, which turns every world y into an array
+// index - so the overworld's -64 is right in the overworld and nowhere else.
+struct Dimension {
+    std::string name = "minecraft:overworld";
+    std::string type = "minecraft:overworld";
+    int32_t min_y = -64;
+    int32_t height = 384;
+    bool has_skylight = true;
+    bool has_ceiling = false;
+    float ambient_light = 0.0f;
+    int32_t sea_level = 63;
+    int32_t section_count() const { return height / 16; }
+};
+
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false
 // when the stack carried data components, whose bodies differ per component
 // type: the id and count before them are still right, the slots after it in
@@ -154,6 +169,7 @@ public:
     const world::BiomeTable& biomes() const { return biomes_; }
     // Every registry the server sent in configuration.
     const Registries& registries() const { return registries_; }
+    const Dimension& dimension() const { return dimension_; }
     const Inventory& inventory() const { return inventory_; }
 
     // What the hud shows about the player. Health and food are in half units,
@@ -198,6 +214,8 @@ private:
     bool slot_format_warned_ = false;
     Inventory inventory_;
     Registries registries_;
+    Dimension dimension_;
+    void read_spawn_info(ByteBuffer& in);
     Vitals vitals_;
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;

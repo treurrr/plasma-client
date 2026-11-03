@@ -438,6 +438,49 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
     return true;
 }
 
+// What login and respawn both carry: which dimension, its type, the game mode
+// and a few world facts. The type is an index into the dimension_type registry
+// sent in configuration, and that entry is where the world's height lives.
+void Session::read_spawn_info(ByteBuffer& in) {
+    const int32_t type = in.read_varint();
+    dimension_.name = in.read_string();
+    in.read_i64();   // hashed seed
+    vitals_.game_mode = static_cast<int8_t>(in.read_u8());
+    in.read_u8();    // previous game mode
+    in.read_bool();  // debug world
+    in.read_bool();  // flat world
+    if (in.read_bool()) {   // where the player last died
+        in.read_string();
+        in.read_i64();
+    }
+    in.read_varint();   // portal cooldown
+    dimension_.sea_level = in.read_varint();
+
+    if (const auto* entry = registries_.at("minecraft:dimension_type", static_cast<size_t>(type))) {
+        dimension_.type = entry->name;
+        if (entry->data.has_value()) {
+            const auto& tag = *entry->data;
+            const auto integer = [&](std::string_view key, int32_t fallback) {
+                const auto* value = tag.find(key);
+                return value != nullptr ? static_cast<int32_t>(value->as_int().value_or(fallback))
+                                        : fallback;
+            };
+            const auto flag = [&](std::string_view key, bool fallback) {
+                const auto* value = tag.find(key);
+                return value != nullptr ? value->as_int().value_or(fallback ? 1 : 0) != 0
+                                        : fallback;
+            };
+            dimension_.min_y = integer("min_y", dimension_.min_y);
+            dimension_.height = integer("height", dimension_.height);
+            dimension_.has_skylight = flag("has_skylight", dimension_.has_skylight);
+            dimension_.has_ceiling = flag("has_ceiling", dimension_.has_ceiling);
+            if (const auto* value = tag.find("ambient_light"); value != nullptr) {
+                dimension_.ambient_light = static_cast<float>(value->as_double().value_or(0.0));
+            }
+        }
+    }
+}
+
 bool Session::handle_play(PacketConnection::Packet& packet) {
     const auto& cb = ids_->play_cb;
     auto& in = packet.data;
@@ -463,7 +506,19 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.login) {
         entity_id_ = in.read_i32();
-        status(std::format("entered the world, entity {}", entity_id_));
+        in.read_bool();   // hardcore
+        const int32_t worlds = in.read_varint();
+        for (int32_t i = 0; i < worlds; ++i) in.read_string();
+        in.read_varint();   // max players, which the client has no use for
+        in.read_varint();   // view distance
+        in.read_varint();   // simulation distance
+        in.read_bool();     // reduced debug info
+        in.read_bool();     // respawn screen
+        in.read_bool();     // limited crafting
+        read_spawn_info(in);
+        in.read_bool();     // enforces secure chat
+        status(std::format("entered the world, entity {}, in {} from y {} for {}", entity_id_,
+                           dimension_.name, dimension_.min_y, dimension_.height));
         return true;
     }
     if (packet.id == cb.player_position) {
