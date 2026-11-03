@@ -8,6 +8,7 @@ The oracle is compiled against the player's own remapped client jar
 prints "<what> <input> <value>" per line. The probe prints the values alone,
 in the same order. Every line must match exactly.
 """
+import json
 import os
 import subprocess
 import sys
@@ -27,10 +28,17 @@ def classpath():
     if not jar.exists():
         sys.exit(f"{jar} is missing: run ~/mc-reference/decompile.sh first")
     jars = [str(jar)]
+    # Only the versions this release lists: the launcher keeps every version
+    # it ever fetched, and a newer datafixerupper breaks the game's codecs.
     for root in LIBRARY_ROOTS:
-        if root.is_dir():
-            jars += [str(p) for p in root.rglob("*.jar")]
-            break
+        listing = root.parent / "versions" / VERSION / f"{VERSION}.json"
+        if not listing.is_file():
+            continue
+        for library in json.loads(listing.read_text())["libraries"]:
+            artifact = library.get("downloads", {}).get("artifact")
+            if artifact and (root / artifact["path"]).is_file():
+                jars.append(str(root / artifact["path"]))
+        break
     return os.pathsep.join(jars)
 
 
@@ -43,7 +51,9 @@ def main(args):
         subprocess.run(["javac", "-cp", cp, "-d", out, str(HERE / f"{oracle}.java")], check=True)
         expected = subprocess.run(["java", "-cp", out + os.pathsep + cp, oracle],
                                   capture_output=True, text=True, check=True).stdout.splitlines()
-    actual = subprocess.run([probe], capture_output=True, text=True, check=True).stdout.splitlines()
+    # A probe that decodes what the game wrote reads the oracle's lines on stdin.
+    actual = subprocess.run([probe], input="\n".join(expected) + "\n", capture_output=True,
+                            text=True, check=True).stdout.splitlines()
     if len(expected) != len(actual):
         print(f"{oracle}: {len(expected)} lines from the game, {len(actual)} from the probe")
         return 1
