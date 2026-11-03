@@ -6,21 +6,16 @@
 namespace mcpp::entity {
 namespace {
 
-constexpr float kPi = 3.14159265358979f;
-constexpr float kRadians = kPi / 180.0f;
+constexpr float kPi = 3.14159265358979323846f;
 
-// The body turns this fraction of the way to where it is going each tick, and
-// never lets the head get further round than this.
-constexpr float kBodyTurn = 0.3f;
-constexpr float kHeadLimit = 75.0f;
-// Walking backwards keeps the body facing forwards.
-constexpr float kBackwards = 95.0f;
-// The legs' swing: radians of cycle per block walked, and how far they reach.
-constexpr float kStride = 0.6662f;
-constexpr float kLegReach = 1.4f;
-constexpr float kArmReach = 1.0f;
+int sign(double value) { return value == 0.0 ? 0 : (value > 0.0 ? 1 : -1); }
 
-double lerp(double a, double b, float t) { return a + (b - a) * static_cast<double>(t); }
+float rotate_if_necessary(float current, float target, float limit) {
+    const float difference = std::clamp(wrap_degrees(target - current), -limit, limit);
+    return target - difference;
+}
+
+float clamp_x_rot(float degrees) { return std::clamp(std::fmod(degrees, 360.0f), -90.0f, 90.0f); }
 
 } // namespace
 
@@ -31,6 +26,7 @@ int TickClock::advance(float seconds) {
         accumulated_ -= kTick;
         ++ticks;
     }
+    ticks = std::min(ticks, 10);
     ticks_ += static_cast<uint64_t>(ticks);
     return ticks;
 }
@@ -42,175 +38,303 @@ float wrap_degrees(float degrees) {
     return out;
 }
 
-float lerp_degrees(float from, float to, float t) {
-    return from + wrap_degrees(to - from) * t;
+double wrap_degrees(double degrees) {
+    double out = std::fmod(degrees, 360.0);
+    if (out >= 180.0) out -= 360.0;
+    if (out < -180.0) out += 360.0;
+    return out;
 }
 
-void Motion::spawn(const Entity& entity) {
-    position[0] = old_position[0] = target[0] = entity.x;
-    position[1] = old_position[1] = target[1] = entity.y;
-    position[2] = old_position[2] = target[2] = entity.z;
-    yaw = old_yaw = target_yaw = entity.yaw;
-    pitch = old_pitch = target_pitch = entity.pitch;
-    head_yaw = old_head_yaw = target_head_yaw = entity.head_yaw;
-    body_yaw = old_body_yaw = entity.head_yaw;
-    steps = head_steps = 0;
+float rot_lerp(float t, float from, float to) { return from + t * wrap_degrees(to - from); }
+double rot_lerp(double t, double from, double to) { return from + t * wrap_degrees(to - from); }
+
+float rot_lerp_rad(float t, float from, float to) {
+    float difference = to - from;
+    while (difference < -kPi) difference += kPi * 2.0f;
+    while (difference >= kPi) difference -= kPi * 2.0f;
+    return from + t * difference;
 }
 
-void Motion::receive(const Entity& entity) {
-    target[0] = entity.x;
-    target[1] = entity.y;
-    target[2] = entity.z;
-    target_yaw = entity.yaw;
-    target_pitch = entity.pitch;
-    steps = kSteps;
-    if (entity.head_yaw != target_head_yaw) {
-        target_head_yaw = entity.head_yaw;
-        head_steps = kSteps;
+float lerp(float t, float from, float to) { return from + t * (to - from); }
+
+void WalkAnimation::update(float target, float factor, float scale) {
+    speed_old = speed;
+    speed = speed + (target - speed) * factor;
+    position = position + speed;
+    position_scale = scale;
+}
+
+void WalkAnimation::stop() {
+    speed_old = 0.0f;
+    speed = 0.0f;
+    position = 0.0f;
+}
+
+float WalkAnimation::speed_at(float partial) const {
+    return std::min(lerp(partial, speed_old, speed), 1.0f);
+}
+
+float WalkAnimation::position_at(float partial) const {
+    return (position - speed * (1.0f - partial)) * position_scale;
+}
+
+void Living::spawn(const Entity& entity) {
+    y_body_rot = y_head_rot = entity.head_yaw;
+    y_body_rot_o = y_body_rot;
+    y_head_rot_o = y_head_rot;
+    const double cx = std::clamp(entity.x, -3.0e7, 3.0e7);
+    const double cz = std::clamp(entity.z, -3.0e7, 3.0e7);
+    xo = x = cx;
+    yo = y = entity.y;
+    zo = z = cz;
+    y_rot = std::fmod(entity.yaw, 360.0f);
+    x_rot = std::fmod(std::clamp(entity.pitch, -90.0f, 90.0f), 360.0f);
+    y_rot_o = y_rot;
+    x_rot_o = x_rot;
+    last_stable_y_head_rot_ = y_head_rot;
+}
+
+void Living::snap_to(double nx, double ny, double nz, float yaw, float pitch) {
+    x = nx;
+    y = ny;
+    z = nz;
+    y_rot = yaw;
+    x_rot = clamp_x_rot(pitch);
+    set_old();
+}
+
+void Living::move_to(const double* position, const float* yaw, const float* pitch) {
+    const bool active = steps > 0;
+    const double to[3] = {
+        position != nullptr ? position[0] : (active ? target[0] : x),
+        position != nullptr ? position[1] : (active ? target[1] : y),
+        position != nullptr ? position[2] : (active ? target[2] : z),
+    };
+    const float to_y = yaw != nullptr ? *yaw : (active ? target_y_rot : y_rot);
+    const float to_x = pitch != nullptr ? *pitch : (active ? target_x_rot : x_rot);
+    if (interpolation_length == 0) {
+        snap_to(to[0], to[1], to[2], to_y, to_x);
+        steps = 0;
+        has_previous = false;
+        return;
     }
+    const float current_y = active ? target_y_rot : y_rot;
+    const float current_x = active ? target_x_rot : x_rot;
+    const bool same_position = active ? (target[0] == to[0] && target[1] == to[1] &&
+                                         target[2] == to[2])
+                                      : (x == to[0] && y == to[1] && z == to[2]);
+    if (active && current_y == to_y && current_x == to_x && same_position) return;
+    steps = interpolation_length;
+    target[0] = to[0];
+    target[1] = to[1];
+    target[2] = to[2];
+    target_y_rot = to_y;
+    target_x_rot = to_x;
+    has_previous = true;
+    previous[0] = x;
+    previous[1] = y;
+    previous[2] = z;
+    previous_x_rot = x_rot;
+    previous_y_rot = y_rot;
 }
 
-void Motion::swing() {
-    if (!swinging || swing_ticks >= kSwingTicks / 2 || swing_ticks < 0) {
-        swing_ticks = -1;
+void Living::lerp_head_to(float yaw, int32_t ticks) {
+    lerp_y_head_rot = yaw;
+    lerp_head_steps = ticks;
+}
+
+void Living::swing(bool off_hand) {
+    if (!swinging || swing_time >= swing_duration / 2 || swing_time < 0) {
+        swing_time = -1;
         swinging = true;
+        swinging_off_hand = off_hand;
     }
 }
 
-void Motion::tick() {
-    for (int axis = 0; axis < 3; ++axis) old_position[axis] = position[axis];
-    old_yaw = yaw;
-    old_pitch = pitch;
-    old_head_yaw = head_yaw;
-    old_body_yaw = body_yaw;
-    old_walk_speed = walk_speed;
-    old_attack = attack;
-    ++age;
-    if (hurt_ticks > 0) --hurt_ticks;
+void Living::damaged() {
+    walk.speed = 1.5f;
+    hurt_time = 10;
+}
 
-    if (steps > 0) {
-        const auto share = static_cast<double>(steps);
-        for (int axis = 0; axis < 3; ++axis) {
-            position[axis] += (target[axis] - position[axis]) / share;
-        }
-        yaw += wrap_degrees(target_yaw - yaw) / static_cast<float>(steps);
-        pitch += (target_pitch - pitch) / static_cast<float>(steps);
-        --steps;
+void Living::set_old() {
+    xo = x;
+    yo = y;
+    zo = z;
+    y_rot_o = y_rot;
+    x_rot_o = x_rot;
+}
+
+void Living::base_tick() {
+    o_attack_anim = attack_anim;
+    if (hurt_time > 0) --hurt_time;
+    if (dead) ++death_time;
+    y_head_rot_o = y_head_rot;
+    y_body_rot_o = y_body_rot;
+    y_rot_o = y_rot;
+    x_rot_o = x_rot;
+}
+
+void Living::interpolate() {
+    if (steps <= 0) {
+        steps = 0;
+        has_previous = false;
+        return;
     }
-    if (head_steps > 0) {
-        head_yaw += wrap_degrees(target_head_yaw - head_yaw) / static_cast<float>(head_steps);
-        --head_steps;
+    const double share = 1.0 / steps;
+    if (has_previous) {
+        target[0] += x - previous[0];
+        target[1] += y - previous[1];
+        target[2] += z - previous[2];
+        target_y_rot += y_rot - previous_y_rot;
+        target_x_rot += x_rot - previous_x_rot;
     }
+    const double nx = x + share * (target[0] - x);
+    const double ny = y + share * (target[1] - y);
+    const double nz = z + share * (target[2] - z);
+    const auto ny_rot = static_cast<float>(rot_lerp(share, static_cast<double>(y_rot),
+                                                    static_cast<double>(target_y_rot)));
+    const auto nx_rot = static_cast<float>(
+        static_cast<double>(x_rot) + share * (static_cast<double>(target_x_rot) - x_rot));
+    x = nx;
+    y = ny;
+    z = nz;
+    y_rot = std::fmod(ny_rot, 360.0f);
+    x_rot = clamp_x_rot(std::fmod(nx_rot, 360.0f));
+    --steps;
+    previous[0] = x;
+    previous[1] = y;
+    previous[2] = z;
+    previous_x_rot = x_rot;
+    previous_y_rot = y_rot;
+    has_previous = true;
+}
 
-    const double dx = position[0] - old_position[0];
-    const double dz = position[2] - old_position[2];
-    const auto moved = static_cast<float>(std::sqrt(dx * dx + dz * dz));
-
-    float heading = body_yaw;
-    if (moved * moved > 0.0025f) {
-        heading = static_cast<float>(std::atan2(dz, dx)) / kRadians - 90.0f;
-        if (std::abs(wrap_degrees(heading - head_yaw)) > kBackwards) heading += 180.0f;
+void Living::head_step() {
+    if (lerp_head_steps > 0) {
+        y_head_rot = static_cast<float>(rot_lerp(1.0 / lerp_head_steps,
+                                                 static_cast<double>(y_head_rot),
+                                                 static_cast<double>(lerp_y_head_rot)));
+        --lerp_head_steps;
     }
-    if (swinging) heading = head_yaw;
-    body_yaw += wrap_degrees(heading - body_yaw) * kBodyTurn;
-    const float off = wrap_degrees(head_yaw - body_yaw);
-    if (std::abs(off) > kHeadLimit) body_yaw = head_yaw - std::copysign(kHeadLimit, off);
+}
 
-    walk_speed += (std::min(moved * 4.0f, 1.0f) - walk_speed) * 0.4f;
-    walk_position += walk_speed;
-
+void Living::update_swing_time() {
     if (swinging) {
-        ++swing_ticks;
-        if (swing_ticks >= kSwingTicks) {
-            swing_ticks = 0;
+        ++swing_time;
+        if (swing_time >= swing_duration) {
+            swing_time = 0;
             swinging = false;
         }
     } else {
-        swing_ticks = 0;
+        swing_time = 0;
     }
-    attack = static_cast<float>(swing_ticks) / static_cast<float>(kSwingTicks);
+    attack_anim = static_cast<float>(swing_time) / static_cast<float>(swing_duration);
 }
 
-double Motion::x(float partial) const { return lerp(old_position[0], position[0], partial); }
-double Motion::y(float partial) const { return lerp(old_position[1], position[1], partial); }
-double Motion::z(float partial) const { return lerp(old_position[2], position[2], partial); }
-
-void pose_humanoid(const Model& model, const Motion& motion, float partial, Pose& pose) {
-    const float body = lerp_degrees(motion.old_body_yaw, motion.body_yaw, partial);
-    const float head = lerp_degrees(motion.old_head_yaw, motion.head_yaw, partial);
-    const float pitch = motion.old_pitch + (motion.pitch - motion.old_pitch) * partial;
-    const float speed = std::min(
-        motion.old_walk_speed + (motion.walk_speed - motion.old_walk_speed) * partial, 1.0f);
-    const float walked = motion.walk_position - motion.walk_speed * (1.0f - partial);
-    const float age = static_cast<float>(motion.age) + partial;
-
-    const auto part = [&](const char* name) -> PartPose* {
-        const int32_t index = model.find(name);
-        return index < 0 ? nullptr : &pose[index];
-    };
-
-    if (auto* p = part("head")) {
-        p->rotation[1] = wrap_degrees(head - body) * kRadians;
-        p->rotation[0] = pitch * kRadians;
+void Living::tick_head_turn(float target_body) {
+    const float turn = wrap_degrees(target_body - y_body_rot);
+    y_body_rot += turn * 0.3f;
+    const float off = wrap_degrees(y_rot - y_body_rot);
+    if (std::abs(off) > max_head_rotation) {
+        y_body_rot = y_body_rot + (off - static_cast<float>(sign(off)) * max_head_rotation);
     }
-    const float swing = std::cos(walked * kStride);
-    if (auto* p = part("right_leg")) p->rotation[0] = swing * kLegReach * speed;
-    if (auto* p = part("left_leg")) p->rotation[0] = -swing * kLegReach * speed;
-    auto* right_arm = part("right_arm");
-    auto* left_arm = part("left_arm");
-    if (right_arm != nullptr) right_arm->rotation[0] = -swing * kArmReach * speed;
-    if (left_arm != nullptr) left_arm->rotation[0] = swing * kArmReach * speed;
+}
 
-    // A swing: the arm comes up and over in front of the body while the body
-    // twists into it, over six ticks.
-    float attack = motion.old_attack + (motion.attack - motion.old_attack) * partial;
-    if (motion.swinging && motion.attack < motion.old_attack) attack = motion.attack;
-    if (attack > 0.0f && right_arm != nullptr) {
-        const float twist = std::sin(std::sqrt(attack) * kPi * 2.0f) * 0.2f;
-        if (auto* p = part("body")) p->rotation[1] = twist;
-        right_arm->offset[2] = std::sin(twist) * 5.0f;
-        right_arm->offset[0] = -(std::cos(twist) * 5.0f - 5.0f);
-        if (left_arm != nullptr) {
-            left_arm->offset[2] = -std::sin(twist) * 5.0f;
-            left_arm->offset[0] = std::cos(twist) * 5.0f - 5.0f;
-            left_arm->rotation[1] += twist;
+void Living::tick_body_rotation_control() {
+    constexpr float kMaxHeadYRot = 75.0f;
+    const double dx = x - xo;
+    const double dz = z - zo;
+    if (dx * dx + dz * dz > static_cast<double>(2.5000003E-7f)) {
+        y_body_rot = y_rot;
+        y_head_rot = rotate_if_necessary(y_head_rot, y_body_rot, kMaxHeadYRot);
+        last_stable_y_head_rot_ = y_head_rot;
+        no_turn_ticks_ = 0;
+    } else if (std::abs(y_head_rot - last_stable_y_head_rot_) > 15.0f) {
+        no_turn_ticks_ = 0;
+        last_stable_y_head_rot_ = y_head_rot;
+        y_body_rot = rotate_if_necessary(y_body_rot, y_head_rot, kMaxHeadYRot);
+    } else {
+        ++no_turn_ticks_;
+        if (no_turn_ticks_ > 10) {
+            const float share = std::clamp(static_cast<float>(no_turn_ticks_ - 10) / 10.0f,
+                                           0.0f, 1.0f);
+            y_body_rot = rotate_if_necessary(y_body_rot, y_head_rot, kMaxHeadYRot * (1.0f - share));
         }
-        right_arm->rotation[1] += twist * 2.0f;
-        const float eased = 1.0f - (1.0f - attack) * (1.0f - attack) * (1.0f - attack) *
-                                       (1.0f - attack);
-        const float lift = std::sin(eased * kPi) * 1.2f +
-                           std::sin(attack * kPi) * -(pitch * kRadians - 0.7f) * 0.75f;
-        right_arm->rotation[0] -= lift;
-        right_arm->rotation[2] += std::sin(attack * kPi) * -0.4f;
-    }
-
-    // Standing still is not standing frozen: the arms drift a little.
-    const float sway = std::cos(age * 0.09f) * 0.05f + 0.05f;
-    const float drift = std::sin(age * 0.067f) * 0.05f;
-    if (right_arm != nullptr) {
-        right_arm->rotation[2] += sway;
-        right_arm->rotation[0] += drift;
-    }
-    if (left_arm != nullptr) {
-        left_arm->rotation[2] -= sway;
-        left_arm->rotation[0] -= drift;
     }
 }
 
-Matrix model_transform(const Model& model, const Motion& motion, float partial,
-                       const double camera[3]) {
-    const float body = lerp_degrees(motion.old_body_yaw, motion.body_yaw, partial);
-    Matrix m = translation(static_cast<float>(motion.x(partial) - camera[0]),
-                           static_cast<float>(motion.y(partial) - camera[1]),
-                           static_cast<float>(motion.z(partial) - camera[2]));
-    m = multiply(m, rotation_y((180.0f - body) * kRadians));
-    if (motion.death_ticks > 0) {
-        const float fall = std::min(
-            1.0f, std::sqrt(std::max(0.0f, (static_cast<float>(motion.death_ticks) + partial - 1.0f) /
-                                                static_cast<float>(Motion::kDeathTicks) * 1.6f)));
-        m = multiply(m, rotation_z(fall * 90.0f * kRadians));
+void Living::turn_body_and_wrap() {
+    while (y_rot - y_rot_o < -180.0f) y_rot_o -= 360.0f;
+    while (y_rot - y_rot_o >= 180.0f) y_rot_o += 360.0f;
+    while (y_body_rot - y_body_rot_o < -180.0f) y_body_rot_o -= 360.0f;
+    while (y_body_rot - y_body_rot_o >= 180.0f) y_body_rot_o += 360.0f;
+    while (x_rot - x_rot_o < -180.0f) x_rot_o -= 360.0f;
+    while (x_rot - x_rot_o >= 180.0f) x_rot_o += 360.0f;
+    while (y_head_rot - y_head_rot_o < -180.0f) y_head_rot_o -= 360.0f;
+    while (y_head_rot - y_head_rot_o >= 180.0f) y_head_rot_o += 360.0f;
+}
+
+void Living::walk_animation(bool vertical) {
+    const double dx = x - xo;
+    const double dy = vertical ? y - yo : 0.0;
+    const double dz = z - zo;
+    const auto distance = static_cast<float>(std::sqrt(dx * dx + dy * dy + dz * dz));
+    if (!passenger && !dead) {
+        walk.update(std::min(distance * 4.0f, 1.0f), 0.4f, baby ? 3.0f : 1.0f);
+    } else {
+        walk.stop();
     }
-    return multiply(m, placement(180.0f, model.scale));
+}
+
+void Living::tick_remote_player() {
+    set_old();
+    ++tick_count;
+    base_tick();
+    interpolate();
+    head_step();
+    update_swing_time();
+
+    const double dx = x - xo;
+    const double dz = z - zo;
+    const auto moved = static_cast<float>(dx * dx + dz * dz);
+    float target_body = y_body_rot;
+    if (moved > 0.0025000002f) {
+        const float heading =
+            static_cast<float>(std::atan2(dz, dx)) * (180.0f / kPi) - 90.0f;
+        const float off = std::abs(wrap_degrees(y_rot) - heading);
+        target_body = (95.0f < off && off < 265.0f) ? heading - 180.0f : heading;
+    }
+    if (attack_anim > 0.0f) target_body = y_rot;
+    tick_head_turn(target_body);
+    turn_body_and_wrap();
+    walk_animation(false);
+}
+
+void Living::tick_mob() {
+    set_old();
+    ++tick_count;
+    base_tick();
+    interpolate();
+    head_step();
+    update_swing_time();
+    tick_body_rotation_control();
+    turn_body_and_wrap();
+    walk_animation(false);
+}
+
+double Living::x_at(float partial) const { return xo + static_cast<double>(partial) * (x - xo); }
+double Living::y_at(float partial) const { return yo + static_cast<double>(partial) * (y - yo); }
+double Living::z_at(float partial) const { return zo + static_cast<double>(partial) * (z - zo); }
+float Living::body_at(float partial) const { return rot_lerp(partial, y_body_rot_o, y_body_rot); }
+float Living::head_at(float partial) const { return rot_lerp(partial, y_head_rot_o, y_head_rot); }
+float Living::x_rot_at(float partial) const {
+    return partial == 1.0f ? x_rot : lerp(partial, x_rot_o, x_rot);
+}
+
+float Living::attack_at(float partial) const {
+    float difference = attack_anim - o_attack_anim;
+    if (difference < 0.0f) ++difference;
+    return o_attack_anim + difference * partial;
 }
 
 } // namespace mcpp::entity

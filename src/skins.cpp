@@ -275,16 +275,17 @@ bool decode_png(std::span<const uint8_t> file, entity::Texture& out) {
 
 bool normalise(entity::Texture& skin) {
     if (skin.width != 64 || (skin.height != 32 && skin.height != 64)) return false;
-    if (skin.height == 32) {
+    const bool legacy = skin.height == 32;
+    if (legacy) {
         skin.height = 64;
         skin.rgba.resize(64 * 64 * 4, 0);
-        // A legacy hat that is solid everywhere was drawn by an editor that
-        // filled the whole sheet; the game reads it as no hat.
-        if (all_opaque(skin, 32, 0, 64, 16)) set_alpha(skin, 32, 0, 64, 16, 0);
         mirror_limb(skin, 0, 16, 16, 48);
         mirror_limb(skin, 40, 16, 32, 48);
     }
     set_alpha(skin, 0, 0, 32, 16, 255);
+    // A legacy hat that is solid everywhere was drawn by an editor that
+    // filled the whole sheet; the game reads it as no hat.
+    if (legacy && all_opaque(skin, 32, 0, 64, 32)) set_alpha(skin, 32, 0, 64, 32, 0);
     set_alpha(skin, 0, 16, 64, 32, 255);
     set_alpha(skin, 16, 48, 48, 64, 255);
     return true;

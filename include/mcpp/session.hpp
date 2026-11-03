@@ -90,6 +90,17 @@ struct Entity {
     int32_t leashed_to = -1;
 };
 
+struct EntityMove {
+    int32_t id = 0;
+    double x = 0.0, y = 0.0, z = 0.0;
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    bool has_position = false;
+    bool has_rotation = false;
+    // entity_position_sync or teleport_entity: snapped instead when far.
+    bool absolute = false;
+};
+
 // One line of the player list. The list is what turns a player entity's uuid
 // into a name and a skin: add_entity carries neither.
 struct PlayerInfo {
@@ -200,6 +211,13 @@ struct SessionEvents {
         std::function<void(int32_t, float)> on_hurt;
         // Who rides whom changed; the entity is the vehicle.
         std::function<void(const Entity&)> on_passengers;
+        // A movement as the packet put it: which of position and angles it
+        // carried, and whether it was a sync or teleport rather than a step.
+        std::function<void(const EntityMove&)> on_moved;
+        // rotate_head: the head's own yaw, eased in apart from the body.
+        std::function<void(int32_t, float)> on_head;
+        // damage_event: the walk cycle kicks and the entity flashes red.
+        std::function<void(int32_t)> on_damage;
     } entities;
 
     struct Player {
@@ -389,6 +407,9 @@ private:
         bool player_list_broken = false;
         int32_t ping_ms = -1;
         std::map<std::string, PlayerInfo, std::less<>> players;
+        // Where relative moves count from: the last absolute or relative
+        // position the server sent, not where a teleport put the entity.
+        std::map<int32_t, std::array<double, 3>> move_bases;
     };
     EntityState entities_;
     void read_player_list(ByteBuffer& in);

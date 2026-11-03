@@ -1,4 +1,5 @@
 #include "mcpp/entity/model.hpp"
+#include "mcpp/entity/humanoid.hpp"
 #include "mcpp/entity/motion.hpp"
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -110,6 +111,14 @@ void test_packets() {
         teleport.write_bool(true);
         recording.add(2, cb.teleport_entity, teleport);
 
+        mcpp::ByteBuffer step;
+        step.write_varint(7);
+        step.write_u16(static_cast<uint16_t>(int16_t{4096}));
+        step.write_u16(0);
+        step.write_u16(static_cast<uint16_t>(int16_t{-1}));
+        step.write_bool(true);
+        recording.add(2, cb.move_entity_pos, step);
+
         mcpp::ByteBuffer rider;
         rider.write_varint(8);
         write_uuid(rider, 1, 2);
@@ -144,6 +153,8 @@ void test_packets() {
     mcpp::SessionEvents handlers;
     handlers.on_status = [&](std::string_view line) { lines.emplace_back(line); };
     handlers.entities.on_event = [&](int32_t id, uint8_t status) { events.emplace_back(id, status); };
+    std::vector<mcpp::EntityMove> moves;
+    handlers.entities.on_moved = [&](const mcpp::EntityMove& move) { moves.push_back(move); };
     mcpp::Session session(options, handlers);
     session.connect();
     while (session.pump()) {
@@ -168,7 +179,9 @@ void test_packets() {
         const auto& e = found->second;
         check(mcpp::uuid_string(e.uuid) == "01234567-89ab-cdef-fedc-ba9876543210",
               "uuid string matches the player list's");
-        check(near(e.x, 11.5) && near(e.y, 70.0) && near(e.z, 2.0), "teleport, x relative");
+        // A step counts from where the last step left it, not from the
+        // teleport: x 10.5 plus one block, z -3.25 less one 4096th.
+        check(e.x == 11.5 && e.y == 64.0 && e.z == -3.25 - 1.0 / 4096, "step from the base");
         check(near(e.yaw, 180.0) && near(e.pitch, 10.0), "teleport angles");
         check(near(e.head_yaw, -45.0), "head yaw from rotate_head");
         check(e.vehicle == 8, "rides 8");
@@ -178,95 +191,111 @@ void test_packets() {
     if (const auto found = entities.find(8); found != entities.end()) {
         check(found->second.passengers == std::vector<int32_t>{7}, "8 carries 7");
     }
+    check(moves.size() == 2 && moves[0].absolute && moves[0].x == 11.5 && moves[0].z == 2.0,
+          "teleport, x relative");
+    check(moves.size() == 2 && moves[1].has_position && !moves[1].has_rotation &&
+              !moves[1].absolute,
+          "a step carries a position only");
     check(events.size() == 1 && events[0] == std::pair<int32_t, uint8_t>{7, 3}, "death event");
     fs::remove(file);
 }
 
+const char* kTwoBoxes = R"(
+[thing]
+texture 64 32
+part root
+part body pivot 0 12 0 rotate 0.5 0 0
+  box -4 0 -2  8 12 4  uv 16 16
+part body/arm pivot 5 2 0
+  box -1 -2 -2  4 12 4  uv 40 16 grow 0.25 mirror faces ns
+)";
+
 void test_model() {
     mcpp::entity::ModelSet set;
-    set.parse(R"(
-[cube]
-texture thing 64 32
-part root pivot 0 24 0
-  box -4 -8 -4  8 8 8  uv 0 0
-part lid parent root pivot 0 -8 0 rotate 90 0 0
-  box -1 -1 -1  2 2 2  uv 32 0 inflate 0.5 mirror
-)");
-    const auto* model = set.find("cube");
-    check(model != nullptr && model->parts.size() == 2, "two parts");
-    if (model == nullptr) return;
-    check(model->parts[1].parent == 0 && near(model->parts[1].rotation[0], 3.14159265 / 2),
-          "parent and degrees read as radians");
-    check(model->parts[1].boxes[0].mirror && near(model->parts[1].boxes[0].inflate, 0.5),
-          "box options");
+    set.parse(kTwoBoxes);
+    const auto* model = set.find("thing");
+    check(model != nullptr && model->parts.size() == 3, "three parts, root first");
+    if (model == nullptr || model->parts.size() != 3) return;
+    check(model->texture_width == 64 && model->texture_height == 32, "texture size");
+    check(model->find("body/arm") == 2 && model->parts[2].parent == 1, "child after its parent");
+    check(model->parts[1].parent == 0, "top parts hang from the root");
+    const auto& arm = model->parts[2].boxes[0];
+    check(arm.mirror && arm.faces == 0x0C && near(arm.grow[2], 0.25), "box flags");
+
+    // The game's cube: 6 faces in the order down, up, west, north, east,
+    // south, two triangles each; the body's first vertex is the down face's
+    // first corner, (max x, min y, max z), at the island's top right of the
+    // bottom rectangle.
+    std::vector<mcpp::entity::Vertex> vertices;
+    check(mcpp::entity::bake(*model, vertices) == 36 + 12, "36 vertices, and 12 for two faces");
+    const auto& v = vertices[0];
+    check(near(v.position[0], 4.0 / 16) && near(v.position[1], 0.0) &&
+              near(v.position[2], 2.0 / 16),
+          "first corner of the down face");
+    check(near(v.uv[0], (16 + 4 + 8) / 64.0) && near(v.uv[1], 16 / 32.0), "its uv");
+    check(v.normal[1] == -127 && v.part == 1, "down normal, body part");
+    // The mirrored arm swaps x and reverses each face; its north face is
+    // the first it has.
+    const auto& m = vertices[36];
+    check(m.part == 2 && m.normal[2] == -127, "mirrored arm's north face");
+    check(near(m.position[0], (-1 - 0.25) / 16.0), "mirrored corner takes the other x");
 
     mcpp::entity::Pose pose(*model);
-    std::vector<mcpp::entity::Vertex> out;
-    mcpp::entity::build_mesh(*model, pose, mcpp::entity::identity(), out);
-    check(out.size() == 72, "two boxes, 36 vertices each");
-
-    // The front face of the first box uses the island's front rectangle:
-    // u from 8 to 16 and v from 8 to 16 on a 64x32 sheet.
-    float u_low = 1.0f, u_high = 0.0f, v_low = 1.0f, v_high = 0.0f;
-    for (size_t i = 0; i < 6; ++i) {
-        u_low = std::min(u_low, out[i].uv[0]);
-        u_high = std::max(u_high, out[i].uv[0]);
-        v_low = std::min(v_low, out[i].uv[1]);
-        v_high = std::max(v_high, out[i].uv[1]);
-        check(near(out[i].position[2], -4.0) && near(out[i].normal[2], -1.0), "front at -z");
-    }
-    check(near(u_low, 8.0 / 64) && near(u_high, 16.0 / 64) && near(v_low, 8.0 / 32) &&
-              near(v_high, 16.0 / 32),
-          "front face uv");
-
-    pose[0].visible = false;
-    out.clear();
-    mcpp::entity::build_mesh(*model, pose, mcpp::entity::identity(), out);
-    check(out.empty(), "a hidden part hides its children");
-
-    bool threw = false;
-    try {
-        set.parse("[x]\npart a parent nobody\n");
-    } catch (const std::exception& error) {
-        threw = std::string_view(error.what()).find("line 2") != std::string_view::npos;
-    }
-    check(threw, "a bad parent is reported with its line");
-
-    // Standing at the origin facing south, a player's head top is 1.875 up.
-    const auto m = mcpp::entity::placement(0.0f, 0.9375f);
-    const float top[3] = {0.0f, -8.0f, 0.0f};
-    const float y = m[1] * top[0] + m[5] * top[1] + m[9] * top[2] + m[13];
-    check(near(y, 1.876, 1e-3), std::format("head top at {:.4f}", y));
-    // Its front faces +z, and its own right is towards -x.
-    const float front_z = m[2] * 0 + m[6] * 0 + m[10] * -1.0f;
-    check(front_z > 0.0f, "front faces south");
-    const float right_x = m[0] * -1.0f;
-    check(right_x < 0.0f, "right hand to the west");
+    std::vector<mcpp::entity::Matrix> matrices(3);
+    pose.parts[2].visible = false;
+    mcpp::entity::pose_matrices(*model, pose, mcpp::entity::identity(), matrices);
+    check(near(matrices[1][13], 12.0 / 16) && near(matrices[1][5], std::cos(0.5)),
+          "pivot then rotation");
+    check(matrices[2][15] == 0.0f, "a hidden part draws nothing");
 }
 
 void test_motion() {
     mcpp::Entity entity;
-    entity.x = 0.0;
     entity.yaw = 170.0f;
     entity.head_yaw = 170.0f;
-    mcpp::entity::Motion motion;
-    motion.spawn(entity);
-    entity.x = 3.0;
-    entity.yaw = -170.0f;
-    motion.receive(entity);
-    motion.tick();
-    check(near(motion.position[0], 1.0), "a third of the way after one tick");
-    check(near(motion.yaw, 176.6667, 1e-3), "yaw through the short way round");
-    motion.tick();
-    motion.tick();
-    check(near(motion.position[0], 3.0), "there after three");
-    motion.tick();
-    check(near(motion.position[0], 3.0) && motion.steps == 0, "and stays");
-    check(motion.walk_speed > 0.0f, "walking counted");
+    mcpp::entity::Living living;
+    living.spawn(entity);
+    const double to[3] = {3.0, 0.0, 0.0};
+    const float yaw = -170.0f;
+    const float pitch = 0.0f;
+    living.move_to(to, &yaw, &pitch);
+    living.tick_remote_player();
+    check(near(living.x, 1.0), "a third of the way after one tick");
+    check(near(living.y_rot, 176.6667, 1e-3), "yaw through the short way round");
+    check(near(living.xo, 0.0), "the old position is the last tick's");
+    living.tick_remote_player();
+    check(near(living.x, 2.0), "half the rest after two");
+    living.tick_remote_player();
+    check(near(living.x, 3.0) && living.steps == 0, "there after three");
+    living.tick_remote_player();
+    check(near(living.x, 3.0), "and stays");
+    // Moving a block a tick: the walk eases toward full speed by 0.4.
+    check(living.walk.speed > 0.0f, "walking counted");
+
+    // The body turns three tenths of the way and never lets the head more
+    // than fifty degrees round.
+    mcpp::entity::Living still;
+    entity.yaw = 0.0f;
+    entity.head_yaw = 0.0f;
+    still.spawn(entity);
+    still.y_rot = 90.0f;
+    still.tick_remote_player();
+    check(near(still.y_body_rot, 40.0), "the body pulled to fifty off the head");
+    still.tick_remote_player();
+    check(near(still.y_body_rot, 40.0), "and no further while standing");
+
+    mcpp::entity::Living swinger;
+    swinger.swing(false);
+    swinger.tick_remote_player();
+    check(swinger.swing_time == 0 && near(swinger.attack_anim, 0.0), "swing starts at -1");
+    swinger.tick_remote_player();
+    check(near(swinger.attack_anim, 1.0 / 6.0), "a sixth a tick");
+    for (int i = 0; i < 5; ++i) swinger.tick_remote_player();
+    check(!swinger.swinging && near(swinger.attack_anim, 0.0), "over after six");
 
     mcpp::entity::TickClock clock;
     check(clock.advance(0.12f) == 2 && near(clock.partial(), 0.4, 1e-3), "two ticks and a bit");
-    check(clock.advance(5.0f) == 20, "a stall is capped at a second");
+    check(clock.advance(5.0f) == 10, "a stall runs ten ticks at most");
 }
 
 void test_skins() {

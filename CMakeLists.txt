@@ -72,6 +72,8 @@ mcpp_shader(ui.vert UiVert)
 mcpp_shader(ui.frag UiFrag)
 mcpp_shader(entity.vert EntityVert)
 mcpp_shader(entity.frag EntityFrag)
+mcpp_shader(entity_flat.vert EntityFlatVert)
+mcpp_shader(entity_flat.frag EntityFlatFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
 if(glfw3_FOUND)
@@ -117,6 +119,7 @@ add_library(mcpp_net STATIC
     src/entity/model.cpp
     src/entity/assets.cpp
     src/entity/motion.cpp
+    src/entity/humanoid.cpp
     src/entity/scene.cpp
     src/skins.cpp
     src/gpu/entity_renderer.cpp

@@ -15,27 +15,34 @@ void entities_bind(Game& game, mcpp::SessionEvents& events) {
                      "will be drawn\n";
     }
     area.skins.emplace();
-    area.scene.emplace(area.assets,
-                       mcpp::entity::load_entity_types(mcpp::entity::default_registries_path(
-                           mcpp::protocol::kTargetProtocol)),
+    area.scene.emplace(mcpp::entity::load_entity_types(
+                           mcpp::entity::default_registries_path(mcpp::protocol::kTargetProtocol)),
                        &*area.skins);
     auto& scene = *area.scene;
     events.entities.on_add = [&scene](const mcpp::Entity& entity) { scene.add(entity); };
-    events.entities.on_move = [&scene](const mcpp::Entity& entity) { scene.move(entity); };
+    events.entities.on_moved = [&scene](const mcpp::EntityMove& move) { scene.moved(move); };
+    events.entities.on_head = [&scene](int32_t id, float yaw) { scene.head(id, yaw); };
     events.entities.on_remove = [&scene](int32_t id) { scene.remove(id); };
     events.entities.on_animate = [&scene](int32_t id, uint8_t action) { scene.animate(id, action); };
     events.entities.on_hurt = [&scene](int32_t id, float) { scene.hurt(id); };
+    events.entities.on_damage = [&scene](int32_t id) { scene.damaged(id); };
     events.entities.on_event = [&scene](int32_t id, uint8_t status) { scene.event(id, status); };
+    events.entities.on_player_info = [&scene](const mcpp::PlayerInfo& info) {
+        scene.player_info(info);
+    };
+    events.entities.on_player_remove = [&scene](std::string_view uuid) { scene.player_gone(uuid); };
 }
 
 void entities_start(Game& game) {
     auto& area = game.entities;
     auto& renderer = area.renderer.emplace(game.device, game.renderer->colour_format());
-    renderer.set_font(area.assets.font());
+    renderer.load(area.assets);
+    area.scene->bind(renderer);
     game.renderer->set_in_world([&renderer](VkCommandBuffer command, const float* view_projection,
                                             uint32_t width, uint32_t height, const float* fog,
                                             const mcpp::gpu::Camera& camera) {
-        renderer.record(command, view_projection, width, height, fog, camera.fog_start,
+        const double eye[3] = {camera.eye[0], camera.eye[1], camera.eye[2]};
+        renderer.record(command, view_projection, eye, width, height, fog, camera.fog_start,
                         camera.fog_end);
     });
 }
@@ -50,6 +57,7 @@ void entities_tick(Game& game) {
 
 void entities_draw(Game& game) {
     auto& area = game.entities;
+    if (!area.renderer) return;
     auto& renderer = *area.renderer;
     renderer.begin();
     mcpp::entity::View view;
@@ -58,7 +66,6 @@ void entities_draw(Game& game) {
         view.forward[axis] = game.camera.target[axis] - game.camera.eye[axis];
     }
     view.partial = area.clock.partial();
-    view.self = game.session->entity_id();
     const auto light = [&game](int32_t x, int32_t y, int32_t z) -> std::array<uint8_t, 2> {
         auto& world = game.world;
         std::lock_guard lock(world.world_guard);
@@ -68,7 +75,7 @@ void entities_draw(Game& game) {
         return {found->second.sky_light_at(x & 15, index, z & 15),
                 found->second.block_light_at(x & 15, index, z & 15)};
     };
-    area.scene->draw(renderer, *game.session, view, light);
+    area.scene->draw(renderer, view, light);
 }
 
 void entities_stop(Game& game) {

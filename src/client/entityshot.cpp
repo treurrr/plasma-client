@@ -1,8 +1,7 @@
 #include "client/entityshot.hpp"
 
 #include "mcpp/entity/assets.hpp"
-#include "mcpp/entity/motion.hpp"
-#include "mcpp/entity/scene.hpp"
+#include "mcpp/entity/humanoid.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/entity_renderer.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
@@ -46,7 +45,7 @@ int entityshot(int argc, char** argv) {
     if (argc < 3) {
         std::cerr << "usage: entityshot <model> [out-prefix] [--skin <png>|<texture>] "
                      "[--models <file>] [--walk <phase>] [--yaw <head>] [--pitch <deg>] "
-                     "[--close] [--swing <0..1>]\n";
+                     "[--close] [--crouch] [--age <ticks>] [--swing <0..1>]\n";
         return 2;
     }
     const std::string model_name = argv[2];
@@ -57,7 +56,9 @@ int entityshot(int argc, char** argv) {
     float head = 0.0f;
     float pitch = 0.0f;
     float swing = -1.0f;
+    float age = 0.0f;
     bool close = false;
+    bool crouch = false;
     for (int i = 3; i < argc; ++i) {
         const std::string argument = argv[i];
         const auto next = [&]() -> std::string {
@@ -71,6 +72,8 @@ int entityshot(int argc, char** argv) {
         else if (argument == "--pitch") pitch = std::stof(next());
         else if (argument == "--swing") swing = std::stof(next());
         else if (argument == "--close") close = true;
+        else if (argument == "--crouch") crouch = true;
+        else if (argument == "--age") age = std::stof(next());
         else prefix = argument;
     }
 
@@ -86,32 +89,6 @@ int entityshot(int argc, char** argv) {
         return 1;
     }
 
-    mcpp::entity::Texture texture;
-    std::string texture_name = model->texture;
-    if (!skin.empty() && std::filesystem::exists(skin)) {
-        const std::string bytes = read_file(skin);
-        if (!mcpp::skins::decode_png({reinterpret_cast<const uint8_t*>(bytes.data()),
-                                      bytes.size()},
-                                     texture)) {
-            std::cerr << std::format("{} is not a png this client reads\n", skin);
-            return 1;
-        }
-        if (model_name.starts_with("player") && !mcpp::skins::normalise(texture)) {
-            std::cerr << std::format("{} is {}x{}, which is no skin\n", skin, texture.width,
-                                     texture.height);
-            return 1;
-        }
-        texture_name = "file:" + skin;
-    } else {
-        if (!skin.empty()) texture_name = skin;
-        const auto* baked = assets.texture(texture_name);
-        if (baked == nullptr) {
-            std::cerr << std::format("no texture {}\n", texture_name);
-            return 1;
-        }
-        texture = *baked;
-    }
-
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options gpu_options;
     gpu_options.validation = true;
@@ -124,35 +101,66 @@ int entityshot(int argc, char** argv) {
     constexpr uint32_t kSide = 720;
     mcpp::gpu::WorldRenderer world(device, kSide, kSide, atlas);
     mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
-    renderer.upload_texture(texture_name, texture);
-    renderer.set_font(assets.font());
+    renderer.load(assets);
+    const int32_t model_index = renderer.model(model_name);
 
-    mcpp::entity::Motion motion;
-    mcpp::Entity entity;
-    entity.head_yaw = head;
-    entity.pitch = pitch;
-    motion.spawn(entity);
-    motion.body_yaw = motion.old_body_yaw = 0.0f;
+    const bool player = model_name == "player" || model_name == "player_slim";
+    uint32_t texture = 0;
+    if (!skin.empty() && std::filesystem::exists(skin)) {
+        const std::string bytes = read_file(skin);
+        mcpp::entity::Texture image;
+        if (!mcpp::skins::decode_png({reinterpret_cast<const uint8_t*>(bytes.data()),
+                                      bytes.size()},
+                                     image)) {
+            std::cerr << std::format("{} is not a png this client reads\n", skin);
+            return 1;
+        }
+        if (player && !mcpp::skins::normalise(image)) {
+            std::cerr << std::format("{} is {}x{}, which is no skin\n", skin, image.width,
+                                     image.height);
+            return 1;
+        }
+        const int32_t layer = renderer.upload_skin(image);
+        if (layer < 0) return 1;
+        texture = mcpp::gpu::EntityRenderer::kSkinBit | static_cast<uint32_t>(layer);
+    } else {
+        if (skin.empty()) {
+            skin = model_name == "player_slim" ? "player/slim/alex" : "player/wide/steve";
+        }
+        const int32_t baked = renderer.texture(skin);
+        if (baked < 0) {
+            std::cerr << std::format("no texture {}\n", skin);
+            return 1;
+        }
+        texture = static_cast<uint32_t>(baked);
+    }
+
+    mcpp::entity::HumanoidState state;
+    state.y_rot = head;
+    state.x_rot = pitch;
+    state.crouching = crouch;
+    state.age_in_ticks = age;
     if (walk >= 0.0f) {
-        motion.walk_speed = motion.old_walk_speed = 1.0f;
-        motion.walk_position = walk * 2.0f * 3.14159265f / 0.6662f;
+        state.walk_speed = 1.0f;
+        state.walk_position = walk * 2.0f * 3.14159265f / 0.6662f;
     }
-    if (swing >= 0.0f) {
-        motion.swinging = true;
-        motion.attack = motion.old_attack = swing;
+    if (swing >= 0.0f) state.attack_time = swing;
+    mcpp::entity::Pose pose(*model);
+    const auto parts = mcpp::entity::HumanoidParts::of(*model);
+    if (parts.complete()) {
+        if (player) mcpp::entity::animate_player(*model, parts, state, pose);
+        else mcpp::entity::animate_humanoid(*model, parts, state, pose);
     }
 
-    const float height = model->height;
+    const float height = 1.8f;
     const float middle = height * 0.5f;
-    const float reach = std::max(height, model->width) * 1.9f;
+    const float reach = height * 1.9f;
     std::vector<Shot> shots = {
         {"front", {0.0f, middle, reach}, {0.0f, middle, 0.0f}},
         {"right", {-reach, middle, 0.0f}, {0.0f, middle, 0.0f}},
         {"back", {0.0f, middle, -reach}, {0.0f, middle, 0.0f}},
         {"top", {0.0f, middle + reach, 0.02f}, {0.0f, middle, 0.0f}},
         {"angle", {reach * 0.62f, middle + reach * 0.45f, reach * 0.72f}, {0.0f, middle, 0.0f}},
-        // Nearly orthographic from (1, 1, 1), the way the wiki's renders are taken.
-        {"iso", {30.0f, middle + 30.0f, 30.0f}, {0.0f, middle, 0.0f}},
     };
     if (close) {
         const float face = height * 0.82f;
@@ -161,41 +169,49 @@ int entityshot(int argc, char** argv) {
             {"face-angle", {0.8f, face + 0.3f, 0.8f}, {0.0f, face, 0.0f}},
             {"shoulder", {-0.9f, height * 0.62f, 0.5f}, {-0.2f, height * 0.62f, 0.0f}},
             {"under", {0.3f, -0.4f, 0.9f}, {0.0f, 0.3f, 0.0f}},
+            {"hip", {-0.7f, 0.75f, 0.45f}, {0.0f, 0.75f, 0.0f}},
         };
     }
 
-    const double origin[3] = {0.0, 0.0, 0.0};
+    std::vector<mcpp::entity::Matrix> matrices(model->parts.size());
     for (const auto& shot : shots) {
-        renderer.begin();
-        mcpp::entity::Pose pose(*model);
-        mcpp::entity::pose_humanoid(*model, motion, 1.0f, pose);
-        std::vector<mcpp::entity::Vertex> vertices;
-        mcpp::entity::build_mesh(*model, pose,
-                                 mcpp::entity::model_transform(*model, motion, 1.0f, origin) ,
-                                 vertices);
-        mcpp::gpu::EntityRenderer::Draw draw;
-        draw.texture = texture_name;
-        draw.layer = model_name.starts_with("player")
-                         ? mcpp::gpu::EntityRenderer::Layer::CutoutNoCull
-                         : mcpp::gpu::EntityRenderer::Layer::Cutout;
-        renderer.add(vertices, draw);
-
         mcpp::gpu::Camera camera{};
         for (int axis = 0; axis < 3; ++axis) {
             camera.eye[axis] = shot.eye[axis];
             camera.target[axis] = shot.target[axis];
         }
-        camera.fov_degrees = shot.name == "iso" ? 2.8f : 50.0f;
+        camera.fov_degrees = 50.0f;
         camera.near_plane = 0.05f;
+
+        // Standing at the origin facing south, the way the game spawns a
+        // model with no yaw: the camera's own position comes back out in
+        // the renderer.
+        renderer.begin();
+        using namespace mcpp::entity;
+        Matrix root = translation(-shot.eye[0], -shot.eye[1] + (crouch ? -0.125f : 0.0f),
+                                  -shot.eye[2]);
+        root = multiply(root, rotation_y(180.0f * 3.14159265f / 180.0f));
+        root = multiply(root, scaling(-1.0f, -1.0f, 1.0f));
+        if (player) root = multiply(root, scaling(0.9375f, 0.9375f, 0.9375f));
+        root = multiply(root, translation(0.0f, -1.501f, 0.0f));
+        pose_matrices(*model, pose, root, matrices);
+        mcpp::gpu::EntityRenderer::Instance instance;
+        instance.model = model_index;
+        instance.texture = texture;
+        instance.type = player ? mcpp::gpu::EntityRenderer::Type::Translucent
+                               : mcpp::gpu::EntityRenderer::Type::CutoutNoCull;
+        renderer.add(instance, matrices);
+
         world.set_in_world([&](VkCommandBuffer command, const float* view_projection,
                                uint32_t width, uint32_t height_px, const float* fog,
-                               const mcpp::gpu::Camera&) {
-            renderer.record(command, view_projection, width, height_px, fog, 0.0f, 0.0f);
+                               const mcpp::gpu::Camera& cam) {
+            const double eye[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
+            renderer.record(command, view_projection, eye, width, height_px, fog, 0.0f, 0.0f);
         });
         const auto pixels = world.render(camera);
         const std::string out = std::format("{}-{}.png", prefix, shot.name);
         mcpp::write_png(out, kSide, kSide, pixels);
-        std::cout << std::format("- {}: {} vertices\n", out, vertices.size());
+        std::cout << std::format("- {}\n", out);
     }
     return 0;
 }

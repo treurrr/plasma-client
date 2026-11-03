@@ -5,8 +5,8 @@ Usage: bake_entities.py <client.jar> <data/entity_models.txt> <out.plen>
 
 Every texture under textures/entity/ as RGBA, the shadow, the ascii sheet of
 the default font with each glyph's advance (for name tags), and the model
-geometry, which is not in the jar at all and comes from the hand-written data
-file instead. The textures are Mojang's art, read from the player's own jar and
+geometry, which is not in the jar's assets and comes from the data file that
+tools/export/export_models.py writes by asking the game. The textures are Mojang's art, read from the player's own jar and
 never committed here.
 """
 import io

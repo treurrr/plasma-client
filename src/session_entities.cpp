@@ -4,6 +4,7 @@
 #include "mcpp/nbt.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 
 namespace mcpp {
@@ -100,6 +101,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         entity.head_yaw = read_angle(in);
         entity.data = in.read_varint();
         const auto& stored = entities_.entities[entity.id] = entity;
+        entities_.move_bases[entity.id] = {entity.x, entity.y, entity.z};
         if (events_.entities.on_add) events_.entities.on_add(stored);
         return true;
     }
@@ -116,21 +118,24 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         entity.yaw = in.read_f32();
         entity.pitch = in.read_f32();
         entity.on_ground = in.read_bool();
+        entities_.move_bases[id] = {entity.x, entity.y, entity.z};
         if (events_.entities.on_move) events_.entities.on_move(entity);
+        if (events_.entities.on_moved) {
+            events_.entities.on_moved({id, entity.x, entity.y, entity.z, entity.yaw, entity.pitch,
+                                       true, true, true});
+        }
         return true;
     }
     if (packet.id == cb.move_entity_pos || packet.id == cb.move_entity_pos_rot ||
         packet.id == cb.move_entity_rot) {
-        // Positions move in 1/4096 of a block relative to where it last was;
-        // angles are absolute, yaw first. Every one ends on the ground flag.
+        // Positions move in 1/4096 of a block from the last position sent,
+        // rounded to that grid first; angles are absolute, yaw first. Every
+        // one ends on the ground flag.
         const int32_t id = in.read_varint();
-        double dx = 0.0;
-        double dy = 0.0;
-        double dz = 0.0;
-        if (packet.id != cb.move_entity_rot) {
-            dx = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
-            dy = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
-            dz = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+        int64_t delta[3] = {0, 0, 0};
+        const bool moved = packet.id != cb.move_entity_rot;
+        if (moved) {
+            for (int64_t& d : delta) d = static_cast<int16_t>(in.read_u16());
         }
         float yaw = 0.0f;
         float pitch = 0.0f;
@@ -143,15 +148,27 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         const auto found = entities_.entities.find(id);
         if (found != entities_.entities.end()) {
             Entity& entity = found->second;
-            entity.x += dx;
-            entity.y += dy;
-            entity.z += dz;
+            auto& base = entities_.move_bases[id];
+            if (moved) {
+                for (int axis = 0; axis < 3; ++axis) {
+                    if (delta[axis] == 0) continue;
+                    const auto encoded = static_cast<int64_t>(std::floor(base[axis] * 4096.0 + 0.5));
+                    base[axis] = static_cast<double>(encoded + delta[axis]) / 4096.0;
+                }
+                entity.x = base[0];
+                entity.y = base[1];
+                entity.z = base[2];
+            }
             if (turned) {
                 entity.yaw = yaw;
                 entity.pitch = pitch;
             }
             entity.on_ground = on_ground;
             if (events_.entities.on_move) events_.entities.on_move(entity);
+            if (events_.entities.on_moved) {
+                events_.entities.on_moved({id, base[0], base[1], base[2], yaw, pitch, moved,
+                                           turned, false});
+            }
         }
         return true;
     }
@@ -178,6 +195,10 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
             entity.pitch = (relative & (1u << 4)) != 0 ? entity.pitch + pitch : pitch;
             entity.on_ground = on_ground;
             if (events_.entities.on_move) events_.entities.on_move(entity);
+            if (events_.entities.on_moved) {
+                events_.entities.on_moved({id, entity.x, entity.y, entity.z, entity.yaw,
+                                           entity.pitch, true, true, true});
+            }
         }
         return true;
     }
@@ -187,6 +208,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         if (const auto found = entities_.entities.find(id); found != entities_.entities.end()) {
             found->second.head_yaw = head_yaw;
             if (events_.entities.on_move) events_.entities.on_move(found->second);
+            if (events_.entities.on_head) events_.entities.on_head(id, head_yaw);
         }
         return true;
     }
@@ -233,11 +255,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
             in.read_f64();
             in.read_f64();
         }
-        if (events_.entities.on_hurt) {
-            const auto found = entities_.entities.find(id);
-            events_.entities.on_hurt(id, found != entities_.entities.end() ? found->second.yaw
-                                                                           : 0.0f);
-        }
+        if (events_.entities.on_damage) events_.entities.on_damage(id);
         return true;
     }
     if (packet.id == cb.set_passengers) {
@@ -288,6 +306,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         for (int32_t i = 0; i < count; ++i) {
             const int32_t id = in.read_varint();
             entities_.entities.erase(id);
+            entities_.move_bases.erase(id);
             entities_.effects.erase(id);
             entities_.attributes.erase(id);
             if (events_.entities.on_remove) events_.entities.on_remove(id);

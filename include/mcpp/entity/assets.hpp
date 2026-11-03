@@ -40,6 +40,7 @@ public:
     const Texture* shadow() const { return texture("$shadow"); }
     const Font& font() const { return font_; }
     size_t texture_count() const { return textures_.size(); }
+    const std::map<std::string, Texture, std::less<>>& textures() const { return textures_; }
 
     static std::filesystem::path default_path(int32_t protocol);
 

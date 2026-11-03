@@ -8,42 +8,52 @@
 
 namespace mcpp::entity {
 
-// The game's model space, kept as the game has it so that every number in the
-// data file can be checked against the skin layout: pixels, y pointing down,
-// the model facing -z, its own right at -x, and the feet 24 pixels below the
-// origin.
+// The game's model space, kept as the game builds it so every number can be
+// checked against data/entity_models.txt: pixels, y pointing down, the model
+// facing -z with its own right at -x.
 struct Box {
-    std::array<float, 3> origin{};   // the corner nearest -x, -y, -z
+    std::array<float, 3> origin{};
     std::array<float, 3> size{};
-    float inflate = 0.0f;            // grows every side, leaving the uvs alone
-    std::array<float, 2> uv{};       // the top left of the box's texture island
+    std::array<float, 3> grow{};
+    std::array<uint16_t, 2> uv{};
+    // The width and height its uvs are divided by: the layer's texture size,
+    // unless the box scales its own.
+    std::array<float, 2> texture_size{64.0f, 64.0f};
     bool mirror = false;
+    // Down, up, north, south, west, east; a box can leave faces out.
+    uint8_t faces = 0x3F;
+};
+
+// Where a part sits relative to its parent and how it is turned: what the
+// animation writes every frame, starting from the layer's own values.
+struct PartPose {
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    float x_rot = 0.0f, y_rot = 0.0f, z_rot = 0.0f;
+    float x_scale = 1.0f, y_scale = 1.0f, z_scale = 1.0f;
+    bool visible = true;
+    // Its own boxes hidden, its children still drawn.
+    bool skip_draw = false;
 };
 
 struct Part {
-    std::string name;
+    std::string path;   // "head/hat"
     int32_t parent = -1;
-    std::array<float, 3> pivot{};
-    std::array<float, 3> rotation{};   // radians, applied z, then y, then x
+    PartPose initial;
     std::vector<Box> boxes;
 };
 
+// One layer as the game builds it ("player", "zombie#outer_armor"), parents
+// always before their children.
 struct Model {
     std::string name;
-    std::string texture;   // under textures/entity/, without the extension
     uint32_t texture_width = 64;
     uint32_t texture_height = 64;
-    float scale = 1.0f;
-    // The entity's box, for its shadow and where its name floats.
-    float width = 0.6f;
-    float height = 1.8f;
-    float shadow = 0.5f;
     std::vector<Part> parts;
 
-    int32_t find(std::string_view part) const;
+    // By path, "right_arm" or "head/hat"; -1 when there is none.
+    int32_t find(std::string_view path) const;
 };
 
-// The models of every entity, read from data/entity_models.txt.
 class ModelSet {
 public:
     // Throws with the line number on anything it does not understand.
@@ -55,49 +65,46 @@ private:
     std::vector<Model> models_;
 };
 
-// How the animation moved a part this frame, on top of where the model puts
-// it. Rotations add to the model's own; the offset is in pixels.
-struct PartPose {
-    std::array<float, 3> rotation{};
-    std::array<float, 3> offset{};
-    bool visible = true;
-    // A part whose rotation replaces the model's rather than adding to it.
-    bool absolute = false;
-};
-
+// A model's whole pose, one entry per part, reset from the layer every frame.
 struct Pose {
     std::vector<PartPose> parts;
-    explicit Pose(const Model& model) : parts(model.parts.size()) {}
+    Pose() = default;
+    explicit Pose(const Model& model) { reset(model); }
+    void reset(const Model& model);
     PartPose& operator[](int32_t index) { return parts[static_cast<size_t>(index)]; }
+    const PartPose& operator[](int32_t index) const { return parts[static_cast<size_t>(index)]; }
 };
 
+// A vertex of a baked model: in its part's own space, in blocks, with the
+// part it hangs from, so one buffer holds every model and the gpu poses it.
 struct Vertex {
     float position[3];
     float uv[2];
-    float normal[3];
+    int8_t normal[4];   // w unused
+    uint32_t part;
 };
+static_assert(sizeof(Vertex) == 28);
 
-// Column-major 4x4, the way the shaders take them.
+// Column-major 4x4.
 using Matrix = std::array<float, 16>;
 Matrix identity();
 Matrix multiply(const Matrix& a, const Matrix& b);
 Matrix translation(float x, float y, float z);
 Matrix scaling(float x, float y, float z);
+// Rotations by radians about one axis, and the game's z-then-y-then-x turn.
 Matrix rotation_x(float radians);
 Matrix rotation_y(float radians);
 Matrix rotation_z(float radians);
+Matrix rotation_zyx(float z, float y, float x);
 
-// Where the model's origin sits in the world for an entity standing at the
-// origin and turned to the given body yaw in degrees: the game turns the
-// model, flips it upright and lifts it so the feet are on the ground.
-Matrix placement(float body_yaw_degrees, float scale);
+// Every box's faces as two triangles, in the order and with the uvs the game
+// gives them, all in part space. Appends; returns how many vertices.
+uint32_t bake(const Model& model, std::vector<Vertex>& out);
 
-// Six faces per box, two triangles per face, in world space. Parts the pose
-// hides are left out, and so are their children.
-void build_mesh(const Model& model, const Pose& pose, const Matrix& transform,
-                std::vector<Vertex>& out);
-// Only the parts named, for drawing one layer of a model on its own.
-void build_mesh(const Model& model, const Pose& pose, const Matrix& transform,
-                std::span<const int32_t> parts, std::vector<Vertex>& out);
+// Each part's matrix from part space to where `root` puts the model, in the
+// order of model.parts. A hidden part, and everything below it, gets a zero
+// matrix, which draws nothing.
+void pose_matrices(const Model& model, const Pose& pose, const Matrix& root,
+                   std::span<Matrix> out);
 
 } // namespace mcpp::entity
