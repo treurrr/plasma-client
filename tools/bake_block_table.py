@@ -30,6 +30,10 @@ FLAG_FULL_CUBE = 1 << 2
 FLAG_OCCLUDES = 1 << 3
 FLAG_FLUID = 1 << 4
 
+QUAD_UVLOCK = 1 << 0
+QUAD_NO_SHADE = 1 << 1
+QUAD_NO_AO = 1 << 2
+
 # A model only says a face is tinted, never which tint. Which one is a property
 # of the block, the way the game decides it: grass and foliage read different
 # colour maps, and three blocks ignore the maps entirely.
@@ -191,7 +195,9 @@ def main(args):
                 FACE_INDEX[q["face"]],
                 FACE_INDEX[q["cullface"]] if q["cullface"] in FACE_INDEX else -1,
                 tint_kind(name, tint),
-                1 if q["uvlock"] else 0,
+                ((1 if q["uvlock"] else 0) |
+                 (0 if q.get("shade", True) else QUAD_NO_SHADE) |
+                 (0 if q.get("ambientocclusion", True) else QUAD_NO_AO)),
                 (q["rotation"][0] // 90) % 4,
                 (q["rotation"][1] // 90) % 4,
             ))

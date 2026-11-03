@@ -80,8 +80,10 @@ class Assets:
         return model
 
     def resolve_model(self, ref, depth=0):
-        """Flatten the parent chain: textures merge child-first, elements are
-        taken from the nearest ancestor that defines any."""
+        """Flatten the parent chain: textures merge child-first, elements and
+        the ambient occlusion flag come from the nearest ancestor that defines
+        any. Plants inherit both from block/cross, and a plant rendered with
+        ambient occlusion is almost black at its base."""
         if depth > 16:
             raise RuntimeError(f"model parent chain too deep at {ref}")
         model = self.model(ref)
@@ -90,6 +92,7 @@ class Assets:
 
         textures = dict(model.get("textures", {}))
         elements = model.get("elements")
+        occlusion = model.get("ambientocclusion")
         parent = model.get("parent")
 
         if parent:
@@ -100,7 +103,10 @@ class Assets:
                 textures = merged
                 if elements is None:
                     elements = inherited["elements"]
-        return {"textures": textures, "elements": elements or [], "parent": parent}
+                if occlusion is None:
+                    occlusion = inherited["ambientocclusion"]
+        return {"textures": textures, "elements": elements or [], "parent": parent,
+                "ambientocclusion": occlusion}
 
 
 def deref_texture(name, textures):
@@ -195,6 +201,10 @@ def quads_for_state(assets, block_name, properties):
                     "tintindex": face.get("tintindex"),
                     "rotation": rotation,
                     "uvlock": uvlock,
+                    # Plants and other cross models switch both of these off,
+                    # and look half dead if the renderer ignores them.
+                    "shade": element.get("shade", True),
+                    "ambientocclusion": model.get("ambientocclusion") is not False,
                 })
     return quads, None
 

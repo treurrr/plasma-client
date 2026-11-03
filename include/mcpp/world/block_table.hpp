@@ -16,6 +16,10 @@ enum class TintKind : int8_t {
     None = -1, Grass, Foliage, Water, Evergreen, Birch, LilyPad, DryFoliage
 };
 
+// A model can switch off directional shading and ambient occlusion, and the
+// cross models every plant uses switch off both.
+enum QuadFlags : uint8_t { kQuadUvlock = 1 << 0, kQuadNoShade = 1 << 1, kQuadNoAo = 1 << 2 };
+
 #pragma pack(push, 1)
 struct BakedQuad {
     int16_t from[3];
@@ -25,7 +29,7 @@ struct BakedQuad {
     uint8_t face;
     int8_t cullface;    // -1 when the face is never culled
     int8_t tint;        // -1 when untinted, otherwise a TintKind
-    uint8_t uvlock;
+    uint8_t flags;      // QuadFlags
     uint8_t rotation_x; // quarter turns
     uint8_t rotation_y;
 };

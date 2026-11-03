@@ -295,7 +295,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             const bool diagonal = padded_solid[cell_diagonal] != 0;
 
                             const auto shadow =
-                                static_cast<uint32_t>(corner_shadow(side_a, side_b, diagonal));
+                                (quad.flags & kQuadNoAo) != 0
+                                    ? 3u
+                                    : static_cast<uint32_t>(corner_shadow(side_a, side_b,
+                                                                         diagonal));
 
                             // Smooth lighting: the corner takes the average of
                             // the four cells touching it, skipping the ones a
@@ -310,8 +313,11 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                                 ++lit;
                             }
                             if (lit == 0) {
-                                sky_sum = padded_light[cell_base] & 0x0F;
-                                block_sum = padded_light[cell_base] >> 4;
+                                // A face hemmed in by solid blocks - a plant
+                                // leaning into a wall - is lit where it stands.
+                                const auto here = padded_light[padded_index(x, local_y, z)];
+                                sky_sum = here & 0x0F;
+                                block_sum = here >> 4;
                                 lit = 1;
                             }
                             const auto sky = static_cast<uint16_t>((sky_sum + lit / 2) / lit);
@@ -345,6 +351,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                                 vertex.packed |= static_cast<uint16_t>((quad.tint + 1) << 3);
                             }
                             vertex.packed |= static_cast<uint16_t>(shadow << 6);
+                            if ((quad.flags & kQuadNoShade) != 0) vertex.packed |= 0x0100u;
                             vertex.light = static_cast<uint16_t>(sky | (block << 4));
                             mesh.vertices.push_back(vertex);
                         }

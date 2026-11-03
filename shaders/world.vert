@@ -56,7 +56,10 @@ void main() {
 
     // Smooth lighting: 0 is a fully enclosed corner, 3 is open.
     const float kCornerLight[4] = float[](0.52, 0.68, 0.84, 1.0);
-    out_shade = kFaceShade[min(face, 5u)] * kCornerLight[(flags >> 6) & 3u];
+    // A model may ask for no directional shading at all, which is what keeps
+    // grass and flowers the same colour from every side.
+    float directional = (flags & 0x0100u) != 0u ? 1.0 : kFaceShade[min(face, 5u)];
+    out_shade = directional * kCornerLight[(flags >> 6) & 3u];
     out_light = lightmap(float(in_texture_light.y & 0x0Fu),
                          float((in_texture_light.y >> 4) & 0x0Fu));
 
