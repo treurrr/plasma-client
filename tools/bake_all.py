@@ -45,6 +45,8 @@ def main(args):
         out / f"items-{protocol}.plit")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu")
     run("bake_datapack.py", jar, out / f"datapack-{protocol}")
+    # Needs the remapped client jar under ~/mc-reference (see tools/oracle).
+    run("bake_block_render.py", out / f"block-render-{protocol}.txt")
     # The registries the client has built in, in id order: what an attribute,
     # an effect or an entity type number means.
     registries = json.loads((Path(report).parent / "registries.json").read_text())
