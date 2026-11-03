@@ -18,6 +18,7 @@ struct DeviceCapabilities {
     bool host_query_reset = false;
     bool demote_to_helper = false;
     bool sampler_anisotropy = false;
+    bool wide_lines = false;
     float max_anisotropy = 1.0f;
 };
 

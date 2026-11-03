@@ -470,6 +470,24 @@ void test_physics_stands_and_stops() {
               std::format("and the first tick is only {:.2f} of the {:.2f}", first, want));
     }
 
+    // The walking sway follows the distance actually covered, so it builds up
+    // while walking, stops dead against a wall and never rocks a jump.
+    body = {};
+    body.x = 0.5;
+    body.y = 64.0;
+    body.z = 0.5;
+    mcpp::world::Intent stroll;
+    stroll.forward = 1.0;
+    stroll.yaw_degrees = 90.0f;
+    for (int i = 0; i < 60; ++i) mcpp::world::tick(body, stroll, open, table);
+    check(std::abs(body.sway - 0.1) < 0.005,
+          std::format("walking sways at {:.4f} of a block", body.sway));
+    const double swing = body.walked - body.previous_walked;
+    check(swing > 0.12 && swing < 0.14,
+          std::format("one full sway every {:.1f} ticks", 2.0 / swing));
+    for (int i = 0; i < 40; ++i) mcpp::world::tick(body, {}, open, table);
+    check(body.sway < 0.001, std::format("standing still settles to {:.4f}", body.sway));
+
     // Jumping leaves the ground and comes back to it.
     intent = {};
     intent.jump = true;

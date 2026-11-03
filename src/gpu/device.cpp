@@ -79,6 +79,7 @@ AdapterInfo describe(VkPhysicalDevice device) {
     info.capabilities.demote_to_helper =
         vulkan13.shaderDemoteToHelperInvocation == VK_TRUE;
     info.capabilities.sampler_anisotropy = features.features.samplerAnisotropy == VK_TRUE;
+    info.capabilities.wide_lines = features.features.wideLines == VK_TRUE;
     info.capabilities.max_anisotropy = properties.properties.limits.maxSamplerAnisotropy;
     return info;
 }
@@ -238,6 +239,7 @@ void Device::create(const Options& options) {
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features.pNext = &vulkan13;
     features.features.samplerAnisotropy = adapter_.capabilities.sampler_anisotropy;
+    features.features.wideLines = adapter_.capabilities.wide_lines;
 
     std::vector<const char*> wanted;
     if (options.swapchain) wanted.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);

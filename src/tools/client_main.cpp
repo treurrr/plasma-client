@@ -8,6 +8,7 @@
 #include "mcpp/session.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/offscreen.hpp"
+#include "mcpp/gpu/outline.hpp"
 #include "mcpp/gpu/sky.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 #ifdef MCPP_HAVE_WINDOW
@@ -57,6 +58,43 @@ mcpp::auth::Profile signed_in_profile(std::string& username) {
         std::cout << std::format("- not signed in: {}\n", account.last_message());
     }
     return {};
+}
+
+// The block the crosshair is on, or none within reach. The game reaches 4.5
+// blocks and takes the first block the ray enters, so this steps cell by cell
+// rather than sampling along the ray, where a corner can be missed.
+bool aimed_block(const float eye[3], const float direction[3],
+                 const mcpp::world::BlockAt& at, const mcpp::world::BlockTable& table,
+                 int32_t out[3]) {
+    constexpr float kReach = 4.5f;
+    int32_t cell[3]{static_cast<int32_t>(std::floor(eye[0])),
+                    static_cast<int32_t>(std::floor(eye[1])),
+                    static_cast<int32_t>(std::floor(eye[2]))};
+    int32_t step[3]{};
+    float next[3]{};
+    float delta[3]{};
+    for (int i = 0; i < 3; ++i) {
+        step[i] = direction[i] > 0.0f ? 1 : -1;
+        delta[i] = direction[i] != 0.0f ? std::abs(1.0f / direction[i]) : 1e30f;
+        const float edge = direction[i] > 0.0f ? static_cast<float>(cell[i] + 1)
+                                               : static_cast<float>(cell[i]);
+        next[i] = direction[i] != 0.0f ? (edge - eye[i]) / direction[i] : 1e30f;
+    }
+    for (float travelled = 0.0f; travelled <= kReach;) {
+        const int32_t state = at(cell[0], cell[1], cell[2]);
+        if (state > 0 && !table.fluid(state)) {
+            out[0] = cell[0];
+            out[1] = cell[1];
+            out[2] = cell[2];
+            return true;
+        }
+        const int axis = next[0] < next[1] ? (next[0] < next[2] ? 0 : 2)
+                                           : (next[1] < next[2] ? 1 : 2);
+        travelled = next[axis];
+        cell[axis] += step[axis];
+        next[axis] += delta[axis];
+    }
+    return false;
 }
 
 int do_login() {
@@ -558,6 +596,8 @@ int do_play(const std::string& target, size_t chunk_limit) {
         maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
         renderer.set_biome_colours(session.biomes().tints(maps));
     }
+    mcpp::gpu::Outline outline(device, renderer.colour_format());
+    renderer.set_outline(&outline);
     std::cout << std::format("- {:.0f} MB reserved on the gpu, {:.1f} MB used by the first {} chunks\n",
                              renderer.vertex_capacity() / 1e6, vertex_bytes / 1e6, chunks.size());
 
@@ -754,11 +794,33 @@ int do_play(const std::string& target, size_t chunk_limit) {
         eye[1] = between(body.previous_y, body.y) + static_cast<float>(mcpp::world::kEyeHeight);
         eye[2] = between(body.previous_z, body.z);
 
+        int32_t aimed[3]{};
+        const bool aiming = aimed_block(eye, forward, block_at, table, aimed);
+        renderer.set_outlined_block(aimed, aiming);
+
+        // Walking rocks the view: sideways with each step, down as each foot
+        // lands, leaning into the step and nodding with it. Without it the
+        // camera floats through the world instead of being carried through it.
+        const float sway = between(body.previous_sway, body.sway);
+        const float phase = -between(body.previous_walked, body.walked) *
+                            std::numbers::pi_v<float>;
+        const float across = std::sin(phase) * sway * 0.5f;
+        const float down = -std::abs(std::cos(phase) * sway);
+        const float lean = std::sin(phase) * sway * 3.0f;
+        const float nod = std::abs(std::cos(phase - 0.2f) * sway) * 5.0f;
+
+        const float pr_bob = (pitch - nod) * std::numbers::pi_v<float> / 180.0f;
+        const float look[3] = {std::cos(yr) * std::cos(pr_bob), std::sin(pr_bob),
+                               std::sin(yr) * std::cos(pr_bob)};
+
         mcpp::gpu::Camera camera{};
         for (int i = 0; i < 3; ++i) {
-            camera.eye[i] = eye[i];
-            camera.target[i] = eye[i] + forward[i];
+            camera.eye[i] = eye[i] + right[i] * across;
+            camera.target[i] = camera.eye[i] + look[i];
         }
+        camera.eye[1] += down;
+        camera.target[1] += down;
+        camera.roll_degrees = lean;
         // The view widens while you sprint and eases back when you stop, which
         // is most of how sprinting reads on screen at all.
         const float wanted_fov = 70.0f * (body.sprinting || (flying && input.sprint) ? 1.15f : 1.0f);
@@ -1084,6 +1146,12 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         std::cout << "- no sky textures; bake them with tools/bake_sky.py\n";
     }
 
+    std::optional<mcpp::gpu::Outline> outline;
+    if (overlay_kind != "none") {
+        outline.emplace(device, renderer.colour_format());
+        renderer.set_outline(&*outline);
+    }
+
     mcpp::gpu::Camera camera{};
     if (view == "macro") {
         const float ground = ground_near_centre(chunks, table, centre_x, centre_z);
@@ -1163,6 +1231,32 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         }
         camera.fog_end = reach;
         camera.fog_start = reach * 0.85f;
+    }
+
+    // The crosshair picks out a block the same way it does while playing, so a
+    // screenshot of the client shows what the client would be pointing at.
+    if (outline.has_value()) {
+        const auto chunk_block = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
+            const int32_t index = y + 64;
+            if (index < 0) return 1;
+            for (const auto& chunk : chunks) {
+                if (chunk.x != (x >> 4) || chunk.z != (z >> 4)) continue;
+                if (index >= static_cast<int32_t>(chunk.sections.size()) * 16) return 0;
+                return chunk.block_state(x & 15, index, z & 15);
+            }
+            return -1;
+        };
+        float direction[3]{camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1],
+                           camera.target[2] - camera.eye[2]};
+        const float length = std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] +
+                                       direction[2] * direction[2]);
+        for (float& component : direction) component /= length;
+        int32_t aimed[3]{};
+        const bool aiming = aimed_block(camera.eye, direction, chunk_block, table, aimed);
+        renderer.set_outlined_block(aimed, aiming);
+        std::cout << (aiming ? std::format("- crosshair on the block at {} {} {}\n", aimed[0],
+                                           aimed[1], aimed[2])
+                             : std::string("- crosshair on nothing within reach\n"));
     }
 
     // Every biome the server listed gets its four tints, and the sky follows the

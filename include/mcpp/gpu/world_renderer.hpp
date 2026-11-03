@@ -11,11 +11,15 @@
 namespace mcpp::gpu {
 
 class Sky;
+class Outline;
 
 struct Camera {
     float eye[3];
     float target[3];
     float fov_degrees = 70.0f;
+    // Tilt around the direction of view. Nothing in a standing world needs it;
+    // a walking one leans into every step.
+    float roll_degrees = 0.0f;
     float near_plane = 0.1f;
     float far_plane = 2000.0f;
     // Distance in blocks where the world starts and finishes fading into the
@@ -61,6 +65,16 @@ public:
     // Drawn inside the world's own pass, before the terrain, so it needs no
     // second attachment and no second clear.
     void set_sky(const Sky* sky) { sky_ = sky; }
+    // The block to draw a box around, or nothing when the crosshair is on sky.
+    void set_outline(const Outline* outline) { outline_ = outline; }
+    void set_outlined_block(const int32_t block[3], bool present) {
+        outlined_present_ = present;
+        if (present) {
+            outlined_[0] = block[0];
+            outlined_[1] = block[1];
+            outlined_[2] = block[2];
+        }
+    }
     // Four colours per biome - grass, foliage, water, dry foliage - packed
     // 0xRRGGBB, in the order the server listed the biomes.
     static constexpr uint32_t kBiomeSlots = 256;
@@ -103,6 +117,9 @@ private:
 
     Device& device_;
     const Sky* sky_ = nullptr;
+    const Outline* outline_ = nullptr;
+    int32_t outlined_[3]{};
+    bool outlined_present_ = false;
     float zenith_[3] = {0.4745f, 0.6549f, 1.0f};
     float fog_[3] = {0.7529f, 0.8471f, 1.0f};
     uint32_t width_;

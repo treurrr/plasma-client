@@ -1,5 +1,6 @@
 #include "mcpp/gpu/world_renderer.hpp"
 
+#include "mcpp/gpu/outline.hpp"
 #include "mcpp/gpu/sky.hpp"
 
 #include "mcpp/byte_buffer.hpp"
@@ -196,6 +197,22 @@ Mat4 view_projection(const Camera& camera, float aspect) {
     normalise(right);
     float up[3];
     cross(right, forward, up);
+
+    if (camera.roll_degrees != 0.0f) {
+        const float angle = camera.roll_degrees * 3.14159265f / 180.0f;
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        float rolled_right[3];
+        float rolled_up[3];
+        for (int i = 0; i < 3; ++i) {
+            rolled_right[i] = right[i] * c + up[i] * s;
+            rolled_up[i] = up[i] * c - right[i] * s;
+        }
+        for (int i = 0; i < 3; ++i) {
+            right[i] = rolled_right[i];
+            up[i] = rolled_up[i];
+        }
+    }
 
     const float f = 1.0f / std::tan(camera.fov_degrees * 3.14159265f / 360.0f);
     const float a = camera.near_plane;
@@ -1178,6 +1195,9 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
 
         draw_geometry(command, push);
+        if (outline_ != nullptr && outlined_present_) {
+            outline_->record(command, push.view_projection.m, outlined_);
+        }
     }
     vkCmdEndRendering(command);
 
@@ -1367,6 +1387,9 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
 
         draw_geometry(command, push);
+        if (outline_ != nullptr && outlined_present_) {
+            outline_->record(command, push.view_projection.m, outlined_);
+        }
     }
     vkCmdEndRendering(command);
 

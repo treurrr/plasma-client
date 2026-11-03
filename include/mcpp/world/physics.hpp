@@ -31,6 +31,13 @@ struct Body {
     double previous_x = 0.0;
     double previous_y = 0.0;
     double previous_z = 0.0;
+    // How far the feet have travelled and how hard they are currently landing.
+    // Together they drive the walking sway, so both are interpolated the same
+    // way the position is.
+    double walked = 0.0;
+    double previous_walked = 0.0;
+    double sway = 0.0;
+    double previous_sway = 0.0;
 };
 
 // What the player wants to do this step, in their own frame: forward and

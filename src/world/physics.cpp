@@ -28,6 +28,10 @@ constexpr double kSprintAccel = (5.612 / 20.0) * (1.0 - kGroundDrag);
 constexpr double kAirAccel = 0.02;
 constexpr double kSprintAirAccel = 0.026;
 
+// The sway stops growing well below walking pace, so sprinting rocks the view
+// no harder than walking does.
+constexpr double kMaxSway = 0.1;
+
 // How high a step the game lets you walk up without jumping.
 constexpr double kStepHeight = 0.6;
 
@@ -186,6 +190,15 @@ void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
     const double drag = body.on_ground ? kGroundDrag : kAirDrag;
     body.vx *= drag;
     body.vz *= drag;
+
+    // Both of these follow the distance actually covered, not the distance
+    // asked for, so walking into a wall stops the sway instead of marching on
+    // the spot.
+    const double covered = std::hypot(body.x - body.previous_x, body.z - body.previous_z);
+    body.previous_walked = body.walked;
+    body.walked += covered * 0.6;
+    body.previous_sway = body.sway;
+    body.sway += ((body.on_ground ? std::min(covered, kMaxSway) : 0.0) - body.sway) * 0.4;
 }
 
 } // namespace mcpp::world
