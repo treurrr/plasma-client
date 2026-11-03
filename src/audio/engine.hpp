@@ -105,6 +105,11 @@ public:
     // then decoding happens on the caller's thread, the same way every time.
     bool open(SoundIndex index, FileSource files, const Mixer::Options& options);
     void close();
+    // Another device, or the same one back after it was lost; voices go on.
+    bool reopen(const Mixer::Options& options) {
+        options_ = options;
+        return mixer_.open(options);
+    }
 
     const SoundIndex& index() const { return index_; }
     Mixer& mixer() { return mixer_; }

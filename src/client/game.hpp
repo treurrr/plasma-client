@@ -121,7 +121,10 @@ struct ScreensArea {
     bool inventory_open = false;
 };
 
+struct SoundRuntime;
 struct SoundArea {
+    // The engine and everything that plays through it, in src/client/sound.cpp.
+    std::shared_ptr<SoundRuntime> runtime;
 };
 
 struct Game {
