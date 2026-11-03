@@ -1541,7 +1541,22 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     }
 
     mcpp::gpu::Camera camera{};
-    if (view == "macro") {
+    // at:x,y,z,tx,ty,tz puts the eye and the point it looks at exactly, for a
+    // picture of one thing rather than of wherever the chunks happened to land.
+    if (view.starts_with("at:")) {
+        float values[6]{};
+        size_t at = 3;
+        for (float& value : values) {
+            const size_t comma = view.find(',', at);
+            value = std::stof(view.substr(at, comma - at));
+            at = comma == std::string::npos ? view.size() : comma + 1;
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            camera.eye[axis] = values[axis];
+            camera.target[axis] = values[3 + axis];
+        }
+        camera.fov_degrees = 70.0f;
+    } else if (view == "macro") {
         const float ground = ground_near_centre(chunks, table, centre_x, centre_z);
         camera.eye[0] = centre_x;
         camera.eye[1] = ground + 1.5f;

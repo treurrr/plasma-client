@@ -116,6 +116,11 @@ uint8_t BlockTable::flags(int32_t state) const {
     return state_flags_[state];
 }
 
+uint32_t BlockTable::block_of(int32_t state) const {
+    if (state < 0 || static_cast<size_t>(state) >= state_count_) return UINT32_MAX;
+    return state_block_[state];
+}
+
 std::string_view BlockTable::block_name(int32_t state) const {
     if (state < 0 || static_cast<size_t>(state) >= state_count_) return {};
     const uint32_t index = state_block_[state];

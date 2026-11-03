@@ -295,6 +295,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     // would be sliced by a gap at every level.
                     const bool submerged =
                         self_fluid && table.fluid(padded_state[padded_index(x, local_y + 1, z)]);
+                    // Glass and ice hide the face between two of the same
+                    // block, so a sheet of it is one sheet and not a lattice.
+                    const bool self_culls = table.self_culls(state);
+                    const uint32_t own_block = self_culls ? table.block_of(state) : 0;
                     bool hidden[6];
                     for (int side = 0; side < 6; ++side) {
                         const Offset offset = kFaceOffset[side];
@@ -304,11 +308,15 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             hidden[side] = true;
                             continue;
                         }
+                        const int32_t neighbour = padded_state[cell];
+                        if (self_culls) {
+                            hidden[side] = neighbour > 0 && table.block_of(neighbour) == own_block;
+                            continue;
+                        }
                         if (!self_fluid) {
                             hidden[side] = false;
                             continue;
                         }
-                        const int32_t neighbour = padded_state[cell];
                         hidden[side] = neighbour > 0 && table.fluid(neighbour);
                     }
 

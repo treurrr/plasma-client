@@ -58,6 +58,7 @@ public:
     static constexpr uint8_t kFullCube = 1 << 2;
     static constexpr uint8_t kOccludes = 1 << 3;
     static constexpr uint8_t kFluid = 1 << 4;
+    static constexpr uint8_t kSelfCulls = 1 << 5;
 
     BlockTable() = default;
     ~BlockTable();
@@ -84,6 +85,10 @@ public:
     bool full_cube(int32_t state) const { return (flags(state) & kFullCube) != 0; }
     bool occludes(int32_t state) const { return (flags(state) & kOccludes) != 0; }
     bool fluid(int32_t state) const { return (flags(state) & kFluid) != 0; }
+    // Hides the face it shares with another of the same block: glass, ice.
+    bool self_culls(int32_t state) const { return (flags(state) & kSelfCulls) != 0; }
+    // Which block a state belongs to, the same for every state of one block.
+    uint32_t block_of(int32_t state) const;
 
     static std::filesystem::path default_path(int32_t protocol);
 

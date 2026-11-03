@@ -29,6 +29,18 @@ FLAG_HAS_GEOMETRY = 1 << 1
 FLAG_FULL_CUBE = 1 << 2
 FLAG_OCCLUDES = 1 << 3
 FLAG_FLUID = 1 << 4
+FLAG_SELF_CULLS = 1 << 5
+
+# Blocks you see through that still hide the face between two of themselves,
+# so a pane of glass reads as one sheet rather than a lattice of cubes. Which
+# blocks do this is behaviour, not data in the jar; leaves are the contrast,
+# showing their own inside at the default graphics setting.
+SELF_CULLING = {"minecraft:ice", "minecraft:frosted_ice", "minecraft:slime_block",
+                "minecraft:honey_block"}
+
+
+def self_culls(name):
+    return name.endswith("glass") or name in SELF_CULLING
 
 QUAD_UVLOCK = 1 << 0
 QUAD_NO_SHADE = 1 << 1
@@ -194,8 +206,12 @@ def main(args):
 
     def translucent(path):
         if path not in translucent_textures:
+            # Model textures carry their namespace, "minecraft:block/ice", and the
+            # jar does not; without stripping it every lookup missed, was taken
+            # for opaque, and all 58 see-through block textures drew solid.
+            file = f"assets/minecraft/textures/{path.split(':')[-1]}.png"
             try:
-                with Image.open(io.BytesIO(assets.zip.read(f"assets/minecraft/textures/{path}.png"))) as image:
+                with Image.open(io.BytesIO(assets.zip.read(file))) as image:
                     alpha = image.convert("RGBA").getchannel("A").getextrema()
                 translucent_textures[path] = 0 < alpha[0] < 255 or 0 < alpha[1] < 255
             except KeyError:
@@ -252,6 +268,8 @@ def main(args):
                 flags |= FLAG_FULL_CUBE
                 if len(opaque_faces(assets.zip, quads)) == len(FACES):
                     flags |= FLAG_OCCLUDES
+                elif self_culls(name):
+                    flags |= FLAG_SELF_CULLS
         state_flags.append(flags)
 
     if problems:
