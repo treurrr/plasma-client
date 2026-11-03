@@ -121,6 +121,7 @@ add_library(mcpp_net STATIC
     src/ui/container.cpp
     src/ui/screens/container_screen.cpp
     src/ui/screens/registry.cpp
+    src/ui/screens/creative_screen.cpp
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp
@@ -152,7 +153,8 @@ if(glfw3_FOUND)
         src/client/hud.cpp)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
-    src/client/common.cpp src/client/screenshot.cpp src/client/hud_shot.cpp ${MCPP_PLAY_SOURCES})
+    src/client/common.cpp src/client/screenshot.cpp src/client/hud_shot.cpp
+    src/client/clicktest.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)

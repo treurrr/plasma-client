@@ -1843,6 +1843,9 @@ int main(int argc, char** argv) {
         if (command == "inspect" && argc > 2) {
             return do_inspect(argv[2]);
         }
+        if (command == "clicktest") {
+            return client::clicktest(std::vector<std::string>(argv + 2, argv + argc));
+        }
         if (command == "screenshot") {
             return client::screenshot(std::vector<std::string>(argv + 2, argv + argc));
         }

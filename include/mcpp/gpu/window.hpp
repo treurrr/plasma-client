@@ -118,6 +118,8 @@ public:
     // The framebuffer over the window's own size, for a pointer in window
     // coordinates on a high density screen.
     double content_scale() const;
+    std::string clipboard() const;
+    void set_clipboard(const std::string& text);
 
     // Vanilla's VSync option. Off, the frame rate is the renderer's own:
     // mailbox where the driver has it, so a faster frame never tears.

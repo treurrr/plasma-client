@@ -4,6 +4,8 @@
 #include "mcpp/keybinds.hpp"
 #include "mcpp/nbt.hpp"
 #include "mcpp/options.hpp"
+#include "mcpp/ui/container.hpp"
+#include "mcpp/ui/layout.hpp"
 #include "mcpp/ui/screen.hpp"
 #include "mcpp/ui/server_list.hpp"
 #include "mcpp/ui/text_component.hpp"
@@ -347,6 +349,55 @@ void test_gui_scale() {
 
 } // namespace
 
+void test_layouts() {
+    mcpp::ui::Divisor parts(10, 3);
+    const int a = parts.next(), b = parts.next(), c = parts.next();
+    check(a == 3 && b == 3 && c == 4, "the remainder goes to the last part");
+    mcpp::ui::SpacerElement one(98, 20), two(98, 20), three(200, 20);
+    mcpp::ui::GridLayout grid;
+    grid.column_spacing(4).row_spacing(4);
+    auto rows = grid.create_row_helper(2);
+    rows.add_child(one);
+    rows.add_child(two);
+    rows.add_child(three, 2);
+    grid.arrange_elements();
+    check(grid.get_width() == 200 && grid.get_height() == 44, "a 2-column grid of 98s with a 200 below");
+    check(two.get_x() == 102 && three.get_y() == 24, "the second column and the spanning row");
+    int w = 427, h = 240;
+    mcpp::ui::HeaderAndFooterLayout frame(w, h);
+    mcpp::ui::SpacerElement title(100, 9), body(200, 100), done(200, 20);
+    frame.add_to_header(title);
+    frame.add_to_contents(body);
+    frame.add_to_footer(done);
+    frame.arrange_elements();
+    check(title.get_x() == 163 && title.get_y() == 12, "the title centred in the 33 high header");
+    check(body.get_y() == 63 && done.get_y() == 214, "contents 30 under the header, footer at the bottom");
+}
+
+void test_container_clicks() {
+    using mcpp::ui::ClickType;
+    using mcpp::ui::ContainerMenu;
+    auto menu = ContainerMenu::player_inventory(nullptr);
+    menu.carried = {5, 64, true};
+    menu.clicked(-999, ContainerMenu::quick_craft_mask(0, 0), ClickType::QuickCraft);
+    for (int slot : {20, 21, 22}) {
+        menu.clicked(slot, ContainerMenu::quick_craft_mask(1, 0), ClickType::QuickCraft);
+    }
+    menu.clicked(-999, ContainerMenu::quick_craft_mask(2, 0), ClickType::QuickCraft);
+    check(menu.slots[20].count == 21 && menu.slots[22].count == 21 && menu.carried.count == 1,
+          "64 dragged over three slots is 21 each and one left");
+    menu.clicked(20, 1, ClickType::Pickup);
+    check(menu.slots[20].count == 22 && menu.carried.count == 0, "a right click drops one");
+    menu.clicked(21, 1, ClickType::Pickup);
+    check(menu.carried.count == 11 && menu.slots[21].count == 10, "a right click takes the larger half");
+    menu.carried = {};
+    menu.slots[36] = {7, 3, true};
+    menu.clicked(36, 0, ClickType::QuickMove);
+    check(menu.slots[36].count == 0 && menu.slots[9].count == 3, "shift-click from the hotbar goes to the main rows");
+    menu.clicked(9, 4, ClickType::Swap);
+    check(menu.slots[40].count == 3 && menu.slots[9].count == 0, "number key 5 swaps into hotbar slot 5");
+}
+
 int main() {
     test_json_forms();
     test_nbt_forms();
@@ -357,6 +408,8 @@ int main() {
     test_server_list();
     test_base64_and_png();
     test_gui_scale();
+    test_layouts();
+    test_container_clicks();
     if (failures == 0) std::cout << "ui: all passed\n";
     return failures == 0 ? 0 : 1;
 }
