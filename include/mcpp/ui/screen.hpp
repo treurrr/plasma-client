@@ -206,6 +206,10 @@ public:
     void tick();
     double mouse_x = 0.0;
     double mouse_y = 0.0;
+    // Modifier keys held right now, which a click reads the way the game's
+    // hasShiftDown() does.
+    bool shift_down = false;
+    bool control_down = false;
 
     int gui_width = 320;
     int gui_height = 240;

@@ -168,6 +168,10 @@ def main(args):
         names = set(jar.namelist())
         for name in by_id:
             path = f"assets/minecraft/textures/item/{name}.png"
+            # A compass or a clock has no picture of its own, only frames; the
+            # inventory shows the first one when no world says otherwise.
+            if path not in names:
+                path = f"assets/minecraft/textures/item/{name}_00.png"
             if path in names:
                 with jar.open(path) as handle:
                     image = Image.open(handle).convert("RGBA")
