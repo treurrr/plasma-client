@@ -104,6 +104,31 @@ ChunkBlocks::ChunkBlocks(const Chunk& chunk) : sections_(chunk.sections.size()) 
         flat.resize(kBlocksPerSection);
         for (size_t at = 0; at < kBlocksPerSection; ++at) flat[at] = blocks.at(at);
     }
+
+    // Light is one byte per block for the whole column: a nibble lookup per
+    // read would otherwise happen 27 times per block while meshing.
+    light_.resize(chunk.sections.size() * kBlocksPerSection);
+    for (size_t i = 0; i < chunk.sections.size(); ++i) {
+        for (int32_t y = 0; y < 16; ++y) {
+            for (int32_t z = 0; z < 16; ++z) {
+                for (int32_t x = 0; x < 16; ++x) {
+                    const int32_t column_y = static_cast<int32_t>(i) * 16 + y;
+                    light_[i * kBlocksPerSection + static_cast<size_t>(y) * 256 +
+                           static_cast<size_t>(z) * 16 + static_cast<size_t>(x)] =
+                        static_cast<uint8_t>(chunk.sky_light_at(x, column_y, z) |
+                                             (chunk.block_light_at(x, column_y, z) << 4));
+                }
+            }
+        }
+    }
+}
+
+uint8_t ChunkBlocks::light_at(int32_t x, int32_t y, int32_t z) const {
+    if (x < 0 || x > 15 || z < 0 || z > 15 || y < 0) return 0x0F;
+    const auto section = static_cast<size_t>(y) / 16;
+    if (section >= sections_.size()) return 0x0F;
+    return light_[section * kBlocksPerSection + static_cast<size_t>(y % 16) * 256 +
+                  static_cast<size_t>(z) * 16 + static_cast<size_t>(x)];
 }
 
 int32_t ChunkBlocks::at(int32_t x, int32_t y, int32_t z) const {
@@ -124,6 +149,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 
     std::vector<int32_t> padded_state(kPaddedCells);
     std::vector<uint8_t> padded_solid(kPaddedCells);
+    std::vector<uint8_t> padded_light(kPaddedCells);
 
     const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
         const bool past_x = x < 0 || x > 15;
@@ -144,6 +170,23 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
         return blocks.at(x, y, z);
     };
 
+    // Daylight on anything we cannot see, so an unloaded neighbour reads as
+    // open sky rather than as a wall of shadow.
+    const auto light_at = [&](int32_t x, int32_t y, int32_t z) -> uint8_t {
+        const bool past_x = x < 0 || x > 15;
+        const bool past_z = z < 0 || z > 15;
+        if (past_x && past_z) return 0x0F;
+        if (past_x) {
+            const ChunkBlocks* side = x < 0 ? neighbours.west : neighbours.east;
+            return side ? side->light_at(x & 15, y, z) : 0x0F;
+        }
+        if (past_z) {
+            const ChunkBlocks* side = z < 0 ? neighbours.north : neighbours.south;
+            return side ? side->light_at(x, y, z & 15) : 0x0F;
+        }
+        return blocks.light_at(x, y, z);
+    };
+
     for (int32_t section = 0; section < section_count; ++section) {
         if (chunk.sections[static_cast<size_t>(section)].non_air_count == 0) continue;
 
@@ -155,6 +198,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     const auto cell = padded_index(px, py, pz);
                     padded_state[cell] = state;
                     padded_solid[cell] = state >= 0 && table.occludes(state);
+                    padded_light[cell] = light_at(px, section * kSection + py, pz);
                 }
             }
         }
@@ -233,23 +277,45 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             const int base_cell[3] = {x + away[0], local_y + away[1], z + away[2]};
 
                             int probe[3] = {base_cell[0], base_cell[1], base_cell[2]};
+                            const auto cell_base = padded_index(probe[0], probe[1], probe[2]);
                             probe[axis_a] += sign_a;
-                            const bool side_a = padded_solid[padded_index(probe[0], probe[1],
-                                                                          probe[2])] != 0;
+                            const auto cell_a = padded_index(probe[0], probe[1], probe[2]);
 
                             probe[0] = base_cell[0];
                             probe[1] = base_cell[1];
                             probe[2] = base_cell[2];
                             probe[axis_b] += sign_b;
-                            const bool side_b = padded_solid[padded_index(probe[0], probe[1],
-                                                                          probe[2])] != 0;
+                            const auto cell_b = padded_index(probe[0], probe[1], probe[2]);
 
                             probe[axis_a] += sign_a;
-                            const bool diagonal = padded_solid[padded_index(probe[0], probe[1],
-                                                                            probe[2])] != 0;
+                            const auto cell_diagonal = padded_index(probe[0], probe[1], probe[2]);
+
+                            const bool side_a = padded_solid[cell_a] != 0;
+                            const bool side_b = padded_solid[cell_b] != 0;
+                            const bool diagonal = padded_solid[cell_diagonal] != 0;
 
                             const auto shadow =
                                 static_cast<uint32_t>(corner_shadow(side_a, side_b, diagonal));
+
+                            // Smooth lighting: the corner takes the average of
+                            // the four cells touching it, skipping the ones a
+                            // block is in the way of.
+                            int sky_sum = 0;
+                            int block_sum = 0;
+                            int lit = 0;
+                            for (const auto cell : {cell_base, cell_a, cell_b, cell_diagonal}) {
+                                if (padded_solid[cell] != 0) continue;
+                                sky_sum += padded_light[cell] & 0x0F;
+                                block_sum += padded_light[cell] >> 4;
+                                ++lit;
+                            }
+                            if (lit == 0) {
+                                sky_sum = padded_light[cell_base] & 0x0F;
+                                block_sum = padded_light[cell_base] >> 4;
+                                lit = 1;
+                            }
+                            const auto sky = static_cast<uint16_t>((sky_sum + lit / 2) / lit);
+                            const auto block = static_cast<uint16_t>((block_sum + lit / 2) / lit);
 
                             const float world[3] = {
                                 static_cast<float>(x) + local[0],
@@ -278,6 +344,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             if (quad.tintindex == 0) vertex.packed |= 0x0008u;   // grass, foliage
                             if (quad.tintindex == 1) vertex.packed |= 0x0010u;   // water
                             vertex.packed |= static_cast<uint16_t>(shadow << 5);
+                            vertex.light = static_cast<uint16_t>(sky | (block << 4));
                             mesh.vertices.push_back(vertex);
                         }
 
