@@ -676,6 +676,26 @@ int do_play(const std::string& target, size_t chunk_limit) {
         forgotten.push_back({chunk_x, chunk_z});
     };
 
+    events.on_chunk_area = [&](int32_t centre_x, int32_t centre_z, int32_t radius) {
+        // A couple of chunks of slack past the edge: dropping one the server
+        // still counts as ours leaves a hole until it is sent again, and
+        // keeping one a little longer costs only memory.
+        const int32_t reach = radius + 2;
+        std::vector<std::pair<int32_t, int32_t>> outside;
+        {
+            std::lock_guard lock(world_guard);
+            for (const auto& [key, chunk] : world) {
+                if (std::abs(key.first - centre_x) > reach ||
+                    std::abs(key.second - centre_z) > reach) {
+                    outside.push_back(key);
+                }
+            }
+        }
+        for (const auto& [chunk_x, chunk_z] : outside) {
+            events.on_chunk_forget(chunk_x, chunk_z);
+        }
+    };
+
     events.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
         {
             std::lock_guard lock(world_guard);
@@ -1846,6 +1866,20 @@ int do_digtest(const std::string& target) {
     events.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
         if (events_forget_hook) events_forget_hook(chunk_x, chunk_z);
     };
+    // Counted on its own, before anything is erased, so it shows the safety
+    // net would have caught the old area even with no forget sent at all.
+    size_t outside_area = 0;
+    int32_t area_reach = -1;
+    events.on_chunk_area = [&](int32_t centre_x, int32_t centre_z, int32_t radius) {
+        area_reach = radius + 2;
+        outside_area = 0;
+        for (const auto& [key, chunk] : world) {
+            if (std::abs(key.first - centre_x) > area_reach ||
+                std::abs(key.second - centre_z) > area_reach) {
+                ++outside_area;
+            }
+        }
+    };
     events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const auto found = world.find({x >> 4, z >> 4});
         if (found != world.end() && found->second.set_block_state(x & 15, y + 64, z & 15, state)) {
@@ -1912,6 +1946,11 @@ int do_digtest(const std::string& target) {
     std::cout << std::format("- standing on {} {} {}: {} ({})\n", foot_x, target_y, foot_z,
                              before, table.block_name(before));
 
+    // Back to the spawn first: the server remembers where the last run left
+    // this player, and the test should not depend on that.
+    session.send_command("tp @s 4 70 3");
+    pump_for(1.5);
+
     // The test gives itself something to build with, so placing is actually
     // exercised rather than silently doing nothing with an empty hand.
     session.send_command("give @s minecraft:stone 64");
@@ -1970,6 +2009,8 @@ int do_digtest(const std::string& target) {
     pump_for(3.0);
     std::cout << std::format("- far away: {} chunks forgotten, {} of them ones we held (of {})\n",
                              forgotten, matched, held);
+    std::cout << std::format("- the new area (reach {}) would have let go of {} of them on its own\n",
+                             area_reach, outside_area);
     for (const auto& line : changes) std::cout << "    " << line << '\n';
     session.close();
 

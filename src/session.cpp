@@ -539,6 +539,19 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         }
         return true;
     }
+    if (packet.id == cb.set_chunk_cache_center || packet.id == cb.set_chunk_cache_radius) {
+        if (packet.id == cb.set_chunk_cache_center) {
+            area_x_ = in.read_varint();
+            area_z_ = in.read_varint();
+        } else {
+            area_radius_ = in.read_varint();
+        }
+        // Until the server names a radius, it is the one this client asked
+        // for, which is what the server will have used.
+        const int32_t radius = area_radius_ >= 0 ? area_radius_ : options_.view_distance;
+        if (events_.on_chunk_area) events_.on_chunk_area(area_x_, area_z_, radius);
+        return true;
+    }
     if (packet.id == cb.forget_level_chunk) {
         // One long, z in the high half and x in the low, which on the wire
         // reads as two ints with z first.

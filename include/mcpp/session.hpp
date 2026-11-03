@@ -65,6 +65,10 @@ struct SessionEvents {
     // nothing is ever let go: every chunk ever seen stays in memory and on the
     // gpu until the reservation is full.
     std::function<void(int32_t, int32_t)> on_chunk_forget;
+    // Where the server centres the area it keeps loaded for us, and how far it
+    // reaches. A proxy may never send forget_level_chunk; this is how the
+    // client knows what to let go of anyway.
+    std::function<void(int32_t, int32_t, int32_t)> on_chunk_area;
 };
 
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false
@@ -158,6 +162,9 @@ private:
     Vitals vitals_;
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;
+    int32_t area_x_ = 0;
+    int32_t area_z_ = 0;
+    int32_t area_radius_ = -1;
     bool player_list_broken_ = false;
     int32_t ping_ms_ = -1;
 
