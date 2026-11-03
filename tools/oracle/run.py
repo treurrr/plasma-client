@@ -23,8 +23,13 @@ LIBRARY_ROOTS = [
 ]
 
 
+def reference_jar():
+    return Path(os.environ.get("PLASMA_REFERENCE_JAR")
+                or Path.home() / "mc-reference" / VERSION / "client-named.jar")
+
+
 def classpath():
-    jar = Path.home() / "mc-reference" / VERSION / "client-named.jar"
+    jar = reference_jar()
     if not jar.exists():
         sys.exit(f"{jar} is missing: run ~/mc-reference/decompile.sh first")
     jars = [str(jar)]

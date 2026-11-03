@@ -299,9 +299,12 @@ the client off most public servers.
 - **Recordings** are append-only in `corpus/`, one per block, named by area.
 - **Tests**: each block adds `tests/test_<area>.cpp` and one line in
   `CMakeLists.txt`; `test_protocol.cpp` is not extended further.
-- **Hand tables** (`data/collision_shapes.txt`, `data/hardness.txt`,
-  `data/block_sounds.txt`, `data/entity_dimensions.txt`) are text, one row per
-  block or entity, sorted by registry name, so two people editing different
+- **Tables read from the game** (block sounds, entity sizes, entity model
+  layers) are never committed: an exporter in `tools/` asks the remapped client
+  jar, and `tools/bake_all.py` writes the table into the data directory as
+  `<name>-<protocol>.txt`, beside the textures.
+- **Hand tables** (`data/collision_shapes.txt`, `data/hardness.txt`) are text,
+  one row per block, sorted by registry name, so two people editing different
   rows merge.
 - **Line references in PARITY.md** should be replaced by function names or
   removed; they were wrong within a day.
