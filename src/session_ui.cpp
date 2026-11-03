@@ -166,22 +166,9 @@ bool Session::handle_ui(PacketConnection::Packet& packet) {
         if (events_.ui.on_container_close) events_.ui.on_container_close(container);
         return true;
     }
-    if (packet.id == cb.set_cursor_item) {
-        // An item stack: count, then the item and its component patch. A
-        // patch is not read here; the cursor keeps the id and count.
-        ItemStack stack;
-        stack.count = in.read_varint();
-        if (stack.count > 0) {
-            stack.id = in.read_varint();
-            stack.readable = in.read_varint() == 0;
-        } else {
-            stack.count = 0;
-        }
-        player_.inventory.carried = stack;
-        in.set_position(in.data().size());
-        return true;
-    }
     if (packet.id == cb.server_links) {
+        // The data area keeps the links too, so it reads them again.
+        const size_t start = in.position();
         std::vector<std::pair<nbt::Value, std::string>> links;
         const int32_t count = in.read_varint();
         for (int32_t i = 0; i < count; ++i) {
@@ -194,7 +181,8 @@ bool Session::handle_ui(PacketConnection::Packet& packet) {
             links.emplace_back(std::move(label), in.read_string());
         }
         if (events_.ui.on_server_links) events_.ui.on_server_links(links);
-        return true;
+        in.set_position(start);
+        return false;
     }
     if (packet.id == cb.set_action_bar_text) {
         const nbt::Value text = nbt::read_network_tag(in);
