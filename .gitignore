@@ -1,5 +1,6 @@
 build/
 build-rel/
+build-dev/
 compile_commands.json
 
 # strategie, planning en marktonderzoek staan buiten deze repository
