@@ -268,13 +268,25 @@ FrameInput Window::poll() {
     input.start_typing = chat_now && !chat_key_down_;
     chat_key_down_ = chat_now;
 
-    if (down(GLFW_KEY_W)) input.forward += 1.0f;
+    const bool forward_now = down(GLFW_KEY_W);
+    if (forward_now) input.forward += 1.0f;
     if (down(GLFW_KEY_S)) input.forward -= 1.0f;
     if (down(GLFW_KEY_D)) input.right += 1.0f;
     if (down(GLFW_KEY_A)) input.right -= 1.0f;
     if (down(GLFW_KEY_SPACE)) input.up += 1.0f;
     if (down(GLFW_KEY_LEFT_SHIFT)) input.up -= 1.0f;
-    input.sprint = down(GLFW_KEY_LEFT_CONTROL);
+
+    // Forwards twice in quick succession sprints until forwards comes up, which
+    // is how most people sprint; the key is there for the rest.
+    constexpr double kDoubleTapSeconds = 0.3;
+    const double seconds_now = glfwGetTime();
+    if (forward_now && !forward_key_down_) {
+        double_tap_sprint_ = seconds_now - last_forward_press_ < kDoubleTapSeconds;
+        last_forward_press_ = seconds_now;
+    }
+    if (!forward_now) double_tap_sprint_ = false;
+    forward_key_down_ = forward_now;
+    input.sprint = down(GLFW_KEY_LEFT_CONTROL) || double_tap_sprint_;
     // Edge-triggered, or leaving a chat line with escape would also leave the
     // game on the very next frame.
     input.quit = escape_edge;

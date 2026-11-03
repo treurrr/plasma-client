@@ -390,7 +390,7 @@ void test_physics_stands_and_stops() {
     body.y = 70.0;
     body.z = 8.5;
     for (int i = 0; i < 200; ++i) {
-        mcpp::world::step(body, {}, flat, table, 1.0 / 60.0);
+        mcpp::world::tick(body, {}, flat, table);
     }
     check(std::abs(body.y - 64.0) < 0.01,
           std::format("a falling player lands on the floor, not through it: y={:.3f}", body.y));
@@ -409,7 +409,7 @@ void test_physics_stands_and_stops() {
     intent.forward = 1.0;
     intent.yaw_degrees = 90.0;    // facing east
     for (int i = 0; i < 200; ++i) {
-        mcpp::world::step(body, intent, walled, table, 1.0 / 60.0);
+        mcpp::world::tick(body, intent, walled, table);
     }
     check(body.x < 10.0 && body.x > 9.0,
           std::format("a wall stops the walk at its face: x={:.3f}", body.x));
@@ -429,7 +429,7 @@ void test_physics_stands_and_stops() {
         mcpp::world::Intent walk;
         walk.forward = 1.0;
         walk.yaw_degrees = static_cast<float>(camera_yaw + 90.0);
-        for (int i = 0; i < 120; ++i) mcpp::world::step(body, walk, open, table, 1.0 / 60.0);
+        for (int i = 0; i < 120; ++i) mcpp::world::tick(body, walk, open, table);
         const double moved = std::hypot(body.x - 0.5, body.z - 0.5);
         const double along = ((body.x - 0.5) * std::cos(radians) +
                               (body.z - 0.5) * std::sin(radians)) / moved;
@@ -438,14 +438,46 @@ void test_physics_stands_and_stops() {
                           "({:.3f} of the way)", camera_yaw, along));
     }
 
+    // Walking is accelerated into, not switched on, so the speed it settles at
+    // is the one the game walks at rather than the one a constant was set to.
+    for (const auto& [sprint, want] :
+         {std::pair{false, 4.317}, std::pair{true, 5.612}}) {
+        body = {};
+        body.x = 0.5;
+        body.y = 64.0;
+        body.z = 0.5;
+        mcpp::world::Intent walk;
+        walk.forward = 1.0;
+        walk.sprint = sprint;
+        walk.yaw_degrees = 90.0f;
+        for (int i = 0; i < 100; ++i) mcpp::world::tick(body, walk, open, table);
+        const double before = body.x;
+        for (int i = 0; i < 20; ++i) mcpp::world::tick(body, walk, open, table);
+        const double speed = body.x - before;
+        check(std::abs(speed - want) < 0.02,
+              std::format("{} settles at {:.3f} blocks a second, the game's {:.3f}",
+                          sprint ? "sprinting" : "walking", speed, want));
+
+        // And it takes a moment to get there, the way the game does, instead of
+        // reaching full speed on the first tick.
+        body = {};
+        body.x = 0.5;
+        body.y = 64.0;
+        body.z = 0.5;
+        mcpp::world::tick(body, walk, open, table);
+        const double first = (body.x - 0.5) * 20.0;
+        check(first < want * 0.55,
+              std::format("and the first tick is only {:.2f} of the {:.2f}", first, want));
+    }
+
     // Jumping leaves the ground and comes back to it.
     intent = {};
     intent.jump = true;
-    mcpp::world::step(body, intent, walled, table, 1.0 / 60.0);
+    mcpp::world::tick(body, intent, walled, table);
     check(!body.on_ground, "a jump leaves the ground");
     intent.jump = false;
     for (int i = 0; i < 200; ++i) {
-        mcpp::world::step(body, intent, walled, table, 1.0 / 60.0);
+        mcpp::world::tick(body, intent, walled, table);
     }
     check(body.on_ground && std::abs(body.y - 64.0) < 0.01, "and lands back on it");
 

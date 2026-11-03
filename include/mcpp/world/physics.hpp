@@ -12,6 +12,11 @@ constexpr double kPlayerWidth = 0.6;
 constexpr double kPlayerHeight = 1.8;
 constexpr double kEyeHeight = 1.62;
 
+// The game moves the player twenty times a second and draws the camera
+// somewhere between two of those. Running the movement on the frame instead
+// makes the same key feel different at sixty frames and at three hundred.
+constexpr double kTickSeconds = 0.05;
+
 struct Body {
     double x = 0.0;
     double y = 0.0;   // the feet
@@ -20,6 +25,12 @@ struct Body {
     double vy = 0.0;
     double vz = 0.0;
     bool on_ground = false;
+    bool sprinting = false;
+    // Where the body stood before the last tick, so the camera can be drawn
+    // between the two rather than snapping twenty times a second.
+    double previous_x = 0.0;
+    double previous_y = 0.0;
+    double previous_z = 0.0;
 };
 
 // What the player wants to do this step, in their own frame: forward and
@@ -40,9 +51,8 @@ struct Intent {
 // guessing would put invisible walls in the world, which is worse.
 using BlockAt = std::function<int32_t(int32_t, int32_t, int32_t)>;
 
-// One step of movement, resolved axis by axis so a wall stops sideways travel
-// without stopping the fall. `seconds` is real time, not ticks.
-void step(Body& body, const Intent& intent, const BlockAt& at, const BlockTable& table,
-          double seconds);
+// One tick of movement, resolved axis by axis so a wall stops sideways travel
+// without stopping the fall.
+void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable& table);
 
 } // namespace mcpp::world

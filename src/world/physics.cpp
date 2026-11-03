@@ -7,13 +7,27 @@
 namespace mcpp::world {
 namespace {
 
-// The game's own numbers, converted from per-tick to per-second at 20 ticks.
-constexpr double kGravity = 32.0;
-constexpr double kJumpSpeed = 8.4;
-constexpr double kWalkSpeed = 4.317;
-constexpr double kSprintSpeed = 5.612;
-constexpr double kTerminalFall = 78.4;
-constexpr double kAirControl = 0.25;
+// Everything here is per tick, which is the unit the game itself moves in.
+// Speed is not set, it is accelerated towards and dragged back from, which is
+// what gives walking its short run-up and its slide when the key comes up.
+constexpr double kGroundDrag = 0.546;   // 0.6 slipperiness through 0.91 of air
+constexpr double kAirDrag = 0.91;
+constexpr double kFallDrag = 0.98;
+constexpr double kGravity = 0.08;
+constexpr double kTerminalFall = 3.92;  // where gravity and fall drag balance
+constexpr double kJumpSpeed = 0.42;
+// A sprinting jump throws you forward as well as up, which is most of why
+// jumping while sprinting covers ground faster than sprinting does.
+constexpr double kSprintJumpBoost = 0.2;
+
+// Chosen so that acceleration against drag settles on the speed the game
+// walks and sprints at: 4.317 and 5.612 blocks a second.
+constexpr double kWalkAccel = (4.317 / 20.0) * (1.0 - kGroundDrag);
+constexpr double kSprintAccel = (5.612 / 20.0) * (1.0 - kGroundDrag);
+// In the air you steer, you do not walk.
+constexpr double kAirAccel = 0.02;
+constexpr double kSprintAirAccel = 0.026;
+
 // How high a step the game lets you walk up without jumping.
 constexpr double kStepHeight = 0.6;
 
@@ -79,10 +93,10 @@ double limit(const Box& box, const BlockAt& at, const BlockTable& table, int axi
 
 } // namespace
 
-void step(Body& body, const Intent& intent, const BlockAt& at, const BlockTable& table,
-          double seconds) {
-    if (seconds <= 0.0) return;
-    seconds = std::min(seconds, 0.1);   // a long frame must not teleport anyone
+void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable& table) {
+    body.previous_x = body.x;
+    body.previous_y = body.y;
+    body.previous_z = body.z;
 
     const double yaw = intent.yaw_degrees * std::numbers::pi / 180.0;
     const double sin_yaw = std::sin(yaw);
@@ -95,30 +109,33 @@ void step(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
         wish_z /= length;
     }
 
-    const double speed = intent.sprint ? kSprintSpeed : kWalkSpeed;
+    // Sprinting is a state, not a key: it needs you going forwards, and it
+    // drops the moment you stop asking to.
+    body.sprinting = intent.sprint && intent.forward > 0.0;
+
     if (body.on_ground) {
-        body.vx = wish_x * speed;
-        body.vz = wish_z * speed;
+        const double accel = body.sprinting ? kSprintAccel : kWalkAccel;
+        body.vx += wish_x * accel;
+        body.vz += wish_z * accel;
         if (intent.jump) {
             body.vy = kJumpSpeed;
             body.on_ground = false;
+            if (body.sprinting) {
+                body.vx += sin_yaw * kSprintJumpBoost;
+                body.vz += -cos_yaw * kSprintJumpBoost;
+            }
         }
     } else {
-        // In the air you steer, you do not walk.
-        body.vx += wish_x * speed * kAirControl * seconds * 20.0 / 4.0;
-        body.vz += wish_z * speed * kAirControl * seconds * 20.0 / 4.0;
-        const double air = std::hypot(body.vx, body.vz);
-        if (air > speed) {
-            body.vx *= speed / air;
-            body.vz *= speed / air;
-        }
+        const double accel = body.sprinting ? kSprintAirAccel : kAirAccel;
+        body.vx += wish_x * accel;
+        body.vz += wish_z * accel;
     }
 
-    body.vy = std::max(body.vy - kGravity * seconds, -kTerminalFall);
+    body.vy = std::max((body.vy - kGravity) * kFallDrag, -kTerminalFall);
 
     const auto slide = [&](int axis, double& position, double& velocity) {
         const Box box = around(body);
-        const double wanted = velocity * seconds;
+        const double wanted = velocity;
         const double moved = limit(box, at, table, axis, wanted);
         position += moved;
         const bool blocked = std::abs(moved - wanted) > 1e-9;
@@ -163,6 +180,12 @@ void step(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
 
     walk(0, body.x, body.vx);
     walk(2, body.z, body.vz);
+
+    // Drag is applied after the move, so a tick that was stopped by a wall
+    // still bleeds its speed off the same way an open one does.
+    const double drag = body.on_ground ? kGroundDrag : kAirDrag;
+    body.vx *= drag;
+    body.vz *= drag;
 }
 
 } // namespace mcpp::world

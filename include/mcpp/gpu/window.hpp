@@ -112,6 +112,9 @@ private:
     bool typing_ = false;
     bool chat_key_down_ = false;
     bool fly_key_down_ = false;
+    bool forward_key_down_ = false;
+    bool double_tap_sprint_ = false;
+    double last_forward_press_ = -1.0;
     bool enter_down_ = false;
     bool escape_down_ = false;
     bool backspace_down_ = false;

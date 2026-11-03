@@ -581,6 +581,8 @@ int do_play(const std::string& target, size_t chunk_limit) {
     }
     float yaw = placed ? spawn_yaw - 90.0f : -90.0f;
     float pitch = placed ? -spawn_pitch : -8.0f;
+    float physics_accumulator = 0.0f;
+    float fov = 70.0f;
 
     // Meshing runs here, never in the frame. The frame only ever does the copy.
     struct Batch {
@@ -709,35 +711,59 @@ int do_play(const std::string& target, size_t chunk_limit) {
         // Anything that leaves this loop wants the game's.
         const float game_yaw = yaw + 90.0f;
 
-        if (flying) {
-            const float speed = (input.sprint ? 46.0f : 14.0f) * dt;
-            for (int i = 0; i < 3; ++i) {
-                eye[i] += forward[i] * input.forward * speed + right[i] * input.right * speed;
+        // Movement runs on the game's own clock, not the frame's, and the eye is
+        // drawn between the last two ticks. Without that the same key covers a
+        // different distance at sixty frames and at three hundred.
+        physics_accumulator = std::min(physics_accumulator + dt, 0.25f);
+        while (physics_accumulator >= mcpp::world::kTickSeconds) {
+            physics_accumulator -= static_cast<float>(mcpp::world::kTickSeconds);
+            if (flying) {
+                // Creative flight is the same drag, a different push: nothing
+                // holds you up, so the vertical key is a speed of its own.
+                constexpr double kFlyAccel = 0.1;
+                constexpr double kFlyDrag = 0.91;
+                const double push = kFlyAccel * (input.sprint ? 2.0 : 1.0);
+                body.previous_x = body.x;
+                body.previous_y = body.y;
+                body.previous_z = body.z;
+                body.vx += (forward[0] * input.forward + right[0] * input.right) * push;
+                body.vz += (forward[2] * input.forward + right[2] * input.right) * push;
+                body.vy += input.up * push;
+                body.x += body.vx;
+                body.y += body.vy;
+                body.z += body.vz;
+                body.vx *= kFlyDrag;
+                body.vy *= 0.6;
+                body.vz *= kFlyDrag;
+                body.on_ground = false;
+            } else {
+                mcpp::world::Intent intent;
+                intent.forward = input.forward;
+                intent.strafe = input.right;
+                intent.yaw_degrees = game_yaw;
+                intent.jump = input.up > 0.0f;
+                intent.sprint = input.sprint;
+                mcpp::world::tick(body, intent, block_at, table);
             }
-            eye[1] += input.up * speed;
-            body.x = eye[0];
-            body.y = eye[1] - mcpp::world::kEyeHeight;
-            body.z = eye[2];
-            body.vx = body.vy = body.vz = 0.0;
-        } else {
-            mcpp::world::Intent intent;
-            intent.forward = input.forward;
-            intent.strafe = input.right;
-            intent.yaw_degrees = game_yaw;
-            intent.jump = input.up > 0.0f;
-            intent.sprint = input.sprint;
-            mcpp::world::step(body, intent, block_at, table, dt);
-            eye[0] = static_cast<float>(body.x);
-            eye[1] = static_cast<float>(body.y + mcpp::world::kEyeHeight);
-            eye[2] = static_cast<float>(body.z);
         }
+        const float blend = physics_accumulator / static_cast<float>(mcpp::world::kTickSeconds);
+        const auto between = [blend](double was, double is) {
+            return static_cast<float>(was + (is - was) * blend);
+        };
+        eye[0] = between(body.previous_x, body.x);
+        eye[1] = between(body.previous_y, body.y) + static_cast<float>(mcpp::world::kEyeHeight);
+        eye[2] = between(body.previous_z, body.z);
 
         mcpp::gpu::Camera camera{};
         for (int i = 0; i < 3; ++i) {
             camera.eye[i] = eye[i];
             camera.target[i] = eye[i] + forward[i];
         }
-        camera.fov_degrees = 70.0f;
+        // The view widens while you sprint and eases back when you stop, which
+        // is most of how sprinting reads on screen at all.
+        const float wanted_fov = 70.0f * (body.sprinting || (flying && input.sprint) ? 1.15f : 1.0f);
+        fov += (wanted_fov - fov) * std::min(1.0f, dt * 12.0f);
+        camera.fov_degrees = fov;
 
         // Drain whatever the server sent, then report where we are. Standing
         // still in the socket is how a client gets timed out.
@@ -1398,7 +1424,7 @@ int do_walktest(const std::string& target, double seconds) {
 
     // Four directions, because one of them is bound to be uphill and that is
     // the one that shows whether stepping up works.
-    constexpr double kStep = 1.0 / 60.0;
+    constexpr double kStep = mcpp::world::kTickSeconds;
     const auto steps = static_cast<int>(seconds / kStep);
     bool fell = false;
     for (const float yaw : {0.0f, 90.0f, 180.0f, 270.0f}) {
@@ -1429,7 +1455,7 @@ int do_walktest(const std::string& target, double seconds) {
             last_z = body.z;
             intent.jump = stuck > 6 && body.on_ground;
 
-            mcpp::world::step(body, intent, block_at, table, kStep);
+            mcpp::world::tick(body, intent, block_at, table);
             if (body.on_ground) grounded += kStep;
             lowest = std::min(lowest, body.y);
             highest = std::max(highest, body.y);
