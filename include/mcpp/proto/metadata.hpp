@@ -91,4 +91,24 @@ private:
     std::vector<Entry> entries_;
 };
 
+// What one index means for one entity type, for protocol 774.
+struct MetaField {
+    uint8_t index = 0;
+    MetaType type = MetaType::Byte;
+    std::string_view name;
+};
+
+// Every field of an entity type ("minecraft:zombie"), inherited ones
+// included, by index; empty for a type the table does not know.
+std::span<const MetaField> metadata_fields(std::string_view entity_type);
+const MetaField* metadata_field(std::string_view entity_type, uint8_t index);
+// The index of a field by name ("is_baby"), or -1.
+int metadata_index(std::string_view entity_type, std::string_view name);
+
+// set_entity_data's entries after the entity id, up to the 0xff that ends
+// them. A serializer this table has no layout for throws: the next entry
+// cannot be found without it.
+Metadata read_metadata(ByteBuffer& in, int32_t protocol);
+std::string_view meta_type_name(MetaType type);
+
 } // namespace mcpp::proto

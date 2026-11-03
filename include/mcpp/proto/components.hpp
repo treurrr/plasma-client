@@ -3,6 +3,7 @@
 #include "mcpp/nbt.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -81,6 +82,8 @@ public:
     std::span<const int32_t> removed() const { return removed_; }
 
     const Value* find(int32_t type) const;
+    // By registry name, "minecraft:damage", in the given protocol's numbering.
+    const Value* find(std::string_view name, int32_t protocol) const;
     bool removes(int32_t type) const;
 
     void add(int32_t type, Value value) { added_.push_back({type, std::move(value)}); }
@@ -90,5 +93,33 @@ private:
     std::vector<Entry> added_;
     std::vector<int32_t> removed_;
 };
+
+// The data component types in a protocol's own numbering, from the reports:
+// -1 and an empty name for one the protocol does not have.
+int32_t component_type(std::string_view name, int32_t protocol);
+std::string_view component_name(int32_t type, int32_t protocol);
+
+// One stack the way every slot on the wire is written: a count, and for a
+// count above zero the item, the components it adds and the ones it removes.
+// A component without a layout throws, because nothing after it can be found.
+ItemStack read_item_stack(ByteBuffer& in, int32_t protocol);
+// One component's body, and one body of a named type in the layout table
+// ("particle", "resolvable_profile").
+Value read_component(ByteBuffer& in, int32_t type, int32_t protocol);
+Value read_named(ByteBuffer& in, std::string_view type, int32_t protocol);
+// One body of a layout written out, in the table's own notation; `layout`
+// must outlive the program, since the decoded names point into it.
+Value read_layout(ByteBuffer& in, std::string_view layout, int32_t protocol);
+// Whether every layout in the table parses and every @name it uses exists;
+// the first problem otherwise.
+std::string check_layouts();
+
+// A value on one line, the way inspect prints it. Ids stay numbers unless
+// `name_of` knows the registry entry.
+using RegistryLookup = std::function<std::string(std::string_view registry, int64_t id)>;
+std::string describe(const Value& value, const RegistryLookup& name_of = {},
+                     const nbt::TranslateLookup& lookup = {});
+std::string describe(const ItemStack& stack, const RegistryLookup& name_of = {},
+                     const nbt::TranslateLookup& lookup = {});
 
 } // namespace mcpp::proto

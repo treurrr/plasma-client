@@ -113,7 +113,10 @@ add_library(mcpp_net STATIC
     src/image_png.cpp
     src/proto/packet_ids_gen.cpp
     src/proto/components.cpp
+    src/proto/components_gen.cpp
     src/proto/metadata.cpp
+    src/proto/metadata_gen.cpp
+    src/proto/commands.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)
@@ -137,7 +140,7 @@ if(glfw3_FOUND)
         src/client/sound.cpp)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
-    src/client/common.cpp ${MCPP_PLAY_SOURCES})
+    src/client/common.cpp src/client/inspect.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)

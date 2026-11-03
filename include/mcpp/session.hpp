@@ -2,6 +2,7 @@
 #include "mcpp/auth.hpp"
 #include "mcpp/packet_io.hpp"
 #include "mcpp/nbt.hpp"
+#include "mcpp/proto/commands.hpp"
 #include "mcpp/proto/metadata.hpp"
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/registries.hpp"
@@ -11,6 +12,7 @@
 #include "mcpp/world/chunk.hpp"
 
 #include <array>
+#include <chrono>
 #include <map>
 #include <set>
 #include <fstream>
@@ -176,13 +178,24 @@ struct SessionEvents {
     } sound;
 
     struct Data {
+        // set_entity_data changed something on this entity, the player included.
+        std::function<void(int32_t)> on_entity_data;
+        // A plugin channel message the session does not answer itself.
+        std::function<void(std::string_view, const std::vector<uint8_t>&)> on_custom_payload;
+        // New biomes for a chunk already loaded, one container per section from
+        // the bottom up: remesh it without new blocks.
+        std::function<void(int32_t, int32_t, const std::vector<world::PalettedContainer>&)>
+            on_chunk_biomes;
+        // A configuration round cleared chat and the signature chain with it.
+        std::function<void()> on_reset_chat;
+        // The server moved us to another one; the session has reconnected there.
+        std::function<void(std::string_view, uint16_t)> on_transfer;
     } data;
 };
 
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false
-// when the stack carried data components, whose bodies differ per component
-// type: the id and count before them are still right, the slots after it in
-// the same packet are not.
+// only when a component could not be decoded, which loses the slots after it
+// in the same packet.
 struct ItemStack {
     int32_t id = 0;
     int32_t count = 0;
@@ -307,6 +320,35 @@ public:
     // Peaceful, easy, normal, hard.
     int32_t difficulty() const { return data_.difficulty; }
     bool difficulty_locked() const { return data_.difficulty_locked; }
+    // An entity's data, or the player's own for entity_id(); empty for one the
+    // server has said nothing about.
+    const proto::Metadata& metadata(int32_t entity) const;
+    // A container's properties from container_set_data, by property index:
+    // a furnace's fuel and progress, an enchanting table's offers.
+    const std::map<int32_t, int32_t>& container_properties(int32_t container) const;
+    const proto::CommandTree& commands() const { return data_.commands; }
+    // update_recipes, every recipe_book_add since the last replacing one, and
+    // the book's open and filter switches, decoded by the layout table.
+    const proto::Value& recipe_sets() const { return data_.recipe_sets; }
+    const std::vector<proto::Value>& recipe_book() const { return data_.recipe_book; }
+    const proto::Value& recipe_book_settings() const { return data_.recipe_book_settings; }
+    // What the server says about itself in play, its pause menu links and the
+    // lines it wants in a crash report.
+    const proto::Value& server_data() const { return data_.server_data; }
+    const proto::Value& server_links() const { return data_.server_links; }
+    const proto::Value& report_details() const { return data_.report_details; }
+    const std::string& server_brand() const { return data_.server_brand; }
+    // The feature flags the server has on: minecraft:vanilla, and any
+    // experiment that gates its own items and blocks.
+    const std::vector<std::string>& enabled_features() const { return data_.features; }
+    // Ticks per second, and whether the server has frozen time; a frozen
+    // world moves nothing forward but by ticking_step.
+    float tick_rate() const { return data_.tick_rate; }
+    bool tick_frozen() const { return data_.tick_frozen; }
+    int32_t tick_steps() const { return data_.tick_steps; }
+    // How much of an item group's cooldown is left, 1 just after it began and
+    // 0 when it is over, at the server's tick rate.
+    float cooldown_left(std::string_view group) const;
 
 private:
     // Each returns whether the packet was its area's. A new packet goes in the
@@ -371,9 +413,38 @@ private:
         Tags tags;
         int32_t difficulty = 2;
         bool difficulty_locked = false;
+        proto::Metadata own_metadata;
+        std::map<int32_t, std::map<int32_t, int32_t>> container_properties;
+        proto::CommandTree commands;
+        proto::Value recipe_sets;
+        std::vector<proto::Value> recipe_book;
+        proto::Value recipe_book_settings;
+        proto::Value server_data;
+        proto::Value server_links;
+        proto::Value report_details;
+        std::string server_brand;
+        std::vector<std::string> features;
+        float tick_rate = 20.0f;
+        bool tick_frozen = false;
+        int32_t tick_steps = 0;
+        struct Cooldown {
+            std::chrono::steady_clock::time_point start;
+            int32_t ticks = 0;
+        };
+        std::map<std::string, Cooldown, std::less<>> cooldowns;
+        // Cookies live as long as the client does, across transfers.
+        std::map<std::string, std::vector<uint8_t>, std::less<>> cookies;
+        std::set<int32_t> warned;
+        bool brand_sent = false;
     };
     DataState data_;
     void read_tags(ByteBuffer& in);
+    // Configuration and play share these packets, with their own ids.
+    bool handle_data_common(PacketConnection::Packet& packet, bool configuration);
+    void transfer(std::string host, uint16_t port);
+    void send_brand();
+    // The handshake's intent: login, or a transfer from another server.
+    int32_t intent_ = 2;
 
     std::ofstream recording_;
     std::ifstream playback_;
