@@ -14,6 +14,8 @@ constexpr double kWalkSpeed = 4.317;
 constexpr double kSprintSpeed = 5.612;
 constexpr double kTerminalFall = 78.4;
 constexpr double kAirControl = 0.25;
+// How high a step the game lets you walk up without jumping.
+constexpr double kStepHeight = 0.6;
 
 struct Box {
     double min[3];
@@ -128,8 +130,39 @@ void step(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
     // sideways move is a walk or a drift through the air.
     const bool falling = body.vy <= 0.0;
     body.on_ground = slide(1, body.y, body.vy) && falling;
-    slide(0, body.x, body.vx);
-    slide(2, body.z, body.vz);
+
+    // A kerb is not a wall. Blocked on the ground, try the same move one step
+    // higher and drop back down, which is what lets you walk up a hillside.
+    const auto walk = [&](int axis, double& position, double& velocity) {
+        const double was_position = position;
+        const double was_velocity = velocity;
+        if (!slide(axis, position, velocity) || !body.on_ground) return;
+
+        const double blocked_at = position;
+        position = was_position;
+        velocity = was_velocity;
+
+        const double raised = body.y;
+        double climb = kStepHeight;
+        body.y += limit(around(body), at, table, 1, climb);
+        if (body.y - raised < kStepHeight - 1e-6) {
+            body.y = raised;
+            position = blocked_at;
+            velocity = 0.0;
+            return;
+        }
+        slide(axis, position, velocity);
+        climb = -(body.y - raised);
+        body.y += limit(around(body), at, table, 1, climb);
+        if (std::abs(position - was_position) <= std::abs(blocked_at - was_position)) {
+            body.y = raised;
+            position = blocked_at;
+            velocity = 0.0;
+        }
+    };
+
+    walk(0, body.x, body.vx);
+    walk(2, body.z, body.vz);
 }
 
 } // namespace mcpp::world

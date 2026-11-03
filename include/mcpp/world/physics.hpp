@@ -34,6 +34,10 @@ struct Intent {
 
 // Block state at a world position, or -1 where the world is not loaded. The
 // body never falls through unloaded ground: unknown counts as solid.
+//
+// Only full cubes stop the body. Mojang's reports do not publish collision
+// shapes, so a slab or a staircase is walked through rather than guessed at;
+// guessing would put invisible walls in the world, which is worse.
 using BlockAt = std::function<int32_t(int32_t, int32_t, int32_t)>;
 
 // One step of movement, resolved axis by axis so a wall stops sideways travel

@@ -1268,6 +1268,116 @@ mcpp::world::ChunkSection section_from_states(const std::vector<int32_t>& states
     return section;
 }
 
+// Joins, loads the world around spawn, and walks a body through it without
+// opening a window. A screenshot cannot show whether the ground holds.
+int do_walktest(const std::string& target, double seconds) {
+    const auto address = parse_address(target);
+    mcpp::world::BlockTable table;
+    if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "no block table; bake one with tools/bake_all.py\n";
+        return 1;
+    }
+
+    std::map<std::pair<int32_t, int32_t>, mcpp::world::Chunk> world;
+    std::atomic<bool> enough{false};
+    double spawn[3] = {0.0, 80.0, 0.0};
+    bool placed = false;
+
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    std::string username = "PlasmaWalk";
+    options.profile = signed_in_profile(username);
+    options.username = username;
+
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.on_position = [&](double x, double y, double z, float, float) {
+        spawn[0] = x;
+        spawn[1] = y;
+        spawn[2] = z;
+        placed = true;
+    };
+    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+        world.insert_or_assign({chunk.x, chunk.z}, chunk);
+        if (world.size() >= 64 && placed) enough.store(true);
+    };
+
+    mcpp::Session session(options, events);
+    session.connect();
+    while (!enough.load()) {
+        try {
+            if (!session.pump()) break;
+        } catch (const mcpp::TimeoutError&) {
+            break;
+        }
+    }
+    session.close();
+    if (world.empty()) return 1;
+    std::cout << std::format("- {} chunks loaded, spawn at {:.1f} {:.1f} {:.1f}\n", world.size(),
+                             spawn[0], spawn[1], spawn[2]);
+
+    const auto block_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
+        const int32_t index = y + 64;
+        if (index < 0) return 1;
+        const auto found = world.find({x >> 4, z >> 4});
+        if (found == world.end()) return -1;
+        if (index >= static_cast<int32_t>(found->second.sections.size()) * 16) return 0;
+        return found->second.block_state(x & 15, index, z & 15);
+    };
+
+    // Four directions, because one of them is bound to be uphill and that is
+    // the one that shows whether stepping up works.
+    constexpr double kStep = 1.0 / 60.0;
+    const auto steps = static_cast<int>(seconds / kStep);
+    bool fell = false;
+    for (const float yaw : {0.0f, 90.0f, 180.0f, 270.0f}) {
+        mcpp::world::Body body;
+        body.x = spawn[0];
+        body.y = spawn[1] + 6.0;
+        body.z = spawn[2];
+
+        mcpp::world::Intent intent;
+        intent.forward = 1.0;
+        intent.yaw_degrees = yaw;
+
+        double grounded = 0.0;
+        double lowest = body.y;
+        double highest = body.y;
+        double last_x = body.x;
+        double last_z = body.z;
+        int stuck = 0;
+        for (int i = 0; i < steps; ++i) {
+            // A player walking into a hillside jumps. A full block is too tall
+            // to step onto, in this client and in the game.
+            if (std::hypot(body.x - last_x, body.z - last_z) < 0.01) {
+                ++stuck;
+            } else {
+                stuck = 0;
+            }
+            last_x = body.x;
+            last_z = body.z;
+            intent.jump = stuck > 6 && body.on_ground;
+
+            mcpp::world::step(body, intent, block_at, table, kStep);
+            if (body.on_ground) grounded += kStep;
+            lowest = std::min(lowest, body.y);
+            highest = std::max(highest, body.y);
+        }
+        const double travelled = std::hypot(body.x - spawn[0], body.z - spawn[2]);
+        std::cout << std::format(
+            "- yaw {:>3.0f}: {:5.1f} blocks in {:.0f}s, y {:.1f} to {:.1f}, "
+            "on the ground {:.0f}% of the time\n",
+            yaw, travelled, seconds, lowest, highest, grounded / seconds * 100.0);
+        fell = fell || lowest < -60.0;
+    }
+    if (fell) {
+        std::cerr << "fell out of the world\n";
+        return 1;
+    }
+    return 0;
+}
+
 int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples,
                 const std::string& view) {
     mcpp::world::BlockTable table;
@@ -1674,6 +1784,9 @@ int main(int argc, char** argv) {
             const uint32_t width = argc > 3 ? static_cast<uint32_t>(std::stoul(argv[3])) : 1280;
             const uint32_t height = argc > 4 ? static_cast<uint32_t>(std::stoul(argv[4])) : 720;
             return do_render(out, width, height);
+        }
+        if (command == "walktest" && argc > 2) {
+            return do_walktest(argv[2], argc > 3 ? std::stod(argv[3]) : 10.0);
         }
         if (command == "login") {
             return do_login();
