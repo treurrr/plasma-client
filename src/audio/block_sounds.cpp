@@ -56,7 +56,7 @@ std::optional<BlockSoundCue> cue(const BlockSoundType& type, BlockSoundKind kind
         result = {type.step, v * 0.15f, p};
         break;
     }
-    if (result.event.empty()) return std::nullopt;
+    if (result.event.empty() || result.event == "intentionally_empty") return std::nullopt;
     return result;
 }
 

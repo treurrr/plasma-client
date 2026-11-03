@@ -40,7 +40,7 @@ public:
     static const BlockSounds& builtin();
 
     // Rows are tab separated: block, type, volume, pitch, break, step, place,
-    // hit, fall. A '-' event is one the type does not have.
+    // hit, fall. intentionally_empty is an event the type does not have.
     bool parse(std::string_view text);
     size_t size() const { return blocks_.size(); }
     // By registry name, with or without the minecraft: namespace. A block the
