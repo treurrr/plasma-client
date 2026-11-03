@@ -157,3 +157,13 @@ mcpp_test(protocol)
 mcpp_test(packet_ids)
 mcpp_test(assets)
 mcpp_test(jmath)
+
+# The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it
+# with the game's own code. One line per probe.
+function(mcpp_probe name)
+    add_executable(${name} tools/oracle/${name}.cpp)
+    target_link_libraries(${name} PRIVATE mcpp_net)
+    mcpp_defaults(${name})
+endfunction()
+
+mcpp_probe(jmath_probe)
