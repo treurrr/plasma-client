@@ -18,7 +18,7 @@ import net.minecraft.core.Direction;
 import org.joml.Vector3fc;
 
 // Asks the game for every model layer it builds and prints their part trees in
-// the format of data/entity_models.txt. Runs against the player's own jar.
+// the format of entity_models-<protocol>.txt. Runs against the player's own jar.
 public final class ExportModels {
     private static Field field(Class<?> type, String name) throws Exception {
         Field f = type.getDeclaredField(name);

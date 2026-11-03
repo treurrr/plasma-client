@@ -3,13 +3,14 @@
 
 #include <bit>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <vector>
 
-// The C++ half of ModelOracle: the layers from data/entity_models.txt baked
+// The C++ half of ModelOracle: the layers from entity_models-774.txt baked
 // by our cube, and our player animation on the same cases, values only.
 namespace {
 
@@ -18,8 +19,18 @@ int32_t bits(float v) { return std::bit_cast<int32_t>(v); }
 } // namespace
 
 int main() {
-    const auto data = std::filesystem::path(__FILE__).parent_path() / "../../data/entity_models.txt";
+    std::filesystem::path base;
+    if (const char* data_home = std::getenv("XDG_DATA_HOME")) {
+        base = data_home;
+    } else if (const char* home = std::getenv("HOME")) {
+        base = std::filesystem::path(home) / ".local" / "share";
+    }
+    const auto data = base / "plasma-client" / "data" / "entity_models-774.txt";
     std::ifstream input(data);
+    if (!input) {
+        std::cerr << "no " << data.string() << "; bake it with tools/bake_all.py\n";
+        return 1;
+    }
     std::stringstream text;
     text << input.rdbuf();
     mcpp::entity::ModelSet set;

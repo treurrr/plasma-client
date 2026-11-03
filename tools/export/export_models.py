@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Write data/entity_models.txt by asking the game for its model layers.
+"""Write entity_models-<protocol>.txt by asking the game for its model layers.
 
-Usage: export_models.py <client jar with Mojang's names> <launcher dir> <out.txt>
+Usage: export_models.py <out.txt>
 
-The launcher dir is the one holding versions/ and libraries/ (~/.minecraft).
-Compiles ExportModels.java against the jar and its libraries, runs it, and
-writes what it prints, with a header saying what the file is.
+Compiles ExportModels.java against the remapped client jar (the one
+tools/oracle/run.py uses) and the libraries its launcher lists, runs it, and
+writes what it prints, with a header saying what the file is. bake_all puts
+it in the data directory; it is never committed.
 """
 import json
 import os
@@ -13,6 +14,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "oracle"))
+from run import LIBRARY_ROOTS, reference_jar  # noqa: E402
 
 VERSION = "1.21.11"
 HEADER = """\
@@ -40,9 +44,14 @@ def classpath(launcher, jar):
 
 
 def main(args):
-    if len(args) != 3:
+    if len(args) != 1:
         sys.exit(__doc__)
-    jar, launcher, out = Path(args[0]), Path(args[1]), Path(args[2])
+    out = Path(args[0])
+    launcher = next((root.parent for root in LIBRARY_ROOTS
+                     if (root.parent / "versions" / VERSION / f"{VERSION}.json").is_file()), None)
+    if launcher is None:
+        sys.exit(f"no launcher holds {VERSION}'s libraries")
+    jar = reference_jar()
     source = Path(__file__).with_name("ExportModels.java")
     cp = classpath(launcher, jar)
     with tempfile.TemporaryDirectory() as classes:
@@ -50,6 +59,7 @@ def main(args):
         with tempfile.TemporaryDirectory() as work:
             result = subprocess.run(["java", "-cp", classes + os.pathsep + cp, "ExportModels"],
                                     cwd=work, check=True, capture_output=True, text=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(HEADER + result.stdout)
     print(f"{out}: {result.stdout.count(chr(10) + '[')} layers")
 

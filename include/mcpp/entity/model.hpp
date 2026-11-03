@@ -9,7 +9,7 @@
 namespace mcpp::entity {
 
 // The game's model space, kept as the game builds it so every number can be
-// checked against data/entity_models.txt: pixels, y pointing down, the model
+// checked against the exported entity_models table: pixels, y pointing down, the model
 // facing -z with its own right at -x.
 struct Box {
     std::array<float, 3> origin{};

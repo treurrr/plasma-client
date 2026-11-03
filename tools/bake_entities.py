@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Bake what the client draws entities with into one file.
 
-Usage: bake_entities.py <client.jar> <data/entity_models.txt> <out.plen>
+Usage: bake_entities.py <client.jar> <entity_models.txt> <out.plen>
 
 Every texture under textures/entity/ as RGBA, the shadow, the ascii sheet of
 the default font with each glyph's advance (for name tags), and the model
-geometry, which is not in the jar's assets and comes from the data file that
+geometry, which is not in the jar's assets and comes from the table that
 tools/export/export_models.py writes by asking the game. The textures are Mojang's art, read from the player's own jar and
 never committed here.
 """

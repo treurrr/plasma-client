@@ -13,7 +13,7 @@ import net.minecraft.world.entity.HumanoidArm;
 // The game's own baked model layers and its player animation on fixed inputs,
 // printed as bit patterns: every polygon corner of the layers named, then
 // every part of the player model after setupAnim for each case. The probe
-// prints the same from data/entity_models.txt and our animation.
+// prints the same from the baked entity_models table and our animation.
 public final class ModelOracle {
     static final String[] LAYERS = {"player", "player_slim", "zombie", "creeper", "pig", "chicken"};
 
