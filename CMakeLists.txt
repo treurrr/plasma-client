@@ -112,6 +112,12 @@ add_library(mcpp_net STATIC
     ${MCPP_WINDOW_SOURCES}
     src/image_png.cpp
     src/image_png_read.cpp
+    src/options.cpp
+    src/keybinds.cpp
+    src/ui/text_component.cpp
+    src/ui/screen.cpp
+    src/ui/widgets.cpp
+    src/ui/server_list.cpp
     src/proto/packet_ids_gen.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
@@ -157,3 +163,4 @@ endfunction()
 mcpp_test(protocol)
 mcpp_test(packet_ids)
 mcpp_test(assets)
+mcpp_test(ui)

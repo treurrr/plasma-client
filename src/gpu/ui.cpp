@@ -330,6 +330,9 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
                                        std::max(found->second.height, 1.0f);
                 }
                 glyphs_.emplace(code, glyph);
+                if (code > 32 && glyph.draw_width > 0.0f) {
+                    glyphs_by_width_[static_cast<int>(glyph.advance)].push_back(code);
+                }
             }
             for (uint32_t i = 0; i < header[6]; ++i) {
                 uint16_t length = 0;
@@ -966,6 +969,39 @@ float UiRenderer::text(std::string_view utf8, float x, float y, float scale, uin
     return pen - x;
 }
 
+float UiRenderer::glyph(uint32_t code, float x, float y, float scale, uint32_t rgba) {
+    const auto found = glyphs_.find(code);
+    if (found == glyphs_.end()) return 0.0f;
+    const Glyph& g = found->second;
+    if (g.draw_width > 0.0f) {
+        Quad quad;
+        quad.x = x;
+        quad.y = y + (7.0f - g.ascent) * scale;
+        quad.width = g.draw_width * scale;
+        quad.height = g.draw_height * scale;
+        quad.fill_top = rgba;
+        quad.fill_bottom = rgba;
+        quad.layer = -2;
+        quad.uv[0] = g.sprite.u;
+        quad.uv[1] = g.sprite.v;
+        quad.uv[2] = g.sprite.du;
+        quad.uv[3] = g.sprite.dv;
+        add(quad);
+    }
+    return g.advance;
+}
+
+float UiRenderer::advance(uint32_t code) const {
+    const auto found = glyphs_.find(code);
+    return found == glyphs_.end() ? 0.0f : found->second.advance;
+}
+
+uint32_t UiRenderer::glyph_like(uint32_t code, uint32_t seed) const {
+    const auto found = glyphs_by_width_.find(static_cast<int>(advance(code)));
+    if (found == glyphs_by_width_.end() || found->second.empty()) return code;
+    return found->second[seed % found->second.size()];
+}
+
 float UiRenderer::text_width(std::string_view utf8, float scale) const {
     float width = 0.0f;
     for (size_t at = 0; at < utf8.size();) {
@@ -1026,6 +1062,21 @@ void UiRenderer::tile(const Sprite& sprite, float sx, float sy, float sw, float 
             region(sprite, sx, sy, w / scale, h / scale, dx + x, dy + y, w, h, rgba);
         }
     }
+}
+
+void UiRenderer::sprite_region(std::string_view name, float sx, float sy, float sw, float sh,
+                               float x, float y, float width, float height, uint32_t rgba) {
+    const auto found = sprites_.find(name);
+    if (found == sprites_.end()) return;
+    region(found->second, sx, sy, sw, sh, x, y, width, height, rgba);
+}
+
+void UiRenderer::sprite_tiled(std::string_view name, float sx, float sy, float sw, float sh,
+                              float x, float y, float width, float height, float scale,
+                              uint32_t rgba) {
+    const auto found = sprites_.find(name);
+    if (found == sprites_.end()) return;
+    tile(found->second, sx, sy, sw, sh, x, y, width, height, scale, rgba);
 }
 
 void UiRenderer::nine_slice(std::string_view name, float x, float y, float width, float height,

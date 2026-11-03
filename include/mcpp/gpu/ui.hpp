@@ -89,8 +89,22 @@ public:
                bool shadow = true);
     float text_width(std::string_view utf8, float scale) const;
     float line_height(float scale) const { return 9.0f * scale; }
+    // One codepoint, and how far the pen moves for it in font pixels. A
+    // codepoint the font has no glyph for draws nothing and moves nothing.
+    float glyph(uint32_t code, float x, float y, float scale, uint32_t rgba);
+    float advance(uint32_t code) const;
+    // Another glyph exactly as wide, chosen by `seed`: what obfuscated text
+    // scrambles through.
+    uint32_t glyph_like(uint32_t code, uint32_t seed) const;
     bool has_font() const { return !glyphs_.empty(); }
 
+    // A window of a sprite, in its own texels, onto a rectangle; and the same
+    // window repeated across a rectangle at `scale` screen pixels per texel.
+    void sprite_region(std::string_view name, float sx, float sy, float sw, float sh, float x,
+                       float y, float width, float height, uint32_t rgba = 0xFFFFFFFFu);
+    void sprite_tiled(std::string_view name, float sx, float sy, float sw, float sh, float x,
+                      float y, float width, float height, float scale,
+                      uint32_t rgba = 0xFFFFFFFFu);
     // A plain rectangle of one colour, edges on whole pixels, which is what
     // the game's own fill is.
     void fill(float x, float y, float width, float height, uint32_t rgba);
@@ -186,6 +200,7 @@ private:
     std::vector<uint8_t> item_armour_;
     std::map<std::string, Sprite, std::less<>> sprites_;
     std::unordered_map<uint32_t, Glyph> glyphs_;
+    std::map<int, std::vector<uint32_t>> glyphs_by_width_;
     std::map<std::string, Slicing, std::less<>> slicing_;
     VkImage gui_image_ = VK_NULL_HANDLE;
     VkDeviceMemory gui_memory_ = VK_NULL_HANDLE;

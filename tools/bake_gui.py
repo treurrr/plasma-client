@@ -25,6 +25,10 @@ PREFIX = "assets/minecraft/textures/gui/sprites/"
 # The container backgrounds are not sprites: they are whole 256x256 sheets the
 # game blits a window out of, so they come in under their own names.
 CONTAINERS = "assets/minecraft/textures/gui/container/"
+# Whole textures the screens draw: the menu and list backgrounds, the header
+# and footer lines, the recipe book's sheet and the title screen's logo.
+TEXTURES = "assets/minecraft/textures/gui/"
+TITLE = ("title/minecraft.png", "title/edition.png")
 SIDE = 2048
 PAD = 1
 
@@ -101,6 +105,12 @@ def main(args):
     with zipfile.ZipFile(jar_path) as jar:
         glyphs = read_font(jar)
         for name in sorted(jar.namelist()):
+            if name.startswith(TEXTURES) and name.endswith(".png"):
+                rest = name[len(TEXTURES):]
+                if ("/" not in rest and rest != "demo_background.png") or rest in TITLE:
+                    image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")
+                    sprites.append(("gui/" + rest[:-len(".png")], image))
+                    continue
             if name.startswith(CONTAINERS) and name.endswith(".png"):
                 image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")
                 sprites.append(("container/" + name[len(CONTAINERS):-len(".png")], image))
