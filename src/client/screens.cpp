@@ -160,6 +160,7 @@ void screens_draw(Game& game) {
     quads.begin();
     mcpp::ui::draw_hud(quads, hud, static_cast<float>(window.width()),
                        static_cast<float>(window.height()), state);
+    hud_render(game);
     if (screens.menu_open) {
         mcpp::ui::Pointer pointer{input.cursor_x, input.cursor_y, input.click};
         mcpp::ui::MenuState menu;

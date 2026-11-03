@@ -604,3 +604,11 @@ void Window::present(WorldRenderer& renderer, const Camera& camera,
 }
 
 } // namespace mcpp::gpu
+
+namespace mcpp::gpu {
+
+bool Window::key_down(int glfw_key) const {
+    return glfw_key >= 0 && glfwGetKey(window_, glfw_key) == GLFW_PRESS;
+}
+
+} // namespace mcpp::gpu
