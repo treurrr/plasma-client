@@ -46,21 +46,25 @@ ContainerMenu* AbstractContainerScreen::menu() const {
     return w != nullptr ? w->menu : nullptr;
 }
 
+// `AbstractContainerScreen.init`: centres the container image.
 void AbstractContainerScreen::init() {
     left_pos = (width - image_width) / 2;
     top_pos = (height - image_height) / 2;
 }
 
+// `AbstractContainerScreen.renderBackground`: the screen background, then the container image.
 void AbstractContainerScreen::render_background(GuiGraphics& gfx, double mx, double my) {
     Screen::render_background(gfx, mx, my);
     render_bg(gfx, mx, my);
 }
 
+// `AbstractContainerScreen.render`: contents, then the carried item.
 void AbstractContainerScreen::render(GuiGraphics& gfx, double mx, double my) {
     render_contents(gfx, mx, my);
     render_carried_item(gfx, mx, my);
 }
 
+// `AbstractContainerScreen.renderContents`, `AbstractContainerScreen.renderSlotHighlightBack`, `AbstractContainerScreen.renderSlotHighlightFront`: widgets, labels, slots and the hover highlight.
 void AbstractContainerScreen::render_contents(GuiGraphics& gfx, double mx, double my) {
     Screen::render(gfx, mx, my);
     gfx.push_pose();
@@ -79,17 +83,20 @@ void AbstractContainerScreen::render_contents(GuiGraphics& gfx, double mx, doubl
     gfx.pop_pose();
 }
 
+// `AbstractContainerScreen.renderLabels`: the title and inventory labels.
 void AbstractContainerScreen::render_labels(GuiGraphics& gfx) {
     gfx.draw_string(title, title_label_x, title_label_y, kLabelColour, false);
     gfx.draw_string(inventory_title_, inventory_label_x, inventory_label_y, kLabelColour, false);
 }
 
+// `AbstractContainerScreen.renderSlots`: every active slot.
 void AbstractContainerScreen::render_slots(GuiGraphics& gfx) {
     for (const auto& slot : slots) {
         if (slot.active) render_slot(gfx, slot);
     }
 }
 
+// `AbstractContainerScreen.renderSlot`: a slot's item, the drag preview, or its empty icon.
 void AbstractContainerScreen::render_slot(GuiGraphics& gfx, const ScreenSlot& slot) {
     ContainerMenu* m = menu();
     if (m == nullptr || static_cast<size_t>(slot.index) >= m->size()) return;
@@ -130,6 +137,7 @@ void AbstractContainerScreen::render_slot(GuiGraphics& gfx, const ScreenSlot& sl
     gfx.render_item_decorations(stack.id, stack.count, slot.x, slot.y, has_text ? &text : nullptr);
 }
 
+// `AbstractContainerScreen.renderCarriedItem`, `AbstractContainerScreen.renderFloatingItem`: the item on the cursor, showing what a drag leaves.
 void AbstractContainerScreen::render_carried_item(GuiGraphics& gfx, double mx, double my) {
     ContainerMenu* m = menu();
     if (m == nullptr || empty(m->carried)) return;
@@ -162,6 +170,7 @@ std::vector<std::vector<Run>> AbstractContainerScreen::tooltip_of(const GuiGraph
     return lines;
 }
 
+// `AbstractContainerScreen.renderTooltip`: the hovered item's tooltip when the hand is empty.
 void AbstractContainerScreen::render_tooltip(GuiGraphics& gfx, double mx, double my) {
     ContainerMenu* m = menu();
     if (m == nullptr || hovered_slot == nullptr) return;
@@ -171,12 +180,14 @@ void AbstractContainerScreen::render_tooltip(GuiGraphics& gfx, double mx, double
                                    static_cast<int>(my));
 }
 
+// `AbstractContainerScreen.isHovering`: a rectangle with a one-pixel margin.
 bool AbstractContainerScreen::is_hovering(int x, int y, int w, int h, double mx, double my) const {
     mx -= left_pos;
     my -= top_pos;
     return mx >= x - 1 && mx < x + w + 1 && my >= y - 1 && my < y + h + 1;
 }
 
+// `AbstractContainerScreen.getHoveredSlot`: the active slot under the mouse.
 const ScreenSlot* AbstractContainerScreen::slot_at(double mx, double my) const {
     for (const auto& slot : slots) {
         if (slot.active && is_hovering(slot.x, slot.y, 16, 16, mx, my)) return &slot;
@@ -184,10 +195,12 @@ const ScreenSlot* AbstractContainerScreen::slot_at(double mx, double my) const {
     return nullptr;
 }
 
+// `AbstractContainerScreen.hasClickedOutside`: outside the container image.
 bool AbstractContainerScreen::has_clicked_outside(double mx, double my, int left, int top) const {
     return mx < left || my < top || mx >= left + image_width || my >= top + image_height;
 }
 
+// `AbstractContainerScreen.slotClicked`, `MultiPlayerGameMode.handleInventoryMouseClick`: clicks the menu and sends what changed.
 void AbstractContainerScreen::slot_clicked(const ScreenSlot* slot, int index, int button,
                                            ClickType type) {
     if (slot != nullptr) index = slot->index;
@@ -199,6 +212,7 @@ void AbstractContainerScreen::slot_clicked(const ScreenSlot* slot, int index, in
     if (w->click) w->click(index, button, type, m->changed_since(before));
 }
 
+// `AbstractContainerScreen.checkHotbarMouseClicked`: hotbar and offhand swaps bound to mouse buttons.
 void AbstractContainerScreen::check_hotbar_mouse_clicked(int button) {
     ContainerMenu* m = menu();
     if (hovered_slot == nullptr || m == nullptr || !empty(m->carried)) return;
@@ -213,6 +227,7 @@ void AbstractContainerScreen::check_hotbar_mouse_clicked(int button) {
     }
 }
 
+// `AbstractContainerScreen.mouseClicked`: pickup, quick move, clone and throw, or starts a drag.
 bool AbstractContainerScreen::mouse_clicked(double mx, double my, int button) {
     if (Screen::mouse_clicked(mx, my, button)) return true;
     ContainerMenu* m = menu();
@@ -263,6 +278,7 @@ bool AbstractContainerScreen::mouse_clicked(double mx, double my, int button) {
     return true;
 }
 
+// `AbstractContainerScreen.mouseDragged`: adds slots to a drag.
 bool AbstractContainerScreen::mouse_dragged(double mx, double my, int button, double dx,
                                             double dy) {
     ContainerMenu* m = menu();
@@ -284,6 +300,7 @@ bool AbstractContainerScreen::mouse_dragged(double mx, double my, int button, do
     return true;
 }
 
+// `AbstractContainerScreen.recalculateQuickCraftRemaining`: what a drag leaves on the cursor.
 void AbstractContainerScreen::recalculate_quick_craft_remaining() {
     ContainerMenu* m = menu();
     if (m == nullptr || empty(m->carried) || !is_quick_crafting_) return;
@@ -307,6 +324,7 @@ void AbstractContainerScreen::recalculate_quick_craft_remaining() {
     }
 }
 
+// `AbstractContainerScreen.mouseReleased`: double clicks, finishes a drag, or places the carried stack.
 bool AbstractContainerScreen::mouse_released(double mx, double my, int button) {
     Screen::mouse_released(mx, my, button);
     ContainerMenu* m = menu();
@@ -375,6 +393,7 @@ bool AbstractContainerScreen::mouse_released(double mx, double my, int button) {
     return true;
 }
 
+// `AbstractContainerScreen.checkHotbarKeyPressed`: hotbar and offhand swap keys on the hovered slot.
 bool AbstractContainerScreen::check_hotbar_key_pressed(const KeyEvent& event) {
     ContainerMenu* m = menu();
     if (m == nullptr || !empty(m->carried) || hovered_slot == nullptr) return false;
@@ -391,6 +410,7 @@ bool AbstractContainerScreen::check_hotbar_key_pressed(const KeyEvent& event) {
     return false;
 }
 
+// `AbstractContainerScreen.keyPressed`: inventory key closes, swaps, pick and drop on the hovered slot.
 bool AbstractContainerScreen::key_pressed(const KeyEvent& event) {
     if (Screen::key_pressed(event)) return true;
     if (binding_matches(manager, "key.inventory", event)) {
@@ -411,6 +431,7 @@ bool AbstractContainerScreen::key_pressed(const KeyEvent& event) {
     return false;
 }
 
+// `AbstractContainerScreen.onClose`: closes the container on the server, then the screen.
 void AbstractContainerScreen::on_close() {
     World* w = world();
     ContainerMenu* m = menu();
@@ -420,6 +441,7 @@ void AbstractContainerScreen::on_close() {
 
 void AbstractContainerScreen::removed() {}
 
+// `RecipeBookComponent.init`: opens as the recipe book data says.
 void RecipeBookComponent::init(int width, int height, World* world, bool width_too_narrow) {
     world_ = world;
     width_ = width;
@@ -429,6 +451,7 @@ void RecipeBookComponent::init(int width, int height, World* world, bool width_t
     if (visible_) init_visuals();
 }
 
+// `RecipeBookComponent.initVisuals`: the search box and the category tabs.
 void RecipeBookComponent::init_visuals() {
     x_offset_ = width_too_narrow_ ? 0 : 86;
     const int x = x_origin();
@@ -456,11 +479,13 @@ void RecipeBookComponent::init_visuals() {
     update_collections(false);
 }
 
+// `RecipeBookComponent.updateScreenPosition`: where the container goes beside the book.
 int RecipeBookComponent::update_screen_position(int width, int image_width) const {
     if (visible_ && !width_too_narrow_) return 177 + (width - image_width - 200) / 2;
     return (width - image_width) / 2;
 }
 
+// `RecipeBookComponent.setVisible`, `RecipeBookComponent.sendUpdateSettings`: opens or closes the book and tells the server.
 void RecipeBookComponent::set_visible(bool on) {
     if (on) init_visuals();
     visible_ = on;
@@ -472,14 +497,17 @@ void RecipeBookComponent::set_visible(bool on) {
     }
 }
 
+// `RecipeBookComponent.toggleVisibility`: flips the book.
 void RecipeBookComponent::toggle_visibility() { set_visible(!visible_); }
 
+// `RecipeBookComponent.tick`: follows the book state the server sets.
 void RecipeBookComponent::tick() {
     if (world_ != nullptr && world_->recipe_book.open != visible_) {
         set_visible(world_->recipe_book.open);
     }
 }
 
+// `RecipeBookComponent.updateTabs`: stacks the visible tabs down the side.
 void RecipeBookComponent::update_tabs() {
     const int x = (width_ - kImageWidth) / 2 - x_offset_ - 30;
     const int y = (height_ - kImageHeight) / 2 + 3;
@@ -660,6 +688,7 @@ bool RecipeBookComponent::mouse_clicked(double mx, double my, int button) {
     return false;
 }
 
+// `RecipeBookComponent.keyPressed`, `RecipeBookComponent.checkSearchStringUpdate`: escape, the search box and the chat key.
 bool RecipeBookComponent::key_pressed(const KeyEvent& event, const ScreenManager* manager) {
     ignore_text_input_ = false;
     if (!visible_ || world_ == nullptr || world_->game_mode == 3) return false;
@@ -683,6 +712,7 @@ bool RecipeBookComponent::key_pressed(const KeyEvent& event, const ScreenManager
     return false;
 }
 
+// `RecipeBookComponent.charTyped`: typing into the search box.
 bool RecipeBookComponent::char_typed(uint32_t code, int mods) {
     if (ignore_text_input_ || !visible_ || world_ == nullptr || world_->game_mode == 3) {
         return false;
@@ -697,6 +727,7 @@ bool RecipeBookComponent::char_typed(uint32_t code, int mods) {
     return false;
 }
 
+// `RecipeBookComponent.hasClickedOutside`: outside both the container and the book.
 bool RecipeBookComponent::has_clicked_outside(double mx, double my, int left, int top, int w,
                                               int h) const {
     if (!visible_) return true;
@@ -729,6 +760,7 @@ InventoryScreen::InventoryScreen()
     slots.push_back({45, 77, 62, "container/slot/shield"});
 }
 
+// `AbstractRecipeBookScreen.init`, `AbstractRecipeBookScreen.initButton`: the book, the container beside it and its button.
 void InventoryScreen::init() {
     AbstractContainerScreen::init();
     width_too_narrow_ = width < 379;
@@ -745,15 +777,18 @@ void InventoryScreen::init() {
         });
 }
 
+// `AbstractRecipeBookScreen.containerTick`: ticks the book.
 void InventoryScreen::tick() {
     AbstractContainerScreen::tick();
     recipe_book.tick();
 }
 
+// `InventoryScreen.renderLabels`: only the crafting title.
 void InventoryScreen::render_labels(GuiGraphics& gfx) {
     gfx.draw_string(title, title_label_x, title_label_y, kLabelColour, false);
 }
 
+// `InventoryScreen.renderBg`: the inventory image and the player following the mouse.
 void InventoryScreen::render_bg(GuiGraphics& gfx, double, double) {
     gfx.blit("container/inventory", left_pos, top_pos, 0.0f, 0.0f, image_width, image_height, 256,
              256);
@@ -764,6 +799,7 @@ void InventoryScreen::render_bg(GuiGraphics& gfx, double, double) {
     }
 }
 
+// `AbstractRecipeBookScreen.render`, `InventoryScreen.render`: contents or book, carried item, then tooltips.
 void InventoryScreen::render(GuiGraphics& gfx, double mx, double my) {
     if (recipe_book.visible() && width_too_narrow_) {
         // The book covers the inventory on a narrow window; only it is drawn.
@@ -778,12 +814,14 @@ void InventoryScreen::render(GuiGraphics& gfx, double mx, double my) {
     y_mouse_ = static_cast<float>(my);
 }
 
+// `AbstractRecipeBookScreen.mouseClicked`: the book first; a narrow open book takes every click.
 bool InventoryScreen::mouse_clicked(double mx, double my, int button) {
     if (recipe_book.mouse_clicked(mx, my, button)) return true;
     if (width_too_narrow_ && recipe_book.visible()) return true;
     return AbstractContainerScreen::mouse_clicked(mx, my, button);
 }
 
+// `InventoryScreen.mouseReleased`: swallows the release after the book button.
 bool InventoryScreen::mouse_released(double mx, double my, int button) {
     if (button_clicked_) {
         button_clicked_ = false;
@@ -793,21 +831,25 @@ bool InventoryScreen::mouse_released(double mx, double my, int button) {
     return AbstractContainerScreen::mouse_released(mx, my, button);
 }
 
+// `AbstractRecipeBookScreen.keyPressed`: the book first.
 bool InventoryScreen::key_pressed(const KeyEvent& event) {
     if (recipe_book.key_pressed(event, manager)) return true;
     return AbstractContainerScreen::key_pressed(event);
 }
 
+// `AbstractRecipeBookScreen.charTyped`: the book first.
 bool InventoryScreen::char_typed(uint32_t code, int mods) {
     if (recipe_book.char_typed(code, mods)) return true;
     return AbstractContainerScreen::char_typed(code, mods);
 }
 
+// `AbstractRecipeBookScreen.isHovering`: nothing hovers under a narrow open book.
 bool InventoryScreen::is_hovering(int x, int y, int w, int h, double mx, double my) const {
     return (!width_too_narrow_ || !recipe_book.visible()) &&
            AbstractContainerScreen::is_hovering(x, y, w, h, mx, my);
 }
 
+// `AbstractRecipeBookScreen.hasClickedOutside`: outside the container and the book.
 bool InventoryScreen::has_clicked_outside(double mx, double my, int left, int top) const {
     const bool outside =
         mx < left || my < top || mx >= left + image_width || my >= top + image_height;

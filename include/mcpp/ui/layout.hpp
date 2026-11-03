@@ -22,6 +22,7 @@ public:
     virtual void visit_widgets(const std::function<void(Widget&)>& visit) = 0;
     // Layouts arrange their children; widgets have nothing to arrange.
     virtual void arrange_elements() {}
+    // `LayoutElement.setPosition`: sets x, then y.
     void set_position(int x, int y) {
         set_x(x);
         set_y(y);
@@ -68,6 +69,7 @@ struct LayoutSettings {
 class Divisor {
 public:
     Divisor(int total, int parts);
+    // `Divisor.hasNext`: whether parts are left.
     bool has_next() const { return returned_ < parts_; }
     int next();
 
@@ -147,6 +149,7 @@ public:
         template <typename T> T& add_child(T& element, int span = 1) {
             return add_child(element, span, grid_.defaults_);
         }
+        // `GridLayout.RowHelper.addChild`: the next cell, wrapping to a new row when the span does not fit.
         template <typename T> T& add_child(T& element, int span, const LayoutSettings& settings) {
             int row = index_ / columns_;
             int column = index_ % columns_;
@@ -173,7 +176,9 @@ private:
         int column;
         int rows;
         int columns;
+        // `GridLayout.CellInhabitant.getLastOccupiedRow`: the last row a cell covers.
         int last_row() const { return row + rows - 1; }
+        // `GridLayout.CellInhabitant.getLastOccupiedColumn`: the last column a cell covers.
         int last_column() const { return column + columns - 1; }
     };
     std::vector<Cell> cells_;
@@ -189,6 +194,7 @@ public:
     static LinearLayout vertical() { return LinearLayout(0, 0, Orientation::Vertical); }
     static LinearLayout horizontal() { return LinearLayout(0, 0, Orientation::Horizontal); }
 
+    // `LinearLayout.spacing`: the grid spacing along the orientation.
     LinearLayout& spacing(int s) {
         if (orientation_ == Orientation::Horizontal) {
             grid_.column_spacing(s);
@@ -199,6 +205,7 @@ public:
     }
     LayoutSettings new_cell_settings() const { return grid_.new_cell_settings(); }
     LayoutSettings& default_cell_setting() { return grid_.default_cell_setting(); }
+    // `LinearLayout.addChild`: the next cell along the orientation.
     template <typename T> T& add_child(T& element) { return add_child(element, new_cell_settings()); }
     template <typename T> T& add_child(T& element, const LayoutSettings& settings) {
         const int index = next_++;
@@ -321,6 +328,7 @@ public:
     int footer_height() const { return footer_height_; }
     void set_header_height(int h) { header_height_ = h; }
     void set_footer_height(int h) { footer_height_ = h; }
+    // `HeaderAndFooterLayout.getContentHeight`: the height between header and footer.
     int content_height() const { return screen_height_ - header_height_ - footer_height_; }
 
     template <typename T> T& add_to_header(T& element) { return header_.add_child(element); }

@@ -23,6 +23,7 @@ float hiss(Random& r) {
 }
 float tenth(Random& r) { return r.next_float() * 0.1f + 0.9f; }
 
+// `ClientLevel.playSound`: at the block's centre, delayed by distance when asked.
 PlayRequest at_block(const LevelEvent& e, std::string_view sound, Category category, float volume,
                      float pitch, bool distance_delay) {
     PlayRequest request;
@@ -50,6 +51,7 @@ bool is_air(std::string_view block) {
 
 } // namespace
 
+// `LevelEventHandler.levelEvent`: the sound of each numbered event.
 std::optional<PlayRequest> level_event_sound(const LevelEvent& e, Random& r) {
     constexpr auto B = Category::Block;
     constexpr auto H = Category::Hostile;
@@ -165,6 +167,7 @@ std::optional<PlayRequest> level_event_sound(const LevelEvent& e, Random& r) {
     }
 }
 
+// `LevelEventHandler.globalLevelEvent`: two blocks from the camera towards the event.
 std::optional<PlayRequest> global_level_event_sound(const LevelEvent& e) {
     const char* sound = nullptr;
     float volume = 1.0f;
@@ -203,6 +206,7 @@ std::string jukebox_sound_event(std::string_view song, const std::string* sound_
     return std::format("music_disc.{}", bare_name(song));
 }
 
+// `LevelEventHandler.playJukeboxSong`, `SimpleSoundInstance.forJukeboxSong`: a record at the jukebox.
 void Jukeboxes::play(SoundEngine& engine, int32_t x, int32_t y, int32_t z, std::string_view event) {
     stop(engine, x, y, z);
     PlayRequest request;
@@ -215,6 +219,7 @@ void Jukeboxes::play(SoundEngine& engine, int32_t x, int32_t y, int32_t z, std::
     if (const uint64_t voice = engine.play(request)) playing_.push_back({x, y, z, voice});
 }
 
+// `LevelEventHandler.stopJukeboxSong`: that jukebox's record stopped.
 void Jukeboxes::stop(SoundEngine& engine, int32_t x, int32_t y, int32_t z) {
     std::erase_if(playing_, [&](const Record& record) {
         if (record.x != x || record.y != y || record.z != z) return false;

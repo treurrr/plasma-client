@@ -13,6 +13,7 @@ std::string lower(std::string_view text) {
     return out;
 }
 
+// `PlayerTabOverlay.renderPingIcon`: the ping bars for a latency.
 std::string_view ping_sprite(int32_t latency) {
     if (latency < 0) return "icon/ping_unknown";
     if (latency < 150) return "icon/ping_5";
@@ -30,6 +31,7 @@ std::string half_string(int value) {
 
 } // namespace
 
+// `PlayerTabOverlay.render`: header, player columns with heads, scores and ping, then footer.
 void Gui::render_tab_list(GuiGraphics& gfx, const Options& options, const Frame& frame) {
     const Scoreboard* board = frame.scoreboard;
     const Scoreboard::Objective* objective =
@@ -51,6 +53,7 @@ void Gui::render_tab_list(GuiGraphics& gfx, const Options& options, const Frame&
         const auto found = board->team_of.find(e.name);
         return found == board->team_of.end() ? std::string{} : found->second;
     };
+    // `PlayerTabOverlay.getPlayerInfos`: list order, spectators last, then team and name.
     std::stable_sort(players.begin(), players.end(), [&](const TabEntry* a, const TabEntry* b) {
         if (a->list_order != b->list_order) return a->list_order > b->list_order;
         const int sa = a->game_mode == 3 ? 1 : 0;
@@ -170,6 +173,7 @@ void Gui::render_tab_list(GuiGraphics& gfx, const Options& options, const Frame&
             const int to = from + score_width;
             if (to - from > 5) {
                 if (objective->hearts) {
+                    // `PlayerTabOverlay.renderTablistHearts`, `PlayerTabOverlay.HealthState.update`: blinking hearts or a number when they do not fit.
                     auto [found, added] = tab_health_.try_emplace(player.uuid);
                     auto& state = found->second;
                     if (added) state.last = state.displayed = row.score;
@@ -233,6 +237,7 @@ void Gui::render_tab_list(GuiGraphics& gfx, const Options& options, const Frame&
                         }
                     }
                 } else if (!row.formatted.empty()) {
+                    // `PlayerTabOverlay.renderTablistScore`: the score right-aligned in its column.
                     gfx.draw_string(row.formatted, to - row.score_width, row_y, 0xFFFFFFFFu, true);
                 }
             }

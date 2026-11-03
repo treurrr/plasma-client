@@ -307,6 +307,7 @@ std::string uuid_text(ByteBuffer& in) {
                        out.substr(16, 4), out.substr(20));
 }
 
+// `BlockPos.of`: x, z and y out of one long.
 BlockPos unpack_position(int64_t packed) {
     return {static_cast<int32_t>(packed >> 38), static_cast<int32_t>(packed << 52 >> 52),
             static_cast<int32_t>(packed << 26 >> 38)};
@@ -506,6 +507,7 @@ Value read_layout(ByteBuffer& in, std::string_view layout, int32_t protocol) {
     return decode(*node, in, protocol, 0);
 }
 
+// `ItemStack.createOptionalStreamCodec`, `DataComponentPatch.createStreamCodec`: a stack.
 ItemStack read_item_stack(ByteBuffer& in, int32_t protocol) {
     ItemStack stack;
     const int32_t count = in.read_varint();

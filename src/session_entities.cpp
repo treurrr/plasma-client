@@ -10,6 +10,7 @@
 namespace mcpp {
 namespace {
 
+// `LpVec3.read`, `LpVec3.unpack`: a velocity in one to seven bytes and a varint.
 // Velocity since 1.21.9. At rest it is one zero byte. Otherwise six bytes
 // hold three fifteen bit components over -1 to 1 and two bits of scale, with
 // a flag that more scale follows as a varint, which is how a fast arrow fits.
@@ -36,6 +37,7 @@ void read_velocity(ByteBuffer& in, double& x, double& y, double& z) {
     z = component(33);
 }
 
+// `Mth.unpackDegrees`: a byte angle to degrees.
 // An angle is a 256th of a turn.
 float read_angle(ByteBuffer& in) {
     return static_cast<float>(static_cast<int8_t>(in.read_u8())) * 360.0f / 256.0f;
@@ -85,6 +87,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
     auto& in = packet.data;
 
     if (packet.id == cb.add_entity) {
+        // `ClientboundAddEntityPacket.ClientboundAddEntityPacket`: spawn fields in order.
         Entity entity;
         entity.id = in.read_varint();
         entity.uuid[0] = static_cast<uint64_t>(in.read_i64());
@@ -150,6 +153,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
             Entity& entity = found->second;
             auto& base = entities_.move_bases[id];
             if (moved) {
+                // `VecDeltaCodec.decode`: each moved axis from the rounded base.
                 for (int axis = 0; axis < 3; ++axis) {
                     if (delta[axis] == 0) continue;
                     const auto encoded = static_cast<int64_t>(std::floor(base[axis] * 4096.0 + 0.5));
@@ -395,6 +399,7 @@ void Session::read_player_list(ByteBuffer& in) {
             return (actions & (1u << static_cast<uint8_t>(action))) != 0;
         };
 
+        // `ClientboundPlayerInfoUpdatePacket.ClientboundPlayerInfoUpdatePacket`: the entries.
         std::vector<std::string> changed;
         for (int32_t i = 0; i < count; ++i) {
             const auto uuid = detail::read_uuid(in);

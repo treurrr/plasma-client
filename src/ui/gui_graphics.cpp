@@ -24,6 +24,7 @@ std::vector<Run> Font::runs(const Component& component) const {
     return flatten(component, resolver());
 }
 
+// `StringSplitter.plainHeadByWidth`, `StringSplitter.plainIndexAtWidth`: the longest prefix that fits a width.
 std::string Font::plain_substr_by_width(std::string_view text, int max_width) const {
     float used = 0.0f;
     size_t at = 0;
@@ -37,6 +38,7 @@ std::string Font::plain_substr_by_width(std::string_view text, int max_width) co
     return std::string(text.substr(0, at));
 }
 
+// `StringSplitter.plainTailByWidth`: the longest suffix that fits a width.
 std::string Font::tail_by_width(std::string_view text, int max_width) const {
     std::vector<size_t> starts;
     for (size_t at = 0; at < text.size();) {
@@ -95,6 +97,7 @@ void GuiGraphics::scale_by(float x, float y) {
     pose_.sy *= y;
 }
 
+// `GuiGraphics.fill`: a solid rectangle, corners swapped into order.
 void GuiGraphics::fill(int x0, int y0, int x1, int y1, uint32_t argb) {
     if (x1 < x0) std::swap(x0, x1);
     if (y1 < y0) std::swap(y0, y1);
@@ -103,6 +106,7 @@ void GuiGraphics::fill(int x0, int y0, int x1, int y1, uint32_t argb) {
                pw(static_cast<float>(x1 - x0)), ph(static_cast<float>(y1 - y0)), rgba_of(argb));
 }
 
+// `GuiGraphics.fillGradient`: a rectangle shaded top to bottom.
 void GuiGraphics::fill_gradient(int x0, int y0, int x1, int y1, uint32_t top, uint32_t bottom) {
     gpu::Quad quad;
     quad.x = px(static_cast<float>(x0));
@@ -114,16 +118,19 @@ void GuiGraphics::fill_gradient(int x0, int y0, int x1, int y1, uint32_t top, ui
     quads.add(quad);
 }
 
+// `GuiGraphics.hLine`: a one-pixel horizontal line.
 void GuiGraphics::h_line(int x0, int x1, int y, uint32_t argb) {
     if (x1 < x0) std::swap(x0, x1);
     fill(x0, y, x1 + 1, y + 1, argb);
 }
 
+// `GuiGraphics.vLine`: a one-pixel vertical line, ends exclusive.
 void GuiGraphics::v_line(int x, int y0, int y1, uint32_t argb) {
     if (y1 < y0) std::swap(y0, y1);
     fill(x, y0 + 1, x + 1, y1, argb);
 }
 
+// `GuiGraphics.renderOutline`: a one-pixel rectangle border.
 void GuiGraphics::render_outline(int x, int y, int w, int h, uint32_t argb) {
     fill(x, y, x + w, y + 1, argb);
     fill(x, y + h - 1, x + w, y + h, argb);
@@ -199,6 +206,7 @@ int GuiGraphics::draw_string(std::string_view legacy, int x, int y, uint32_t arg
     return draw_string(flatten_legacy(legacy), x, y, argb, shadow);
 }
 
+// `GuiGraphics.drawString`: draws text, nothing when fully transparent.
 int GuiGraphics::draw_string(const std::vector<Run>& runs, int x, int y, uint32_t argb,
                              bool shadow) {
     // The game draws nothing for text with no alpha at all.
@@ -224,11 +232,13 @@ void GuiGraphics::draw_centered_string(const Component& component, int cx, int y
     draw_centered_string(font.runs(component), cx, y, argb);
 }
 
+// `GuiGraphics.drawCenteredString`: text centred on a column.
 void GuiGraphics::draw_centered_string(const std::vector<Run>& runs, int cx, int y,
                                        uint32_t argb) {
     draw_string(runs, cx - font.width(runs) / 2, y, argb, true);
 }
 
+// `GuiGraphics.drawWordWrap`: wrapped text, one line every 9 pixels.
 void GuiGraphics::draw_word_wrap(const Component& component, int x, int y, int max_width,
                                  uint32_t argb, bool shadow) {
     for (const auto& line : font.split(component, max_width)) {
@@ -237,6 +247,7 @@ void GuiGraphics::draw_word_wrap(const Component& component, int x, int y, int m
     }
 }
 
+// `ActiveTextCollector.defaultScrollingHelper`: centres text that fits, else scrolls it back and forth.
 void GuiGraphics::draw_scrolling_string(const std::vector<Run>& r, int x0, int y0, int x1, int y1,
                                         uint32_t argb) {
     const int w = font.width(r);
@@ -263,6 +274,7 @@ void GuiGraphics::render_item(int32_t id, int x, int y) {
     quads.icon(id, px(static_cast<float>(x)), py(static_cast<float>(y)), pw(16.0f));
 }
 
+// `GuiGraphics.renderItemCount`: the stack count at the slot's bottom right.
 void GuiGraphics::render_item_decorations(int32_t id, int32_t count, int x, int y,
                                           const std::string* text) {
     if (id <= 0 || count <= 0) return;
@@ -273,6 +285,7 @@ void GuiGraphics::render_item_decorations(int32_t id, int32_t count, int x, int 
     }
 }
 
+// `GuiGraphics.renderItemBar`: the durability bar under an item.
 void GuiGraphics::render_item_bar(int x, int y, int bar_width, uint32_t rgb) {
     if (bar_width < 0) return;
     fill(x + 2, y + 13, x + 2 + 13, y + 13 + 2, 0xFF000000u);
@@ -299,6 +312,7 @@ void GuiGraphics::set_tooltip_for_next_frame(const Component& component, int mou
     set_tooltip_for_next_frame(font.split(component, std::max(width / 2, 170)), mouse_x, mouse_y);
 }
 
+// `GuiGraphics.renderTooltip`, `DefaultTooltipPositioner.positionTooltip`: sizes, places and draws a tooltip.
 void GuiGraphics::render_tooltip(const std::vector<std::vector<Run>>& lines, int mouse_x,
                                  int mouse_y) {
     if (lines.empty()) return;

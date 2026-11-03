@@ -17,7 +17,9 @@ public:
             values_[i] = static_cast<float>(std::sin(static_cast<double>(i) / kScale));
         }
     }
+    // `Mth.sin`: sine from the table.
     float sin(double radians) const { return values_[index(radians * kScale)]; }
+    // `Mth.cos`: cosine from the table.
     float cos(double radians) const { return values_[index(radians * kScale + 16384.0)]; }
 
 private:
@@ -41,15 +43,19 @@ class LegacyRandom {
 public:
     explicit LegacyRandom(int64_t seed) { set_seed(seed); }
 
+    // `LegacyRandomSource.setSeed`: scrambles the seed.
     void set_seed(int64_t seed) { seed_ = (static_cast<uint64_t>(seed) ^ kMultiplier) & kMask; }
 
+    // `LegacyRandomSource.next`: the next bits of the generator.
     int32_t next(int bits) {
         seed_ = (seed_ * kMultiplier + kIncrement) & kMask;
         return static_cast<int32_t>(static_cast<int64_t>(seed_) >> (48 - bits));
     }
 
+    // `BitRandomSource.nextInt`: 32 random bits.
     int32_t next_int() { return next(32); }
 
+    // `BitRandomSource.nextInt`: an int below a bound.
     int32_t next_int(int32_t bound) {
         if ((bound & (bound - 1)) == 0) {
             return static_cast<int32_t>((static_cast<int64_t>(bound) * next(31)) >> 31);
@@ -65,15 +71,19 @@ public:
         return value;
     }
 
+    // `BitRandomSource.nextLong`: two draws as a long.
     int64_t next_long() {
         const int64_t high = next(32);
         const int64_t low = next(32);
         return static_cast<int64_t>(static_cast<uint64_t>(high) << 32) + low;
     }
 
+    // `BitRandomSource.nextBoolean`: one random bit.
     bool next_bool() { return next(1) != 0; }
+    // `BitRandomSource.nextFloat`: a float in [0, 1).
     float next_float() { return static_cast<float>(next(24)) * 5.9604645e-8f; }
 
+    // `BitRandomSource.nextDouble`: a double in [0, 1).
     // The game multiplies by a float constant, not by 2^-53 the way
     // java.util.Random does, so its doubles differ in the last bits.
     double next_double() {

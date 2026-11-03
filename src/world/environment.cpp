@@ -14,6 +14,7 @@ namespace mcpp::world {
 
 namespace argb {
 
+// `ARGB.multiply`: channel by channel, white passing the other through.
 uint32_t multiply(uint32_t a, uint32_t b) {
     if (a == 0xFFFFFFFFu) return b;
     if (b == 0xFFFFFFFFu) return a;
@@ -22,12 +23,14 @@ uint32_t multiply(uint32_t a, uint32_t b) {
                 static_cast<int32_t>(blue(a) * blue(b) / 255));
 }
 
+// `ARGB.addRgb`: rgb added, capped at 255, alpha kept.
 uint32_t add_rgb(uint32_t a, uint32_t b) {
     return pack(static_cast<int32_t>(alpha(a)), static_cast<int32_t>(std::min(red(a) + red(b), 255u)),
                 static_cast<int32_t>(std::min(green(a) + green(b), 255u)),
                 static_cast<int32_t>(std::min(blue(a) + blue(b), 255u)));
 }
 
+// `ARGB.subtractRgb`: rgb subtracted, floored at 0, alpha kept.
 uint32_t subtract_rgb(uint32_t a, uint32_t b) {
     const auto sub = [](uint32_t x, uint32_t y) {
         return std::max(static_cast<int32_t>(x) - static_cast<int32_t>(y), 0);
@@ -36,6 +39,7 @@ uint32_t subtract_rgb(uint32_t a, uint32_t b) {
                 sub(blue(a), blue(b)));
 }
 
+// `ARGB.scaleRGB`: each rgb channel scaled and clamped.
 uint32_t scale_rgb(uint32_t c, float r, float g, float b) {
     const auto scaled = [](uint32_t channel, float by) {
         return std::clamp(static_cast<int32_t>(static_cast<float>(channel) * by), 0, 255);
@@ -44,6 +48,7 @@ uint32_t scale_rgb(uint32_t c, float r, float g, float b) {
                 scaled(blue(c), b));
 }
 
+// `ARGB.greyscale`: the weighted grey of the rgb.
 uint32_t greyscale(uint32_t c) {
     const auto grey = static_cast<int32_t>(static_cast<float>(red(c)) * 0.3f +
                                            static_cast<float>(green(c)) * 0.59f +
@@ -51,6 +56,7 @@ uint32_t greyscale(uint32_t c) {
     return pack(static_cast<int32_t>(alpha(c)), grey, grey, grey);
 }
 
+// `ARGB.alphaBlend`, `ARGB.alphaBlendChannel`: one colour over another.
 uint32_t alpha_blend(uint32_t under, uint32_t over) {
     const auto a_under = static_cast<int32_t>(alpha(under));
     const auto a_over = static_cast<int32_t>(alpha(over));
@@ -64,6 +70,7 @@ uint32_t alpha_blend(uint32_t under, uint32_t over) {
                 channel(blue(under), blue(over)));
 }
 
+// `ARGB.srgbLerp`: an int lerp on each channel.
 uint32_t srgb_lerp(float t, uint32_t from, uint32_t to) {
     const auto c = [&](uint32_t x, uint32_t y) {
         return lerp_int(t, static_cast<int32_t>(x), static_cast<int32_t>(y));
@@ -155,6 +162,7 @@ std::string_view strip_namespace(std::string_view name) {
     return name;
 }
 
+// `Mth.wrapDegrees`: an angle into -180 to 180.
 float wrap_degrees(float degrees) {
     float wrapped = std::fmod(degrees, 360.0f);
     if (wrapped >= 180.0f) wrapped -= 360.0f;
@@ -162,6 +170,7 @@ float wrap_degrees(float degrees) {
     return wrapped;
 }
 
+// `Mth.lerp`: a float lerp.
 float lerp_float(float t, float from, float to) { return from + t * (to - from); }
 
 // A value as the attribute's own codec reads it; nullopt if the shape is wrong.
@@ -278,6 +287,7 @@ Argument lerp_argument(size_t id, Modifier modifier, float t, const Argument& fr
     return out;
 }
 
+// `AttributeRange.sanitize`: a value clamped into its attribute's range.
 AttributeValue sanitise(size_t id, AttributeValue value) {
     const auto& info = kAttributes[id];
     if (info.min <= info.max && is_number(id)) {
@@ -288,6 +298,7 @@ AttributeValue sanitise(size_t id, AttributeValue value) {
     return value;
 }
 
+// `Ease.outBounce`: the four bounce parabolas.
 float bounce_out(float x) {
     if (x < 0.36363637f) return 7.5625f * x * x;
     if (x < 0.72727275f) {
@@ -302,7 +313,9 @@ float bounce_out(float x) {
     return 7.5625f * d * d + 0.984375f;
 }
 
+// `Mth.square`: x times x.
 float square(float x) { return x * x; }
+// `Mth.cube`: x cubed.
 float cube(float x) { return x * x * x; }
 
 // Rain and thunder, as the game layers them over everything else.
@@ -451,6 +464,7 @@ int32_t moon_phase_index(std::string_view name) {
     return 0;
 }
 
+// `AttributeModifier.OverrideModifier.apply`, `BooleanModifier.apply`: one modifier applied to a value.
 AttributeValue apply(size_t id, const AttributeValue& value, Modifier modifier,
                      const Argument& argument) {
     if (modifier == Modifier::Override) return argument.value;
@@ -504,6 +518,7 @@ AttributeValue apply(size_t id, const AttributeValue& value, Modifier modifier,
     return out;
 }
 
+// `LerpFunction.ofFloat`, `LerpFunction.ofDegrees`, `LerpFunction.ofColor`, `LerpFunction.ofStep`: the type's blend.
 AttributeValue lerp(size_t id, Lerp kind, float t, const AttributeValue& from,
                     const AttributeValue& to) {
     switch (kAttributes[id].type) {
@@ -607,6 +622,7 @@ Ease Ease::parse(const nbt::Value* value) {
     return ease;
 }
 
+// `EasingType.CubicBezier.apply`, `Ease.inBack`, `Ease.outBack`, `Ease.inOutBack`, `Ease.inBounce`, `Ease.inOutBounce`, `Ease.inCirc`, `Ease.outCirc`, `Ease.inOutCirc`, `Ease.inElastic`, `Ease.outElastic`, `Ease.inOutElastic`, `Ease.inSine`, `Ease.outSine`, `Ease.inOutSine`, `Ease.inQuad`, `Ease.outQuad`, `Ease.inOutQuad`, `Ease.inCubic`, `Ease.outCubic`, `Ease.inOutCubic`, `Ease.inQuart`, `Ease.outQuart`, `Ease.inOutQuart`, `Ease.inQuint`, `Ease.outQuint`, `Ease.inOutQuint`, `Ease.inExpo`, `Ease.outExpo`, `Ease.inOutExpo`: every easing curve.
 float Ease::operator()(float x) const {
     constexpr double kPi = std::numbers::pi;
     switch (kind) {
@@ -711,6 +727,7 @@ float Ease::operator()(float x) const {
     return x;
 }
 
+// `KeyframeTrackSampler.bakeSegments`, `KeyframeTrackSampler.addSegmentsFromKeyframes`: keyframes into segments, wrapped round a period.
 void Track::bake(std::optional<int32_t> period) {
     segments_.clear();
     if (keyframes.empty()) return;
@@ -732,6 +749,7 @@ void Track::bake(std::optional<int32_t> period) {
     }
 }
 
+// `KeyframeTrackSampler.sample`, `KeyframeTrackSampler.getSegmentAt`, `KeyframeTrackSampler.loopTicks`: the eased argument at a tick.
 Argument Track::sample(int64_t ticks, std::optional<int32_t> period) const {
     if (segments_.empty()) return Argument{default_value(attribute)};
     int64_t at = ticks;
@@ -962,10 +980,12 @@ std::vector<size_t> Environment::resolve_timelines(const nbt::Value& field,
     return out;
 }
 
+// `EnvironmentAttributeSystem.ValueSampler.computeValuePositional`, `EnvironmentAttributeSystem.addDefaultLayers`: every layer in order, then sanitised.
 AttributeValues Environment::evaluate(int64_t day_time, std::span<const BiomeWeight> biomes,
                                       size_t biome_underfoot, WeatherLevels weather) const {
     AttributeValues out;
 
+    // `SpatialAttributeInterpolator.accumulate`: the weights summed per attribute set.
     // The blend weighs each distinct attribute set once, in the order first met.
     struct Source {
         const AttributeLayers* layers;
@@ -999,6 +1019,7 @@ AttributeValues Environment::evaluate(int64_t day_time, std::span<const BiomeWei
             const auto through = [&](const AttributeLayers& layers) {
                 return layers.layers[id] ? apply(id, value, *layers.layers[id]) : value;
             };
+            // `SpatialAttributeInterpolator.applyAttributeLayer`: one source as it is, several blended by weight.
             if (kAttributes[id].spatial) {
                 if (sources.size() == 1) {
                     value = through(*sources.front().layers);
@@ -1024,6 +1045,7 @@ AttributeValues Environment::evaluate(int64_t day_time, std::span<const BiomeWei
             }
         }
 
+        // `AttributeTrackSampler.applyTimeBased`: each timeline's track at the day time.
         for (const size_t index : active_) {
             const Timeline& timeline = timelines_[index];
             for (const auto& track : timeline.tracks) {
@@ -1032,6 +1054,7 @@ AttributeValues Environment::evaluate(int64_t day_time, std::span<const BiomeWei
             }
         }
 
+        // `WeatherAttributes.addLayer`: rain, then thunder, blended in by their levels.
         if (weather_) {
             for (const auto& layer : weather_layers()) {
                 if (layer.id != id) continue;
@@ -1048,10 +1071,12 @@ AttributeValues Environment::evaluate(int64_t day_time, std::span<const BiomeWei
     return out;
 }
 
+// `EnvironmentAttributeProbe.ValueProbe.get`: a number between the last two ticks.
 float AttributeProbe::number(size_t id, float partial) const {
     return lerp(id, Lerp::PartialTick, partial, last_.values[id], next_.values[id]).number;
 }
 
+// `EnvironmentAttributeProbe.ValueProbe.get`: a colour between the last two ticks.
 uint32_t AttributeProbe::colour(size_t id, float partial) const {
     return argb::srgb_lerp(partial, last_.values[id].argb, next_.values[id].argb);
 }

@@ -44,6 +44,7 @@ mcpp::world::Keys keys_of(const Game& game) {
     return k;
 }
 
+// `SmoothDouble.getNewDeltaValue`: the cinematic camera's eased turn.
 double smooth(PlayerArea::Smooth& s, double delta, double time) {
     s.target += delta;
     double step = s.target - s.remaining;
@@ -225,6 +226,7 @@ void interact(Game& game) {
     }
 }
 
+// `GameRenderer.tickFov`, `AbstractClientPlayer.getFieldOfViewModifier`, `Camera.tick`: field of view and eye height ease.
 // The camera's own tick: the field of view eases towards what speed and
 // flight ask for, and the eye towards the pose's height.
 void camera_tick(Game& game) {
@@ -403,6 +405,7 @@ void player_draw(Game& game) {
         body.zo + player.partial_tick * (body.z - body.zo),
     };
 
+    // `GameRenderer.bobView`: the walking bob.
     // Walking rocks the view: sideways and down with each step, a lean into
     // it and a nod, all in the view's own frame.
     float pitch = body.pitch;
@@ -442,6 +445,7 @@ void player_draw(Game& game) {
     }
     camera.roll_degrees = -roll;
 
+    // `GameRenderer.getFov`: the field of view, narrower in a fluid.
     float fov = static_cast<float>(player.fov_option) *
                 (player.fov_modifier_old + pt * (player.fov_modifier - player.fov_modifier_old));
     {

@@ -294,6 +294,7 @@ int32_t BlockShapes::find(
     return id;
 }
 
+// `BlockBehaviour.BlockStateBase.getOffset`, `BlockBehaviour.Properties.offsetType`, `Mth.getSeed`: where a plant stands off its grid.
 void BlockShapes::offset(int32_t id, int32_t x, int32_t z, double out[3]) const {
     out[0] = out[1] = out[2] = 0.0;
     const auto& b = block(id);

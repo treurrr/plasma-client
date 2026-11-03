@@ -70,6 +70,7 @@ struct StateInfo {
     float hardness = 0.0f;      // -1 cannot be broken
 
     bool sturdy(int direction) const { return (flags & (kSturdyDown << direction)) != 0; }
+    // `FlowingFluid.getOwnHeight`: the fluid's height from its amount.
     // The fluid's own height in the cell, without looking above it.
     float fluid_height() const { return static_cast<float>(fluid_amount) / 9.0f; }
 };

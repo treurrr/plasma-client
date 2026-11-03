@@ -14,16 +14,19 @@ namespace {
 constexpr float kRadians = 0.017453292f;
 constexpr double kEpsilon = 1.0e-7;
 
+// `Mth.floor`: rounds a double down to an int.
 int32_t floor_i(double v) {
     const auto i = static_cast<int32_t>(v);
     return v < static_cast<double>(i) ? i - 1 : i;
 }
 
+// `Mth.ceil`: rounds a double up to an int.
 int32_t ceil_i(double v) {
     const auto i = static_cast<int32_t>(v);
     return v > static_cast<double>(i) ? i + 1 : i;
 }
 
+// `Mth.equal`: two doubles within 1e-5f of each other.
 bool near(double a, double b) { return std::abs(b - a) < static_cast<double>(1.0e-5f); }
 
 struct Vec {
@@ -33,10 +36,15 @@ struct Vec {
 
     double operator[](int axis) const { return axis == 0 ? x : axis == 1 ? y : z; }
     double& operator[](int axis) { return axis == 0 ? x : axis == 1 ? y : z; }
+    // `Vec3.lengthSqr`: the squared length.
     double length_sqr() const { return x * x + y * y + z * z; }
+    // `Vec3.length`: the length.
     double length() const { return std::sqrt(length_sqr()); }
+    // `Vec3.horizontalDistanceSqr`: the squared length in x and z.
     double horizontal_sqr() const { return x * x + z * z; }
+    // `Vec3.scale`: every axis times one factor.
     Vec scale(double by) const { return {x * by, y * by, z * by}; }
+    // `Vec3.normalize`: unit length, or zero when too short.
     Vec normalize() const {
         const double d = length();
         return d < static_cast<double>(1.0e-5f) ? Vec{} : Vec{x / d, y / d, z / d};
@@ -47,10 +55,12 @@ struct Box {
     double min[3];
     double max[3];
 
+    // `AABB.move`: the box shifted.
     Box move(double dx, double dy, double dz) const {
         return {{min[0] + dx, min[1] + dy, min[2] + dz}, {max[0] + dx, max[1] + dy, max[2] + dz}};
     }
     Box move(const Vec& v) const { return move(v.x, v.y, v.z); }
+    // `AABB.expandTowards`: the box stretched along a move.
     Box expand_towards(double dx, double dy, double dz) const {
         Box out = *this;
         const double d[3] = {dx, dy, dz};
@@ -60,9 +70,11 @@ struct Box {
         }
         return out;
     }
+    // `AABB.deflate`: the box shrunk on every side.
     Box deflate(double by) const {
         return {{min[0] + by, min[1] + by, min[2] + by}, {max[0] - by, max[1] - by, max[2] - by}};
     }
+    // `AABB.intersects`: whether two boxes overlap.
     bool intersects(double x0, double y0, double z0, double x1, double y1, double z1) const {
         return min[0] < x1 && max[0] > x0 && min[1] < y1 && max[1] > y0 && min[2] < z1 && max[2] > z0;
     }
@@ -84,6 +96,7 @@ float pose_eye(Pose pose) {
     }
 }
 
+// `EntityDimensions.makeBoundingBox`: the body's box at a position.
 Box box_at(double x, double y, double z, Pose pose) {
     const float half = kPlayerWidth / 2.0f;
     const float height = pose_height(pose);
@@ -177,6 +190,7 @@ struct Placed {
     int cells(int axis) const { return v->edges[axis] - 1; }
 };
 
+// `ScaffoldingBlock.getCollisionShape`, `PowderSnowBlock.getCollisionShape`: the shape a block shows to who is asking.
 bool collision_shape(const Level& level, const Context& c, int32_t x, int32_t y, int32_t z,
                      int32_t state, Placed& out) {
     const auto& shapes = level.shapes;
@@ -241,6 +255,7 @@ bool overlaps(const Level& level, const Placed& p, const Box& box) {
     return false;
 }
 
+// `BlockCollisions.computeNext`: the block shapes a box touches, in walk order.
 // Every block shape that touches the box, in the order the game walks them:
 // x fastest, then y, then z, one block beyond on every side for the shapes
 // that reach out of their cell.
@@ -274,6 +289,7 @@ void block_collisions(const Level& level, const Context& c, const Box& box, bool
     }
 }
 
+// `CollisionGetter.noBlockCollision`: whether no block is in the box.
 bool no_collision(const Level& level, const Context& c, const Box& box) {
     bool free = true;
     block_collisions(level, c, box, false, [&](const Placed&) {
@@ -283,6 +299,7 @@ bool no_collision(const Level& level, const Context& c, const Box& box) {
     return free;
 }
 
+// `CollisionGetter.collidesWithSuffocatingBlock`: whether a suffocating block is in the box.
 bool suffocating_in(const Level& level, const Context& c, const Box& box) {
     bool found = false;
     block_collisions(level, c, box, true, [&](const Placed&) {
@@ -292,6 +309,7 @@ bool suffocating_in(const Level& level, const Context& c, const Box& box) {
     return found;
 }
 
+// `VoxelShape.collide`, `VoxelShape.collideX`: how far a box moves along an axis into one shape.
 // How far the box may move along one axis before this shape stops it, cell
 // by cell as the game walks a shape.
 double collide_one(const Level& level, const Placed& p, int axis, const Box& box, double dist) {
@@ -349,6 +367,7 @@ double collide_one(const Level& level, const Placed& p, int axis, const Box& box
     return dist;
 }
 
+// `Shapes.collide`: one axis of a move against every shape.
 double collide_axis(const Level& level, int axis, const Box& box, const std::vector<Placed>& shapes,
                     double dist) {
     for (const auto& p : shapes) {
@@ -358,6 +377,7 @@ double collide_axis(const Level& level, int axis, const Box& box, const std::vec
     return dist;
 }
 
+// `Entity.collideWithShapes`: a move against shapes, axis by axis.
 Vec collide_with_shapes(const Level& level, const Vec& m, const Box& box,
                         const std::vector<Placed>& shapes) {
     if (shapes.empty()) return m;
@@ -402,6 +422,7 @@ public:
     const Level& level;
 
     bool flying() const { return b.flying; }
+    // `Player.isSwimming`: swimming, unless flying or a spectator.
     bool swimming() const { return b.swimming && !b.flying && !stats.spectator; }
     bool in_lava() const { return b.in_lava(); }
     Context context() const { return context_of(b, keys, stats); }
@@ -412,10 +433,12 @@ public:
 
     float speed() const { return static_cast<float>(Body::speed(stats, b.sprinting)); }
 
+    // `Player.canPlayerFitWithinBlocksAndEntitiesWhen`: whether a pose's box is free.
     bool fits(Pose pose) const {
         return no_collision(level, context(), box_at(b.x, b.y, b.z, pose).deflate(kEpsilon));
     }
 
+    // `Entity.getOnPos`: the block under the feet.
     // The block under the feet that movement reads: the one the body stands
     // on, or the cell straight down.
     void on_pos(float offset, int32_t out[3]) const {
@@ -438,6 +461,7 @@ public:
 
     const BlockInfo& block_at(const int32_t p[3]) const { return level.block(p[0], p[1], p[2]); }
 
+    // `LivingEntity.getBlockSpeedFactor`, `Entity.getBlockSpeedFactor`: how much the block slows walking.
     float block_speed_factor() const {
         const int32_t here = level.state(block_x(), block_y(), block_z());
         const auto& block = level.shapes.block(here);
@@ -451,6 +475,7 @@ public:
         return f + t * (1.0f - f);
     }
 
+    // `Entity.getBlockJumpFactor`: how much the block weakens a jump.
     float block_jump_factor() const {
         const float here = level.block(block_x(), block_y(), block_z()).jump;
         int32_t below[3];
@@ -459,6 +484,7 @@ public:
         return here == 1.0f ? under : here;
     }
 
+    // `LivingEntity.onClimbable`, `LivingEntity.trapdoorUsableAsLadder`: whether the body is on a ladder or vine.
     bool on_climbable() const {
         if (stats.spectator) return false;
         const int32_t x = block_x();
@@ -474,11 +500,13 @@ public:
                level.shapes.property(below, "facing") == level.shapes.property(s, "facing");
     }
 
+    // `FlowingFluid.getHeight`: a fluid's height, full under the same fluid.
     float fluid_height_at(int32_t x, int32_t y, int32_t z, const StateInfo& s) const {
         if (level.info(x, y + 1, z).fluid == s.fluid) return 1.0f;
         return s.fluid_height();
     }
 
+    // `FlowingFluid.getFlow`: the way a fluid pushes in a cell.
     Vec flow(int32_t x, int32_t y, int32_t z, const StateInfo& s) const {
         static constexpr int kSteps[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
         static constexpr int kFaces[4] = {2, 5, 3, 4};
@@ -532,12 +560,14 @@ public:
         return v.normalize();
     }
 
+    // `Entity.touchingUnloadedChunk`: whether the box reaches an unloaded chunk.
     bool touching_unloaded() const {
         const Box box = box_of(b);
         return !level.loaded(floor_i(box.min[0] - 1.0), floor_i(box.min[2] - 1.0),
                              ceil_i(box.max[0] + 1.0), ceil_i(box.max[2] + 1.0));
     }
 
+    // `Entity.updateFluidHeightAndDoFluidPushing`: fluid height and current push.
     bool fluid_push(Fluid kind, double scale) {
         if (touching_unloaded()) return false;
         const Box box = box_of(b).deflate(0.001);
@@ -589,6 +619,7 @@ public:
         return found;
     }
 
+    // `Entity.updateInWaterStateAndDoWaterCurrentPushing`: in water, and its push.
     void water_state() {
         if (fluid_push(Fluid::Water, 0.014)) {
             b.fall_distance = 0.0;
@@ -598,6 +629,7 @@ public:
         }
     }
 
+    // `Entity.updateInWaterStateAndDoFluidPushing`: water and lava for this tick.
     void fluids() {
         b.water_height = 0.0;
         b.lava_height = 0.0;
@@ -605,6 +637,7 @@ public:
         fluid_push(Fluid::Lava, stats.fast_lava ? 0.007 : 0.0023333333333333335);
     }
 
+    // `Entity.updateFluidOnEyes`: whether the eyes are under water.
     void fluid_on_eyes() {
         const double eye_y = b.y + static_cast<double>(b.eye_height());
         const int32_t x = floor_i(b.x);
@@ -617,6 +650,7 @@ public:
         if (top > eye_y) b.eye_in_water = s.fluid == Fluid::Water;
     }
 
+    // `Player.updateSwimming`, `Entity.updateSwimming`: start or stop swimming.
     void update_swimming() {
         if (b.flying) {
             b.swimming = false;
@@ -628,6 +662,7 @@ public:
         }
     }
 
+    // `LocalPlayer.suffocatesAt`: whether a column next to the body suffocates.
     bool suffocates_at(int32_t x, int32_t z) const {
         const Box bb = box_of(b);
         const Box cell = Box{{static_cast<double>(x), bb.min[1], static_cast<double>(z)},
@@ -636,6 +671,7 @@ public:
         return suffocating_in(level, context(), cell);
     }
 
+    // `LocalPlayer.moveTowardsClosestSpace`: a nudge out of a wall.
     void move_towards_closest_space(double px, double pz) {
         const int32_t x = floor_i(px);
         const int32_t z = floor_i(pz);
@@ -661,6 +697,7 @@ public:
         else b.vz = 0.1 * kSteps[best][1];
     }
 
+    // `Entity.moveRelative`: adds the input push to the velocity.
     void move_relative(float speed_, double ix, double iy, double iz) {
         double push[3];
         input_vector(ix, iy, iz, speed_, b.yaw, push);
@@ -669,6 +706,7 @@ public:
         b.vz += push[2];
     }
 
+    // `LocalPlayer.isHorizontalCollisionMinor`: whether a wall only grazed the move.
     bool horizontal_collision_minor(const Vec& moved) const {
         const float angle = b.yaw * kRadians;
         const double s = jmath::sin(angle);
@@ -682,6 +720,7 @@ public:
         return std::acos(dot / std::sqrt(want * got)) < 0.13962634f;
     }
 
+    // `Player.canFallAtLeast`: whether nothing is under the box for a depth.
     bool can_fall_at_least(double dx, double dz, double depth) const {
         const Box bb = box_of(b);
         const Box probe{{bb.min[0] + kEpsilon + dx, bb.min[1] - depth - kEpsilon,
@@ -690,6 +729,7 @@ public:
         return no_collision(level, context(), probe);
     }
 
+    // `Player.maybeBackOffFromEdge`, `Player.isAboveGround`: sneaking stops at edges.
     Vec back_off_from_edge(Vec m) const {
         const float step = stats.step_height;
         if (b.flying || m.y > 0.0 || !keys.shift) return m;
@@ -724,6 +764,7 @@ public:
         return {dx, m.y, dz};
     }
 
+    // `Entity.collide`, `Entity.collectCandidateStepUpHeights`: a move against blocks, stepping up.
     Vec collide(const Vec& m) const {
         auto& s = scratch();
         const Box bb = box_of(b);
@@ -765,6 +806,7 @@ public:
         return plain;
     }
 
+    // `CollisionGetter.findSupportingBlock`: the nearest block under the feet.
     void find_support(const Box& box, bool& found, int32_t out[3]) const {
         found = false;
         double best = std::numeric_limits<double>::max();
@@ -789,6 +831,7 @@ public:
         });
     }
 
+    // `Entity.checkSupportingBlock`: remembers the block stood on.
     void check_support(const Vec* moved) {
         if (!b.on_ground) {
             b.on_ground_no_blocks = false;
@@ -810,6 +853,7 @@ public:
         b.on_ground_no_blocks = !found;
     }
 
+    // `Entity.move`: one move with collisions and their effects.
     void move(Vec m) {
         const double x0 = b.x;
         const double z0 = b.z;
@@ -851,6 +895,7 @@ public:
         int32_t on[3];
         on_pos(0.2f, on);
         const auto& below = block_at(on);
+        // `LivingEntity.checkFallDamage`, `Entity.checkFallDamage`: fall distance from the move.
         if (!b.touching_water) water_state();
         if (!b.touching_water && c.y < 0.0) b.fall_distance -= static_cast<float>(c.y);
         if (b.on_ground) b.fall_distance = 0.0;
@@ -859,6 +904,7 @@ public:
             if (hit_x) b.vx = 0.0;
             if (hit_z) b.vz = 0.0;
         }
+        // `SlimeBlock.updateEntityMovementAfterFallOn`, `BedBlock.updateEntityMovementAfterFallOn`: bounce on landing.
         if (m.y != c.y) {
             if (below.special == Special::Slime && !keys.shift) {
                 if (b.vy < 0.0) b.vy = -b.vy * 1.0;
@@ -881,15 +927,18 @@ public:
         b.walk_dist += static_cast<float>(std::sqrt(dx * dx + dz * dz)) * 0.6f;
     }
 
+    // `LivingEntity.getEffectiveGravity`: gravity, less with slow falling.
     double effective_gravity() const {
         return b.vy <= 0.0 && stats.slow_falling ? std::min(stats.gravity, 0.01) : stats.gravity;
     }
 
+    // `Player.getFlyingSpeed`: acceleration off the ground.
     float flying_speed() const {
         if (b.flying) return b.sprinting ? stats.flying_speed * 2.0f : stats.flying_speed;
         return b.sprinting ? 0.025999999f : 0.02f;
     }
 
+    // `LivingEntity.handleOnClimbable`: clamps speed on a ladder.
     void on_climbable_clamp() {
         if (!on_climbable()) return;
         b.fall_distance = 0.0;
@@ -902,6 +951,7 @@ public:
         b.vy = y;
     }
 
+    // `LivingEntity.travelInAir`, `LivingEntity.handleRelativeFrictionAndCalculateMovement`, `LivingEntity.getFrictionInfluencedSpeed`: a step through air.
     void travel_in_air(double ix, double iz) {
         int32_t below[3];
         on_pos(0.500001f, below);
@@ -931,6 +981,7 @@ public:
         b.vz *= drag;
     }
 
+    // `Entity.isFree`: whether the box moved there is free of blocks and fluid.
     bool free_at(double dx, double dy, double dz) const {
         const Box box = box_of(b).move(dx, dy, dz);
         if (!no_collision(level, context(), box)) return false;
@@ -944,6 +995,7 @@ public:
         return true;
     }
 
+    // `LivingEntity.jumpOutOfFluid`: a hop onto a ledge from a fluid.
     void jump_out_of_fluid(double start_y) {
         if (b.horizontal_collision &&
             free_at(b.vx, b.vy + static_cast<double>(0.6f) - b.y + start_y, b.vz)) {
@@ -951,6 +1003,7 @@ public:
         }
     }
 
+    // `LivingEntity.getFluidFallingAdjustedMovement`: sinking in a fluid.
     double fluid_falling(double gravity, bool falling, double vy) const {
         if (gravity == 0.0 || b.sprinting) return vy;
         if (falling && std::abs(vy - 0.005) >= 0.003 && std::abs(vy - gravity / 16.0) < 0.003) {
@@ -959,6 +1012,7 @@ public:
         return vy - gravity / 16.0;
     }
 
+    // `LivingEntity.travelInFluid`, `LivingEntity.travelInWater`, `LivingEntity.travelInLava`: a step through water or lava.
     void travel_in_fluid(double ix, double iz) {
         const bool falling = b.vy <= 0.0;
         const double start_y = b.y;
@@ -999,8 +1053,10 @@ public:
         jump_out_of_fluid(start_y);
     }
 
+    // `Entity.getFluidJumpThreshold`: how deep a fluid must be to swim up.
     double fluid_jump_threshold() const { return b.eye_height() < 0.4 ? 0.0 : 0.4; }
 
+    // `Player.travel`, `LivingEntity.travel`: one tick of travel.
     void travel(double ix, double iz) {
         if (swimming()) {
             const float angle = b.pitch * kRadians;
@@ -1022,6 +1078,7 @@ public:
         if (b.flying) b.vy = rise * 0.6;
     }
 
+    // `LivingEntity.jumpFromGround`, `LivingEntity.getJumpPower`, `LivingEntity.getJumpBoostPower`: a jump.
     void jump_from_ground() {
         const float power = static_cast<float>(stats.jump_strength) * 1.0f * block_jump_factor() +
                             (stats.jump_boost > 0
@@ -1039,6 +1096,7 @@ public:
     // What the blocks the body passed through do to it: webs and bushes
     // hold it, bubble columns carry it, honey walls slow its fall.
     void inside_blocks() {
+        // `SlimeBlock.stepOn`: slime slows a slow walk.
         if (b.on_ground) {
             int32_t on[3];
             on_pos(0.2f, on);
@@ -1163,6 +1221,7 @@ public:
         if (powder) b.in_powder_snow = true;
     }
 
+    // `HoneyBlock.isSlidingDown`, `HoneyBlock.doSlideMovement`: sliding down a honey wall.
     void honey_slide(int32_t x, int32_t y, int32_t z) {
         if (b.on_ground) return;
         if (b.y > y + 0.9375 - 1.0e-7) return;
@@ -1187,6 +1246,7 @@ public:
     bool moved = false;
 };
 
+// `KeyboardInput.calculateImpulse`, `Vec2.normalized`: the keys as a unit move vector.
 // The keys as a direction: left and forward positive, a unit vector.
 void move_vector(const Keys& k, float& mx, float& mz) {
     const float forward = k.forward == k.backward ? 0.0f : (k.forward ? 1.0f : -1.0f);
@@ -1216,6 +1276,7 @@ double collide_with_block(const BlockShapes& shapes, int32_t state, int32_t x, i
     return collide_one(level, p, axis, b, distance);
 }
 
+// `Entity.getInputVector`: input scaled and turned by the yaw.
 void input_vector(double ix, double iy, double iz, float speed, float yaw, double out[3]) {
     out[0] = out[1] = out[2] = 0.0;
     const double length2 = ix * ix + iy * iy + iz * iz;
@@ -1275,6 +1336,7 @@ void tick(Body& b, const Keys& keys, const Stats& stats, const World& world) {
     if (stats.spectator) b.on_ground = false;
     b.underwater = b.eye_in_water;
 
+    // `Entity.baseTick`: fluids, eyes and swimming.
     // The entity's base tick.
     b.was_in_powder_snow = b.in_powder_snow;
     b.in_powder_snow = false;
@@ -1284,6 +1346,7 @@ void tick(Body& b, const Keys& keys, const Stats& stats, const World& world) {
     if (m.in_lava()) b.fall_distance *= 0.5;
     b.first_tick = false;
 
+    // `LocalPlayer.aiStep`: crouching, sprinting and flight from the keys.
     // The local player's own step: crouching from last tick's keys, then
     // this tick's keys, sprinting, flight, and the push out of walls.
     if (b.sprint_trigger_time > 0) --b.sprint_trigger_time;
@@ -1355,6 +1418,7 @@ void tick(Body& b, const Keys& keys, const Stats& stats, const World& world) {
         if (rise != 0) b.vy += static_cast<float>(rise) * stats.flying_speed * 3.0f;
     }
 
+    // `AbstractClientPlayer.updateBob`: the camera bob from speed.
     // The bob the camera draws comes from the speed the body carried in.
     b.bob_o = b.bob;
     const float bob = b.on_ground && !m.swimming()
@@ -1365,11 +1429,13 @@ void tick(Body& b, const Keys& keys, const Stats& stats, const World& world) {
     if (b.jump_trigger_time > 0) --b.jump_trigger_time;
     if (b.flying) b.fall_distance = 0.0;
 
+    // `LivingEntity.aiStep`: jumping and travel.
     // The living entity's step.
     if (b.no_jump_delay > 0) --b.no_jump_delay;
     if (b.vx * b.vx + b.vz * b.vz < 9.0e-6) b.vx = b.vz = 0.0;
     if (std::abs(b.vy) < 0.003) b.vy = 0.0;
 
+    // `LocalPlayer.modifyInput`, `LocalPlayer.modifyInputSpeedForSquareMovement`: the move vector slowed and squared.
     float ix = b.move_x;
     float iz = b.move_z;
     if (ix * ix + iz * iz != 0.0f) {
@@ -1433,6 +1499,7 @@ void tick(Body& b, const Keys& keys, const Stats& stats, const World& world) {
     b.x = std::clamp(b.x, -2.9999999e7, 2.9999999e7);
     b.z = std::clamp(b.z, -2.9999999e7, 2.9999999e7);
 
+    // `Player.updatePlayerPose`: the pose that fits.
     // The pose follows the move: crouching, or the next one down that fits.
     if (m.fits(Pose::Swimming)) {
         const Pose wanted = m.swimming() ? Pose::Swimming

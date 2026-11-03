@@ -17,20 +17,25 @@ uint32_t with_alpha(float alpha, uint32_t rgb) {
 
 double scale_of(const Options& options) { return options.get_double("chatScale"); }
 
+// `ChatComponent.getLineHeight`: nine pixels stretched by the line spacing option.
 int line_height(const Options& options) {
     return static_cast<int>(9.0 * (options.get_double("chatLineSpacing") + 1.0));
 }
 
 } // namespace
 
+// `ChatComponent.getWidth`: chat width from the option.
 int chat_width(double option) { return floor_int(option * 280.0 + 40.0); }
+// `ChatComponent.getHeight`: chat height from the option.
 int chat_height(double option) { return floor_int(option * 160.0 + 20.0); }
 
+// `ChatComponent.getLinesPerPage`: how many lines fit, focused or not.
 int Chat::lines_per_page(const Options& options, bool focused) const {
     const double option = options.get_double(focused ? "chatHeightFocused" : "chatHeightUnfocused");
     return chat_height(option) / line_height(options);
 }
 
+// `ChatComponent.addMessageToDisplayQueue`: wraps a message into lines, keeping the scroll put.
 void Chat::display(const Message& message, const Font& font, const Options& options,
                    bool focused) {
     const int width = floor_int(chat_width(options.get_double("chatWidth")) / scale_of(options));
@@ -53,6 +58,7 @@ void Chat::display(const Message& message, const Font& font, const Options& opti
     while (trimmed_.size() > kHistory) trimmed_.pop_back();
 }
 
+// `ChatComponent.addMessage`, `ChatComponent.addMessageToQueue`: shows a message and keeps it for rescaling.
 void Chat::add(const Component& content, int32_t tag, int32_t gui_ticks, const Font& font,
                const Options& options, bool focused) {
     Message message{gui_ticks, content, tag};
@@ -67,11 +73,13 @@ void Chat::clear() {
     reset_scroll();
 }
 
+// `ChatComponent.resetChatScroll`: back to the newest line.
 void Chat::reset_scroll() {
     scroll_ = 0;
     new_since_scroll_ = false;
 }
 
+// `ChatComponent.scrollChat`: scrolls within the trimmed lines.
 void Chat::scroll(int lines, const Options& options, bool focused) {
     scroll_ += lines;
     const int size = static_cast<int>(trimmed_.size());
@@ -83,12 +91,14 @@ void Chat::scroll(int lines, const Options& options, bool focused) {
     }
 }
 
+// `ChatComponent.rescaleChat`, `ChatComponent.refreshTrimmedMessages`: rewraps every kept message.
 void Chat::rescale(const Font& font, const Options& options, bool focused) {
     reset_scroll();
     trimmed_.clear();
     for (auto it = all_.rbegin(); it != all_.rend(); ++it) display(*it, font, options, focused);
 }
 
+// `ChatComponent.render`, `ChatComponent.forEachLine`, `ChatComponent.AlphaCalculator.timeBased`: backgrounds, fading lines, tags and the scrollbar.
 void Chat::render(GuiGraphics& gfx, const Options& options, int32_t gui_ticks, bool focused,
                   int, int) const {
     if (options.get_int("chatVisibility") == 2) return;

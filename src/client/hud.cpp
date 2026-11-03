@@ -102,6 +102,7 @@ void fill_player(Game& game, HudArea& hud) {
     player.selected_name = held.empty() ? mcpp::ui::Component{} : item_name(hud, held.id);
     player.left_handed = game.screens.options.get_string("mainHand") == "left";
 
+    // `Player.getCurrentItemAttackStrengthDelay`, `Player.getAttackStrengthScale`: the attack cooldown and how far it has charged.
     const double speed = session.attribute(self, "minecraft:attack_speed", 4.0);
     player.attack_delay = static_cast<float>(1.0 / speed * 20.0);
     player.attack_strength =
@@ -157,6 +158,7 @@ void hud_tick(Game& game) {
     const auto& session = *game.session;
     const auto& inventory = session.inventory();
 
+    // `LocalPlayer.hurtTo`: a health change flashes the hearts after the first one.
     // Every frame: what LocalPlayer::hurtTo does when set_health lands.
     const float health = session.vitals().health;
     if (health != hud.last_health) {

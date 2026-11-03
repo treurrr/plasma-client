@@ -18,6 +18,7 @@ void read_sound_event(ByteBuffer& in, const Registries& registries,
     cue.event = entry != nullptr ? entry->name : std::string();
 }
 
+// `BlockPos.getX`, `BlockPos.getY`, `BlockPos.getZ`: a packed position's three fields.
 void unpack_position(int64_t packed, int32_t& x, int32_t& y, int32_t& z) {
     const auto extend = [](int64_t value, int bits) {
         const int64_t sign = int64_t{1} << (bits - 1);

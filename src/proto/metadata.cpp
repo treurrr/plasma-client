@@ -137,6 +137,7 @@ std::string_view meta_type_name(MetaType type) {
     return index < kSerializers.size() ? kSerializers[index].name : std::string_view{};
 }
 
+// `ClientboundSetEntityDataPacket.unpack`, `SynchedEntityData.DataValue.read`: entries to 0xFF.
 Metadata read_metadata(ByteBuffer& in, int32_t protocol) {
     if (protocol != 774) {
         throw ProtocolError(std::format("no entity data serializers for protocol {}", protocol));

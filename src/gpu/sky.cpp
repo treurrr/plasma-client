@@ -133,6 +133,7 @@ std::filesystem::path Sky::default_path(int32_t protocol) {
     return base / "plasma-client" / "data" / std::format("sky-{}.plsk", protocol);
 }
 
+// `SkyRenderer.buildStars`: 1500 seeded star quads on a 100-block sphere.
 std::vector<std::array<float, 3>> Sky::star_corners() {
     jmath::LegacyRandom random(10842);
     std::vector<std::array<float, 3>> out;
@@ -260,6 +261,7 @@ void Sky::build_geometry() {
     };
     const uint32_t white = 0xFFFFFFFFu;
 
+    // `SkyRenderer.buildSkyDisc`: the sky disc.
     // A fan of eight around the centre, 512 out, at y = 16 above and -16 below.
     const auto disc = [&](float y) {
         const size_t first = v.size();
@@ -282,6 +284,7 @@ void Sky::build_geometry() {
 
     {
         const size_t first = v.size();
+        // `SkyRenderer.buildSunriseFan`: the sunrise fan.
         const SkyVertex centre{{0.0f, 100.0f, 0.0f}, {0, 0}, white};
         std::vector<SkyVertex> ring;
         for (int i = 0; i <= 16; ++i) {
@@ -329,6 +332,7 @@ void Sky::build_geometry() {
 
     {
         const size_t first = v.size();
+        // `SkyRenderer.buildEndSky`: the end sky box.
         const uint32_t grey = rgba(0xFF282828u);
         for (int face = 0; face < 6; ++face) {
             Matrix4 turn = identity();
@@ -512,6 +516,7 @@ void Sky::record(VkCommandBuffer command, const Camera& camera, uint32_t width, 
     colour_of(a.sky_colour, sky);
     draw(gpu_->disc, identity(), sky, kSkyDisc, disc_);
 
+    // `SkyRenderer.renderSunriseAndSunset`: the fan, turned to the sun's side and scaled by its alpha.
     float glow[4];
     colour_of(a.sunrise_colour, glow);
     if (!(glow[3] <= 0.001f)) {
@@ -521,6 +526,7 @@ void Sky::record(VkCommandBuffer command, const Camera& camera, uint32_t width, 
         draw(gpu_->translucent, model, glow, kVertexColour, fan_);
     }
 
+    // `SkyRenderer.renderSunMoonAndStars`, `SkyRenderer.renderSun`: sun, moon and stars on their angles.
     const Matrix4 turned = rotate_y(radians(-90.0f));
     const float light[4] = {1.0f, 1.0f, 1.0f, a.rain_brightness};
     draw(gpu_->overlay, turned * rotate_x(a.sun_angle) * translate(0, 100, 0) * scale(30, 1, 30), light,
@@ -532,12 +538,14 @@ void Sky::record(VkCommandBuffer command, const Camera& camera, uint32_t width, 
         const float stars[4] = {b, b, b, b};
         draw(gpu_->overlay, turned * rotate_x(a.star_angle), stars, kFlat, stars_);
     }
+    // `SkyRenderer.renderDarkDisc`: the black disc 12 up.
     if (a.dark_disc) {
         const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
         draw(gpu_->disc, translate(0.0f, 12.0f, 0.0f), black, kSkyDisc, dark_disc_);
     }
 }
 
+// `CloudRenderer.render`: the cloud layer's cell, side and drift.
 void Sky::record_clouds(VkCommandBuffer command, const Camera& camera, uint32_t width,
                         uint32_t height, const world::Atmosphere& a) {
     if (cloud_mode_ == Clouds::Off || world::argb::alpha(a.cloud_colour) == 0) return;
@@ -575,6 +583,7 @@ void Sky::record_clouds(VkCommandBuffer command, const Camera& camera, uint32_t 
                             ((static_cast<uint32_t>(dz) & 0xFFFFu) << 16));
             faces.push_back(direction | flags);
         };
+        // `CloudRenderer.tryBuildCell`, `CloudRenderer.buildFlatCell`, `CloudRenderer.buildExtrudedCell`: one cell's faces.
         const auto cell = [&](int32_t dx, int32_t dz) {
             const int32_t tx = ((cell_x + dx) % 256 + 256) % 256;
             const int32_t tz = ((cell_z + dz) % 256 + 256) % 256;
@@ -594,6 +603,7 @@ void Sky::record_clouds(VkCommandBuffer command, const Camera& camera, uint32_t 
                 for (uint32_t direction = 0; direction < 6; ++direction) face(dx, dz, direction, 16);
             }
         };
+        // `CloudRenderer.buildMesh`: cells in rings out from the camera.
         for (int32_t ring = 0; ring <= 2 * radius; ++ring) {
             for (int32_t dx = -ring; dx <= ring; ++dx) {
                 const int32_t dz = ring - std::abs(dx);

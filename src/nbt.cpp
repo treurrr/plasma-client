@@ -150,6 +150,7 @@ std::string Value::string_or(std::string_view fallback) const {
     return text ? *text : std::string(fallback);
 }
 
+// `NbtIo.readAnyTag`: a type byte, then an unnamed tag.
 Value read_network_tag(ByteBuffer& buffer) {
     const auto tag = static_cast<Tag>(buffer.read_u8());
     if (tag == Tag::End) return Value{};

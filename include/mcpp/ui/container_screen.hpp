@@ -117,7 +117,9 @@ private:
     void init_visuals();
     void update_tabs();
     void update_collections(bool reset_page);
+    // `RecipeBookComponent.getXOrigin`: the book's left edge.
     int x_origin() const { return (width_ - kImageWidth) / 2 - x_offset_; }
+    // `RecipeBookComponent.getYOrigin`: the book's top edge.
     int y_origin() const { return (height_ - kImageHeight) / 2; }
     void set_visible(bool on);
 

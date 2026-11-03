@@ -41,22 +41,26 @@ void Screen::tick() {
     for (auto& widget : widgets) widget->tick();
 }
 
+// `Screen.renderWithTooltipAndSubtitles`: background, then the screen, then deferred tooltips.
 void Screen::render_with_tooltip(GuiGraphics& gfx, double mx, double my) {
     render_background(gfx, mx, my);
     render(gfx, mx, my);
     gfx.render_deferred();
 }
 
+// `Screen.renderTransparentBackground`: the dark in-game gradient.
 void Screen::render_transparent_background(GuiGraphics& gfx) {
     gfx.fill_gradient(0, 0, width, height, 0xC0101010u, 0xD0101010u);
 }
 
+// `Screen.renderMenuBackground`, `Screen.renderMenuBackgroundTexture`: the tiled menu texture, in-world or not.
 void Screen::render_menu_background(GuiGraphics& gfx, int x, int y, int w, int h) {
     const bool world = manager != nullptr && manager->in_world;
     gfx.blit_tiled(world ? "gui/inworld_menu_background" : "gui/menu_background", x, y, w, h,
                    32.0f, 32.0f);
 }
 
+// `Screen.renderBackground`: transparent in game, else panorama and menu background.
 void Screen::render_background(GuiGraphics& gfx, double, double) {
     if (is_in_game_ui()) {
         render_transparent_background(gfx);
@@ -105,6 +109,7 @@ bool Screen::mouse_released(double mx, double my, int button) {
     return false;
 }
 
+// `ContainerEventHandler.mouseDragged`: passes a left drag to the dragged widget.
 bool Screen::mouse_dragged(double mx, double my, int button, double dx, double dy) {
     if (dragging != nullptr && button == 0) return dragging->mouse_dragged(mx, my, button, dx, dy);
     return false;
@@ -119,6 +124,7 @@ bool Screen::mouse_scrolled(double mx, double my, double dx, double dy) {
     return false;
 }
 
+// `Screen.keyPressed`: escape closes, then the focused widget, then tab and arrow navigation.
 bool Screen::key_pressed(const KeyEvent& event) {
     if (event.key == key::Escape && should_close_on_esc()) {
         on_close();
@@ -133,6 +139,7 @@ bool Screen::key_pressed(const KeyEvent& event) {
     return false;
 }
 
+// `ContainerEventHandler.charTyped`: typed characters go to the focused widget.
 bool Screen::char_typed(uint32_t code, int mods) {
     return focused_ != nullptr && focused_->char_typed(code, mods);
 }
@@ -293,6 +300,7 @@ void ScreenManager::tick() {
     apply_pending();
 }
 
+// `Window.calculateScale`: the largest GUI scale that keeps 320x240, even for Unicode.
 int gui_scale(int framebuffer_width, int framebuffer_height, int option, bool force_unicode) {
     int scale = 1;
     while (scale != option && scale < framebuffer_width && scale < framebuffer_height &&
@@ -303,6 +311,7 @@ int gui_scale(int framebuffer_width, int framebuffer_height, int option, bool fo
     return scale;
 }
 
+// `Window.setGuiScale`: scaled size rounded up.
 int gui_extent(int pixels, int scale) { return (pixels + scale - 1) / scale; }
 
 } // namespace mcpp::ui

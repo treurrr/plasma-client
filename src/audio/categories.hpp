@@ -42,6 +42,7 @@ struct CategoryVolumes {
     float& operator[](Category category) { return volume[static_cast<size_t>(category)]; }
     float operator[](Category category) const { return volume[static_cast<size_t>(category)]; }
 
+    // `Options.getFinalSoundSourceVolume`: a category's slider times master.
     float gain(Category category) const {
         const float master = (*this)[Category::Master];
         return category == Category::Master ? master : master * (*this)[category];

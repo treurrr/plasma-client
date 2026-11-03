@@ -13,11 +13,13 @@ float lerp(float t, float from, float to) { return from + t * (to - from); }
 } // namespace
 
 
+// `Divisor.Divisor`: splits a total into parts as quotient plus remainder.
 Divisor::Divisor(int total, int parts) : parts_(parts) {
     quotient_ = parts > 0 ? total / parts : 0;
     mod_ = parts > 0 ? total % parts : 0;
 }
 
+// `Divisor.nextInt`: the next part, spreading the remainder evenly.
 int Divisor::next() {
     int out = quotient_;
     remainder_ += mod_;
@@ -29,32 +31,39 @@ int Divisor::next() {
     return out;
 }
 
+// `AbstractLayout.setX`: moves every child along with the layout.
 void AbstractLayout::set_x(int x) {
     visit_children([&](LayoutElement& child) { child.set_x(child.get_x() + (x - x_)); });
     x_ = x;
 }
 
+// `AbstractLayout.setY`: moves every child along with the layout.
 void AbstractLayout::set_y(int y) {
     visit_children([&](LayoutElement& child) { child.set_y(child.get_y() + (y - y_)); });
     y_ = y;
 }
 
+// `Layout.visitWidgets`: visits the widgets of every child.
 void AbstractLayout::visit_widgets(const std::function<void(Widget&)>& visit) {
     visit_children([&](LayoutElement& child) { child.visit_widgets(visit); });
 }
 
+// `Layout.arrangeElements`: arranges every child layout first.
 void AbstractLayout::arrange_elements() {
     visit_children([](LayoutElement& child) { child.arrange_elements(); });
 }
 
+// `AbstractLayout.AbstractChildWrapper.getHeight`: child height plus vertical padding.
 int AbstractLayout::Child::height() const {
     return element->get_height() + settings.padding_top + settings.padding_bottom;
 }
 
+// `AbstractLayout.AbstractChildWrapper.getWidth`: child width plus horizontal padding.
 int AbstractLayout::Child::width() const {
     return element->get_width() + settings.padding_left + settings.padding_right;
 }
 
+// `AbstractLayout.AbstractChildWrapper.setX`: aligns the child inside its cell, truncating.
 void AbstractLayout::Child::set_x(int x, int cell_width) {
     const auto from = static_cast<float>(settings.padding_left);
     const auto to =
@@ -62,6 +71,7 @@ void AbstractLayout::Child::set_x(int x, int cell_width) {
     element->set_x(static_cast<int>(lerp(settings.x_alignment, from, to)) + x);
 }
 
+// `AbstractLayout.AbstractChildWrapper.setY`: aligns the child inside its cell, rounding.
 void AbstractLayout::Child::set_y(int y, int cell_height) {
     const auto from = static_cast<float>(settings.padding_top);
     const auto to =
@@ -73,6 +83,7 @@ void GridLayout::visit_children(const std::function<void(LayoutElement&)>& visit
     for (auto& cell : cells_) visit(*cell.child.element);
 }
 
+// `GridLayout.arrangeElements`: sizes rows and columns, then places each cell.
 void GridLayout::arrange_elements() {
     AbstractLayout::arrange_elements();
     int last_row = 0;
@@ -124,6 +135,7 @@ void FrameLayout::visit_children(const std::function<void(LayoutElement&)>& visi
     for (auto& child : children_) visit(*child.element);
 }
 
+// `FrameLayout.arrangeElements`: grows to the largest child and aligns all children in it.
 void FrameLayout::arrange_elements() {
     AbstractLayout::arrange_elements();
     int w = min_width_;
@@ -140,10 +152,12 @@ void FrameLayout::arrange_elements() {
     height_ = h;
 }
 
+// `FrameLayout.centerInRectangle`: centres an element in a rectangle.
 void FrameLayout::center_in_rectangle(LayoutElement& element, int x, int y, int w, int h) {
     align_in_rectangle(element, x, y, w, h, 0.5f, 0.5f);
 }
 
+// `FrameLayout.alignInRectangle`, `FrameLayout.alignInDimension`: aligns an element in a rectangle.
 void FrameLayout::align_in_rectangle(LayoutElement& element, int x, int y, int w, int h,
                                      float align_x, float align_y) {
     element.set_x(x + static_cast<int>(
@@ -156,6 +170,7 @@ void EqualSpacingLayout::visit_children(const std::function<void(LayoutElement&)
     for (auto& child : children_) visit(*child.element);
 }
 
+// `EqualSpacingLayout.arrangeElements`: spreads the leftover space evenly between children.
 void EqualSpacingLayout::arrange_elements() {
     AbstractLayout::arrange_elements();
     if (children_.empty()) return;
@@ -206,12 +221,14 @@ HeaderAndFooterLayout::HeaderAndFooterLayout(const int& screen_width, const int&
     : screen_width_(screen_width), screen_height_(screen_height), header_height_(header),
       footer_height_(footer) {}
 
+// `HeaderAndFooterLayout.visitChildren`: header, contents, then footer.
 void HeaderAndFooterLayout::visit_widgets(const std::function<void(Widget&)>& visit) {
     header_.visit_widgets(visit);
     contents_.visit_widgets(visit);
     footer_.visit_widgets(visit);
 }
 
+// `HeaderAndFooterLayout.arrangeElements`: header on top, footer at the bottom, contents in between.
 void HeaderAndFooterLayout::arrange_elements() {
     header_.set_min_width(screen_width_);
     header_.set_min_height(header_height_);

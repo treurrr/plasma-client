@@ -10,11 +10,13 @@ constexpr float kPi = 3.14159265358979323846f;
 
 int sign(double value) { return value == 0.0 ? 0 : (value > 0.0 ? 1 : -1); }
 
+// `Mth.rotateIfNecessary`: clamp an angle to within a limit of a target.
 float rotate_if_necessary(float current, float target, float limit) {
     const float difference = std::clamp(wrap_degrees(target - current), -limit, limit);
     return target - difference;
 }
 
+// `Entity.setXRot`: pitch wrapped and clamped to straight up or down.
 float clamp_x_rot(float degrees) { return std::clamp(std::fmod(degrees, 360.0f), -90.0f, 90.0f); }
 
 } // namespace
@@ -31,6 +33,7 @@ int TickClock::advance(float seconds) {
     return ticks;
 }
 
+// `Mth.wrapDegrees`: an angle into [-180, 180).
 float wrap_degrees(float degrees) {
     float out = std::fmod(degrees, 360.0f);
     if (out >= 180.0f) out -= 360.0f;
@@ -38,6 +41,7 @@ float wrap_degrees(float degrees) {
     return out;
 }
 
+// `Mth.wrapDegrees`: an angle into [-180, 180).
 double wrap_degrees(double degrees) {
     double out = std::fmod(degrees, 360.0);
     if (out >= 180.0) out -= 360.0;
@@ -45,9 +49,11 @@ double wrap_degrees(double degrees) {
     return out;
 }
 
+// `Mth.rotLerp`: lerp along the short way round.
 float rot_lerp(float t, float from, float to) { return from + t * wrap_degrees(to - from); }
 double rot_lerp(double t, double from, double to) { return from + t * wrap_degrees(to - from); }
 
+// `Mth.rotLerpRad`: lerp in radians along the short way round.
 float rot_lerp_rad(float t, float from, float to) {
     float difference = to - from;
     while (difference < -kPi) difference += kPi * 2.0f;
@@ -55,8 +61,10 @@ float rot_lerp_rad(float t, float from, float to) {
     return from + t * difference;
 }
 
+// `Mth.lerp`: linear interpolation.
 float lerp(float t, float from, float to) { return from + t * (to - from); }
 
+// `WalkAnimationState.update`: ease the walk speed and advance the position.
 void WalkAnimation::update(float target, float factor, float scale) {
     speed_old = speed;
     speed = speed + (target - speed) * factor;
@@ -64,20 +72,24 @@ void WalkAnimation::update(float target, float factor, float scale) {
     position_scale = scale;
 }
 
+// `WalkAnimationState.stop`: stand still.
 void WalkAnimation::stop() {
     speed_old = 0.0f;
     speed = 0.0f;
     position = 0.0f;
 }
 
+// `WalkAnimationState.speed`: the speed at a partial tick, at most one.
 float WalkAnimation::speed_at(float partial) const {
     return std::min(lerp(partial, speed_old, speed), 1.0f);
 }
 
+// `WalkAnimationState.position`: the walked distance at a partial tick.
 float WalkAnimation::position_at(float partial) const {
     return (position - speed * (1.0f - partial)) * position_scale;
 }
 
+// `LivingEntity.recreateFromPacket`, `Entity.absSnapTo`: placed with body and head as sent.
 void Living::spawn(const Entity& entity) {
     y_body_rot = y_head_rot = entity.head_yaw;
     y_body_rot_o = y_body_rot;
@@ -94,6 +106,7 @@ void Living::spawn(const Entity& entity) {
     last_stable_y_head_rot_ = y_head_rot;
 }
 
+// `Entity.snapTo`: jump to a position and angles, old ones too.
 void Living::snap_to(double nx, double ny, double nz, float yaw, float pitch) {
     x = nx;
     y = ny;
@@ -103,6 +116,7 @@ void Living::snap_to(double nx, double ny, double nz, float yaw, float pitch) {
     set_old();
 }
 
+// `InterpolationHandler.interpolateTo`: start easing towards a new target.
 void Living::move_to(const double* position, const float* yaw, const float* pitch) {
     const bool active = steps > 0;
     const double to[3] = {
@@ -138,11 +152,13 @@ void Living::move_to(const double* position, const float* yaw, const float* pitc
     previous_y_rot = y_rot;
 }
 
+// `LivingEntity.lerpHeadTo`: ease the head to a yaw over some ticks.
 void Living::lerp_head_to(float yaw, int32_t ticks) {
     lerp_y_head_rot = yaw;
     lerp_head_steps = ticks;
 }
 
+// `LivingEntity.swing`: start a swing unless one is well under way.
 void Living::swing(bool off_hand) {
     if (!swinging || swing_time >= swing_duration / 2 || swing_time < 0) {
         swing_time = -1;
@@ -151,11 +167,13 @@ void Living::swing(bool off_hand) {
     }
 }
 
+// `LivingEntity.handleDamageEvent`: the walk kick and hurt time.
 void Living::damaged() {
     walk.speed = 1.5f;
     hurt_time = 10;
 }
 
+// `Entity.setOldPosAndRot`: this tick's position and angles become the old ones.
 void Living::set_old() {
     xo = x;
     yo = y;
@@ -174,6 +192,7 @@ void Living::base_tick() {
     x_rot_o = x_rot;
 }
 
+// `InterpolationHandler.interpolate`: one step towards the target.
 void Living::interpolate() {
     if (steps <= 0) {
         steps = 0;
@@ -209,6 +228,7 @@ void Living::interpolate() {
     has_previous = true;
 }
 
+// `LivingEntity.lerpHeadRotationStep`: one step of the head ease.
 void Living::head_step() {
     if (lerp_head_steps > 0) {
         y_head_rot = static_cast<float>(rot_lerp(1.0 / lerp_head_steps,
@@ -218,6 +238,7 @@ void Living::head_step() {
     }
 }
 
+// `LivingEntity.updateSwingTime`: advance the swing and its attack fraction.
 void Living::update_swing_time() {
     if (swinging) {
         ++swing_time;
@@ -231,6 +252,7 @@ void Living::update_swing_time() {
     attack_anim = static_cast<float>(swing_time) / static_cast<float>(swing_duration);
 }
 
+// `LivingEntity.tickHeadTurn`: the body follows, never too far from the head.
 void Living::tick_head_turn(float target_body) {
     const float turn = wrap_degrees(target_body - y_body_rot);
     y_body_rot += turn * 0.3f;
@@ -240,6 +262,7 @@ void Living::tick_head_turn(float target_body) {
     }
 }
 
+// `BodyRotationControl.clientTick`: a mob's body turning after its head.
 void Living::tick_body_rotation_control() {
     constexpr float kMaxHeadYRot = 75.0f;
     const double dx = x - xo;
@@ -274,6 +297,7 @@ void Living::turn_body_and_wrap() {
     while (y_head_rot - y_head_rot_o >= 180.0f) y_head_rot_o += 360.0f;
 }
 
+// `LivingEntity.calculateEntityAnimation`, `LivingEntity.updateWalkAnimation`: walking.
 void Living::walk_animation(bool vertical) {
     const double dx = x - xo;
     const double dy = vertical ? y - yo : 0.0;
@@ -294,6 +318,7 @@ void Living::tick_remote_player() {
     head_step();
     update_swing_time();
 
+    // `LivingEntity.tick`: the body heading from movement and swing.
     const double dx = x - xo;
     const double dz = z - zo;
     const auto moved = static_cast<float>(dx * dx + dz * dz);
@@ -327,10 +352,12 @@ double Living::y_at(float partial) const { return yo + static_cast<double>(parti
 double Living::z_at(float partial) const { return zo + static_cast<double>(partial) * (z - zo); }
 float Living::body_at(float partial) const { return rot_lerp(partial, y_body_rot_o, y_body_rot); }
 float Living::head_at(float partial) const { return rot_lerp(partial, y_head_rot_o, y_head_rot); }
+// `Entity.getXRot`: pitch at a partial tick.
 float Living::x_rot_at(float partial) const {
     return partial == 1.0f ? x_rot : lerp(partial, x_rot_o, x_rot);
 }
 
+// `LivingEntity.getAttackAnim`: the swing fraction at a partial tick.
 float Living::attack_at(float partial) const {
     float difference = attack_anim - o_attack_anim;
     if (difference < 0.0f) ++difference;

@@ -62,11 +62,13 @@ Button::Button(int x_, int y_, int w_, int h_, Component label, std::function<vo
     message = std::move(label);
 }
 
+// `AbstractButton.renderDefaultLabel`, `AbstractWidget.renderScrollingStringOverContents`: the label, scrolled inside a 2-pixel margin.
 void Button::render_label(GuiGraphics& gfx) {
     const uint32_t colour = with_alpha(active ? 0xFFFFFFu : 0xA0A0A0u, alpha);
     gfx.draw_scrolling_string(gfx.runs(message), x + 2, y, x + w - 2, y + h, colour);
 }
 
+// `Button.Plain.renderContents`, `AbstractButton.renderDefaultSprite`: the button sprite for its state, then the label.
 void Button::render(GuiGraphics& gfx, double, double) {
     const char* sprite = !active ? "widget/button_disabled"
                          : highlighted() ? "widget/button_highlighted"
@@ -75,6 +77,7 @@ void Button::render(GuiGraphics& gfx, double, double) {
     render_label(gfx);
 }
 
+// `AbstractWidget.mouseClicked`: a left click inside an active widget clicks it with a sound.
 bool Button::mouse_clicked(double mx, double my, int button) {
     if (!active || !visible || button != 0 || !over(mx, my)) return false;
     play_sound(kClick);
@@ -82,6 +85,7 @@ bool Button::mouse_clicked(double mx, double my, int button) {
     return true;
 }
 
+// `AbstractButton.keyPressed`: enter, space or keypad enter press the button with a sound.
 bool Button::key_pressed(const KeyEvent& event) {
     if (!active || !visible || !activates(event)) return false;
     play_sound(kClick);
@@ -144,6 +148,7 @@ bool CycleButton::mouse_clicked(double mx, double my, int button) {
     return Button::mouse_clicked(mx, my, button);
 }
 
+// `CycleButton.onPress`, `CycleButton.cycleValue`: steps to the next or previous value and reports it.
 void CycleButton::press() {
     if (values.empty()) return;
     index = backwards_ ? (index + values.size() - 1) % values.size() : (index + 1) % values.size();
@@ -161,6 +166,7 @@ Slider::Slider(int x_, int y_, int w_, int h_, double value_,
     if (label) message = label(value);
 }
 
+// `AbstractSliderButton.renderWidget`: track, handle at the value, then the label.
 void Slider::render(GuiGraphics& gfx, double, double) {
     const uint32_t tint = with_alpha(0xFFFFFFu, alpha);
     gfx.blit_sprite(focused && keyboard_focus && !can_change_ ? "widget/slider_highlighted"
@@ -172,6 +178,7 @@ void Slider::render(GuiGraphics& gfx, double, double) {
                   with_alpha(active ? 0xFFFFFFu : 0xA0A0A0u, alpha));
 }
 
+// `AbstractSliderButton.setValue`: clamps the value and applies it when it changed.
 void Slider::set_value(double v) {
     const double clamped = std::clamp(v, 0.0, 1.0);
     if (clamped == value) return;
@@ -180,6 +187,7 @@ void Slider::set_value(double v) {
     if (label) message = label(value);
 }
 
+// `AbstractSliderButton.setValueFromMouse`: the value under the mouse.
 void Slider::set_from_mouse(double mx) {
     set_value((mx - (x + 4)) / static_cast<double>(w - 8));
 }
@@ -190,16 +198,19 @@ bool Slider::mouse_clicked(double mx, double my, int button) {
     return true;
 }
 
+// `AbstractSliderButton.onDrag`: dragging follows the mouse.
 bool Slider::mouse_dragged(double mx, double, int, double, double) {
     set_from_mouse(mx);
     return true;
 }
 
+// `AbstractSliderButton.onRelease`: the click sound plays on release.
 bool Slider::mouse_released(double, double, int) {
     play_sound(kClick);
     return true;
 }
 
+// `AbstractSliderButton.keyPressed`: selection toggles editing, arrows step one pixel.
 bool Slider::key_pressed(const KeyEvent& event) {
     if (activates(event)) {
         can_change_ = !can_change_;
@@ -226,6 +237,7 @@ EditBox::EditBox(int x_, int y_, int w_, int h_, Component narration_label) {
     message = std::move(narration_label);
 }
 
+// `EditBox.setValue`: filtered, cut to the max length, caret to the end.
 void EditBox::set_value(std::string text) {
     if (filter && !filter(text)) return;
     if (text.size() > max_length) text.resize(max_length);
@@ -234,6 +246,7 @@ void EditBox::set_value(std::string text) {
     if (on_change) on_change(text_);
 }
 
+// `EditBox.insertText`: replaces the selection with filtered text that still fits.
 void EditBox::insert(std::string_view piece) {
     const int from = std::min(cursor_, selection_);
     const int to = std::max(cursor_, selection_);
@@ -392,6 +405,7 @@ bool EditBox::key_pressed(const KeyEvent& event) {
     }
 }
 
+// `EditBox.charTyped`: inserts an allowed typed character.
 bool EditBox::char_typed(uint32_t code, int) {
     if (!focused || !visible || !editable) return false;
     if (code < 32 || code == 127 || code == 0xA7) return false;
@@ -427,6 +441,7 @@ void EditBox::set_focused(bool on) {
 
 void EditBox::tick() { ++frame_; }
 
+// `EditBox.renderWidget`: text split at the caret, hint, suggestion, selection and blinking caret.
 void EditBox::render(GuiGraphics& gfx, double, double) {
     last_gfx_ = &gfx;
     if (focused && !was_focused_) focused_at_ = gfx.seconds;
@@ -516,6 +531,7 @@ Checkbox::Checkbox(int x_, int y_, Component label, bool selected_,
     message = std::move(label);
 }
 
+// `Checkbox.renderContents`: the box sprite for its state, then the label beside it.
 void Checkbox::render(GuiGraphics& gfx, double, double) {
     const bool lit = highlighted() || focused;
     const char* sprite = selected ? (lit ? "widget/checkbox_selected_highlighted"
@@ -526,6 +542,7 @@ void Checkbox::render(GuiGraphics& gfx, double, double) {
     w = kBox + 4 + gfx.width_of(message);
 }
 
+// `Checkbox.onPress`: flips the box and reports it.
 void Checkbox::toggle() {
     selected = !selected;
     if (on_change) on_change(selected);
@@ -668,6 +685,7 @@ bool SelectionList::mouse_released(double, double, int) {
     return false;
 }
 
+// `AbstractScrollArea.mouseScrolled`, `AbstractSelectionList.scrollRate`: scrolls half a row per notch.
 bool SelectionList::mouse_scrolled(double, double, double, double dy) {
     scroll_to(scroll - dy * static_cast<double>(row_height) / 2.0);
     return true;

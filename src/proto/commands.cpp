@@ -23,14 +23,19 @@ Value bounds(ByteBuffer& in, Read read) {
 }
 
 Value read_properties(ByteBuffer& in, std::string_view parser) {
+    // `FloatArgumentInfo.deserializeFromNetwork`: optional float bounds.
     if (parser == "brigadier:float") {
         return bounds(in, [&] { return Value{static_cast<double>(in.read_f32())}; });
     }
+    // `DoubleArgumentInfo.deserializeFromNetwork`: optional double bounds.
     if (parser == "brigadier:double") return bounds(in, [&] { return Value{in.read_f64()}; });
+    // `IntegerArgumentInfo.deserializeFromNetwork`: optional int bounds.
     if (parser == "brigadier:integer") {
         return bounds(in, [&] { return Value{int64_t{in.read_i32()}}; });
     }
+    // `LongArgumentInfo.deserializeFromNetwork`: optional long bounds.
     if (parser == "brigadier:long") return bounds(in, [&] { return Value{in.read_i64()}; });
+    // `StringArgumentSerializer.deserializeFromNetwork`: the string kind.
     if (parser == "brigadier:string") {
         static constexpr std::string_view kKinds[] = {"single_word", "quotable_phrase",
                                                       "greedy_phrase"};
@@ -52,6 +57,7 @@ Value read_properties(ByteBuffer& in, std::string_view parser) {
 
 } // namespace
 
+// `ClientboundCommandsPacket.ClientboundCommandsPacket`: the node list, then the root.
 CommandTree read_commands(ByteBuffer& in, int32_t protocol) {
     const auto* parsers = generated::registry_entries("minecraft:command_argument_type", protocol);
     if (parsers == nullptr) {
@@ -64,6 +70,7 @@ CommandTree read_commands(ByteBuffer& in, int32_t protocol) {
     }
     tree.nodes.reserve(static_cast<size_t>(count));
     for (int32_t i = 0; i < count; ++i) {
+        // `ClientboundCommandsPacket.readNode`, `ClientboundCommandsPacket.read`: one node.
         CommandNode node;
         const uint8_t flags = in.read_u8();
         node.kind = static_cast<CommandNode::Kind>(flags & kTypeMask);

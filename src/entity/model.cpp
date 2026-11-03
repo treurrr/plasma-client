@@ -71,6 +71,7 @@ void emit(std::vector<Vertex>& out, const Corner (&quad)[4], const float normal[
     }
 }
 
+// `ModelPart.Cube.Cube`, `ModelPart.Polygon.Polygon`: corners, faces, UVs.
 // The game's cube: eight corners, six faces in a fixed order, each face's
 // rectangle cut from the box's island, and a mirrored box flipping x and
 // reversing every face's winding.
@@ -259,6 +260,7 @@ const Model* ModelSet::find(std::string_view name) const {
     return nullptr;
 }
 
+// `Model.resetPose`: every part back to its initial pose.
 void Pose::reset(const Model& model) {
     parts.resize(model.parts.size());
     for (size_t i = 0; i < parts.size(); ++i) parts[i] = model.parts[i].initial;
@@ -371,6 +373,7 @@ void pose_matrices(const Model& model, const Pose& pose, const Matrix& root,
             continue;
         }
         Matrix m = part.parent < 0 ? root : chain[parent];
+        // `ModelPart.translateAndRotate`: translate, rotate ZYX, then scale.
         if (p.x != 0.0f || p.y != 0.0f || p.z != 0.0f) {
             m = multiply(m, translation(p.x / 16.0f, p.y / 16.0f, p.z / 16.0f));
         }

@@ -218,6 +218,7 @@ void push(std::vector<Run>& runs, std::string text, const Style& style) {
     runs.push_back({std::move(text), style});
 }
 
+// `StringDecomposer.iterateFormatted`, `Style.applyLegacyFormat`: applies section-sign codes while walking a string.
 // § codes inside a literal, the way the game applies them when it draws: a
 // colour code also clears bold and the rest, and §r goes back to the style the
 // literal itself had.
@@ -260,6 +261,7 @@ void legacy_into(std::vector<Run>& runs, std::string_view text, const Style& bas
 void flatten_into(std::vector<Run>& runs, const Component& component, const Style& parent,
                   const Resolve& resolve, int depth);
 
+// `TranslatableContents.decomposeTemplate`: splits a translation into literal parts and arguments.
 // %s, %2$s and %%, with each argument drawn in its own style under the
 // translation's.
 void translate_into(std::vector<Run>& runs, std::string_view pattern, const Component& component,
@@ -341,6 +343,7 @@ float glyph_advance(const Advance& advance, uint32_t code, const Style& style) {
 
 } // namespace
 
+// `Style.applyTo`: fills every unset field from the parent style.
 Style Style::under(const Style& parent) const {
     Style out = *this;
     if (!out.colour) out.colour = parent.colour;
@@ -403,6 +406,7 @@ Component from_json_text(std::string_view text) {
 
 Component from_nbt(const nbt::Value& value) { return parse(NbtNode{&value}, 0); }
 
+// `TextColor.parseColor`: a #rrggbb hex colour or a named colour.
 std::optional<uint32_t> parse_colour(std::string_view name) {
     if (name.size() == 7 && name[0] == '#') {
         uint32_t rgb = 0;

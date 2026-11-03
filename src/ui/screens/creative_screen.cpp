@@ -132,6 +132,7 @@ bool CreativeModeInventoryScreen::shown(const CreativeTab& t) const {
     return t.key != "op_blocks" || operator_tab_;
 }
 
+// `CreativeModeInventoryScreen.init`: the borderless search box, then the remembered tab.
 void CreativeModeInventoryScreen::init() {
     AbstractContainerScreen::init();
     if (World* w = world()) picker_ = ContainerMenu(picker_rules(), w->items);
@@ -147,6 +148,7 @@ void CreativeModeInventoryScreen::init() {
     select_tab(keep);
 }
 
+// `CreativeModeInventoryScreen.containerTick`: back to the survival inventory without creative.
 void CreativeModeInventoryScreen::tick() {
     AbstractContainerScreen::tick();
     World* w = world();
@@ -155,14 +157,17 @@ void CreativeModeInventoryScreen::tick() {
     }
 }
 
+// `CreativeModeInventoryScreen.ItemPickerMenu.calculateRowCount`: rows past the five shown.
 int CreativeModeInventoryScreen::row_count() const {
     return (static_cast<int>(items_.size()) + 8) / 9 - 5;
 }
 
+// `CreativeModeInventoryScreen.ItemPickerMenu.getRowIndexForScroll`: the first row for a scroll.
 int CreativeModeInventoryScreen::row_for_scroll(float scroll) const {
     return std::max(static_cast<int>(scroll * static_cast<float>(row_count()) + 0.5), 0);
 }
 
+// `CreativeModeInventoryScreen.ItemPickerMenu.scrollTo`: fills the picker from that row.
 void CreativeModeInventoryScreen::scroll_to(float scroll) {
     const int row = row_for_scroll(scroll);
     for (int r = 0; r < 5; ++r) {
@@ -175,10 +180,12 @@ void CreativeModeInventoryScreen::scroll_to(float scroll) {
     }
 }
 
+// `CreativeModeInventoryScreen.canScroll`, `CreativeModeInventoryScreen.ItemPickerMenu.canScroll`: more than 45 items in a scrolling tab.
 bool CreativeModeInventoryScreen::can_scroll() const {
     return tab().can_scroll && items_.size() > 45;
 }
 
+// `CreativeModeInventoryScreen.selectTab`: the tab's items and slots, the search box, scroll to the top.
 void CreativeModeInventoryScreen::select_tab(size_t index) {
     const size_t previous = selected_;
     selected_ = index;
@@ -236,26 +243,31 @@ void CreativeModeInventoryScreen::refresh_search_results() {
     scroll_to(0.0f);
 }
 
+// `CreativeModeInventoryScreen.getTabX`: a tab's column.
 int CreativeModeInventoryScreen::tab_x(const CreativeTab& t) const {
     return t.aligned_right ? image_width - 27 * (7 - t.column) + 1 : 27 * t.column;
 }
 
+// `CreativeModeInventoryScreen.getTabY`: above or below the image.
 int CreativeModeInventoryScreen::tab_y(const CreativeTab& t) const {
     return t.top ? -32 : image_height;
 }
 
+// `CreativeModeInventoryScreen.checkTabClicked`: inside a tab.
 bool CreativeModeInventoryScreen::tab_clicked(const CreativeTab& t, double x, double y) const {
     const int tx = tab_x(t);
     const int ty = tab_y(t);
     return x >= tx && x <= tx + 26 && y >= ty && y <= ty + 32;
 }
 
+// `CreativeModeInventoryScreen.insideScrollbar`: inside the scrollbar track.
 bool CreativeModeInventoryScreen::inside_scrollbar(double mx, double my) const {
     const int x0 = left_pos + 175;
     const int y0 = top_pos + 18;
     return mx >= x0 && my >= y0 && mx < x0 + 14 && my < y0 + 112;
 }
 
+// `CreativeModeInventoryScreen.renderTabButton`: a tab sprite and its icon.
 void CreativeModeInventoryScreen::render_tab_button(GuiGraphics& gfx, const CreativeTab& t) {
     const bool selected = &t == &tab();
     const int x = left_pos + tab_x(t);
@@ -268,6 +280,7 @@ void CreativeModeInventoryScreen::render_tab_button(GuiGraphics& gfx, const Crea
     gfx.render_item(t.icon, x + 13 - 8, y + 16 - 8 + (t.top ? 1 : -1));
 }
 
+// `CreativeModeInventoryScreen.renderBg`: other tabs, background, search box, scroller, the selected tab and the player.
 void CreativeModeInventoryScreen::render_bg(GuiGraphics& gfx, double mx, double my) {
     for (const auto& t : tabs_->tabs) {
         if (&t != &tab() && shown(t)) render_tab_button(gfx, t);
@@ -291,10 +304,12 @@ void CreativeModeInventoryScreen::render_bg(GuiGraphics& gfx, double mx, double 
     }
 }
 
+// `CreativeModeInventoryScreen.renderLabels`: the tab title when it shows one.
 void CreativeModeInventoryScreen::render_labels(GuiGraphics& gfx) {
     if (tab().show_title) gfx.draw_string(translatable(tab().title), 8, 6, kLabelColour, false);
 }
 
+// `CreativeModeInventoryScreen.getTooltipFromContainerItem`: the item tooltip plus the tabs that hold it.
 std::vector<std::vector<Run>> CreativeModeInventoryScreen::creative_tooltip(
     const GuiGraphics& gfx, const ItemStack& stack, int picker_index) const {
     auto lines = tooltip_of(gfx, stack);
@@ -322,6 +337,7 @@ std::vector<std::vector<Run>> CreativeModeInventoryScreen::creative_tooltip(
     return lines;
 }
 
+// `CreativeModeInventoryScreen.render`, `CreativeModeInventoryScreen.checkTabHovering`: contents, then tab, bin and item tooltips.
 void CreativeModeInventoryScreen::render(GuiGraphics& gfx, double mx, double my) {
     render_contents(gfx, mx, my);
     render_carried_item(gfx, mx, my);
@@ -352,6 +368,7 @@ void CreativeModeInventoryScreen::render(GuiGraphics& gfx, double mx, double my)
     }
 }
 
+// `CreativeModeInventoryScreen.mouseClicked`: tabs and the scrollbar take left clicks first.
 bool CreativeModeInventoryScreen::mouse_clicked(double mx, double my, int button) {
     if (button == 0) {
         for (const auto& t : tabs_->tabs) {
@@ -365,6 +382,7 @@ bool CreativeModeInventoryScreen::mouse_clicked(double mx, double my, int button
     return AbstractContainerScreen::mouse_clicked(mx, my, button);
 }
 
+// `CreativeModeInventoryScreen.mouseReleased`: releasing on a tab selects it.
 bool CreativeModeInventoryScreen::mouse_released(double mx, double my, int button) {
     if (button == 0) {
         scrolling_ = false;
@@ -378,6 +396,7 @@ bool CreativeModeInventoryScreen::mouse_released(double mx, double my, int butto
     return AbstractContainerScreen::mouse_released(mx, my, button);
 }
 
+// `CreativeModeInventoryScreen.mouseDragged`: dragging the scroller.
 bool CreativeModeInventoryScreen::mouse_dragged(double mx, double my, int button, double dx,
                                                 double dy) {
     if (scrolling_) {
@@ -392,6 +411,7 @@ bool CreativeModeInventoryScreen::mouse_dragged(double mx, double my, int button
     return AbstractContainerScreen::mouse_dragged(mx, my, button, dx, dy);
 }
 
+// `CreativeModeInventoryScreen.mouseScrolled`, `CreativeModeInventoryScreen.ItemPickerMenu.subtractInputFromScroll`: scrolls a row per notch.
 bool CreativeModeInventoryScreen::mouse_scrolled(double, double, double, double dy) {
     if (!can_scroll()) return false;
     scroll_ = std::clamp(scroll_ - static_cast<float>(dy / row_count()), 0.0f, 1.0f);
@@ -399,6 +419,7 @@ bool CreativeModeInventoryScreen::mouse_scrolled(double, double, double, double 
     return true;
 }
 
+// `CreativeModeInventoryScreen.hasClickedOutside`: outside the image and not on the selected tab.
 bool CreativeModeInventoryScreen::has_clicked_outside(double mx, double my, int left, int top) const {
     const bool outside =
         mx < left || my < top || mx >= left + image_width || my >= top + image_height;
@@ -406,6 +427,7 @@ bool CreativeModeInventoryScreen::has_clicked_outside(double mx, double my, int 
     return has_clicked_outside_;
 }
 
+// `CreativeModeInventoryScreen.charTyped`: typing into the search tab.
 bool CreativeModeInventoryScreen::char_typed(uint32_t code, int mods) {
     if (ignore_text_input_ || tab().type != CreativeTab::Type::Search) return false;
     const std::string before = search_->value();
@@ -416,6 +438,7 @@ bool CreativeModeInventoryScreen::char_typed(uint32_t code, int mods) {
     return false;
 }
 
+// `CreativeModeInventoryScreen.keyPressed`: the chat key opens search; hotbar keys and the search box in it.
 bool CreativeModeInventoryScreen::key_pressed(const KeyEvent& event) {
     ignore_text_input_ = false;
     if (tab().type != CreativeTab::Type::Search) {
@@ -445,6 +468,7 @@ bool CreativeModeInventoryScreen::key_pressed(const KeyEvent& event) {
     return AbstractContainerScreen::key_pressed(event);
 }
 
+// `CreativeModeInventoryScreen.keyReleased`: typed text counts again.
 bool CreativeModeInventoryScreen::key_released(const KeyEvent& event) {
     ignore_text_input_ = false;
     return AbstractContainerScreen::key_released(event);
@@ -460,6 +484,7 @@ void CreativeModeInventoryScreen::sync_creative_slots(
     if (w->commit) w->commit();
 }
 
+// `CreativeModeInventoryScreen.slotClicked`: drops outside, the bin, the inventory tab, picker slots and the hotbar row.
 void CreativeModeInventoryScreen::slot_clicked(const ScreenSlot* slot, int index, int button,
                                                ClickType type) {
     World* w = world();

@@ -12,18 +12,22 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kDegrees = kPi / 180.0f;
 
+// `HumanoidModel.quadraticArmUpdate`: the swim stroke's quadratic arm curve.
 float quadratic_arm_update(float x) { return -65.0f * x + x * x; }
 
+// `Ease.outQuart`: quartic ease-out.
 float out_quart(float x) {
     const float a = (1.0f - x) * (1.0f - x);
     return 1.0f - a * a;
 }
 
+// `AnimationUtils.bobModelPart`: the idle arm sway.
 void bob(PartPose& part, float age, float side) {
     part.z_rot = part.z_rot + side * (jmath::cos(age * 0.09f) * 0.05f + 0.05f);
     part.x_rot = part.x_rot + side * (jmath::sin(age * 0.067f) * 0.05f);
 }
 
+// `HumanoidModel.poseBlockingArm`: an arm raised to block, following the head.
 void pose_blocking_arm(PartPose& arm, const PartPose& head, bool right) {
     arm.x_rot = arm.x_rot * 0.5f - 0.9424779f +
                 std::clamp(head.x_rot, static_cast<float>(-kPi * 4.0 / 9.0), 0.43633232f);
@@ -31,6 +35,7 @@ void pose_blocking_arm(PartPose& arm, const PartPose& head, bool right) {
                 std::clamp(head.y_rot, -kPi / 6.0f, kPi / 6.0f);
 }
 
+// `HumanoidModel.poseRightArm`, `HumanoidModel.poseLeftArm`: one arm's pose for what it holds.
 void pose_arm(ArmPose kind, PartPose& arm, const PartPose& head, bool right) {
     switch (kind) {
     case ArmPose::Empty:
@@ -70,6 +75,7 @@ bool HumanoidParts::complete() const {
            left_leg >= 0;
 }
 
+// `HumanoidModel.setupAnim`: head, walk, ride, arms, attack, crouch, bob and swim.
 void animate_humanoid(const Model& model, const HumanoidParts& parts, const HumanoidState& s,
                       Pose& pose) {
     PartPose& head = pose[parts.head];
@@ -122,6 +128,7 @@ void animate_humanoid(const Model& model, const HumanoidParts& parts, const Huma
     pose_arm(s.right_arm, right_arm, head, true);
     pose_arm(s.left_arm, left_arm, head, false);
 
+    // `HumanoidModel.setupAttackAnimation`: the body twist and arm swing.
     if (s.attack_time > 0.0f) {
         body.y_rot = jmath::sin(std::sqrt(s.attack_time) * (kPi * 2.0f)) * 0.2f;
         if (s.attack_left) body.y_rot *= -1.0f;
@@ -195,6 +202,7 @@ void animate_humanoid(const Model& model, const HumanoidParts& parts, const Huma
     }
 }
 
+// `PlayerModel.setupAnim`: layer visibility, then the humanoid pose.
 void animate_player(const Model& model, const HumanoidParts& parts, const HumanoidState& s,
                     Pose& pose) {
     pose.reset(model);

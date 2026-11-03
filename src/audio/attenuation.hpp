@@ -8,6 +8,7 @@ namespace mcpp::audio {
 // to 0..1 and pitch to 0.5..2, and a volume above 1 makes the sound reach
 // further instead of louder.
 inline float clamp_volume(float volume) { return std::clamp(volume, 0.0f, 1.0f); }
+// `SoundEngine.calculatePitch`: pitch held to 0.5..2.
 inline float clamp_pitch(float pitch) { return std::clamp(pitch, 0.5f, 2.0f); }
 
 // How far a sound carries: the event's attenuation distance, 16 unless

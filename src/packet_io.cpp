@@ -53,6 +53,7 @@ void PacketConnection::send(int32_t id, const ByteBuffer& payload) {
     if (compression_threshold_ < 0) {
         frame.write_varint(static_cast<int32_t>(body.data().size()));
         frame.write_bytes(body.data());
+    // `CompressionEncoder.encode`: deflate from the threshold up, else a zero size.
     } else if (body.data().size() >= static_cast<size_t>(compression_threshold_)) {
         auto compressed = zlib_compress(body.data());
         const auto uncompressed_size = static_cast<int32_t>(body.data().size());
@@ -88,6 +89,7 @@ PacketConnection::Packet PacketConnection::receive() {
 
     ByteBuffer buf(std::move(raw));
     if (compression_threshold_ >= 0) {
+        // `CompressionDecoder.decode`: zero means stored, else the inflated size.
         int32_t uncompressed_size = buf.read_varint();
         if (uncompressed_size != 0) {
             if (static_cast<size_t>(uncompressed_size) > kMaxPacketSize) {

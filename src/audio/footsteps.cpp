@@ -16,6 +16,7 @@ bool is_air(std::string_view name) {
 
 int32_t block_floor(double value) { return static_cast<int32_t>(std::floor(value)); }
 
+// `Entity.isStateClimbable`: climbable blocks and powder snow.
 bool climbable(const StepWorld& world, std::string_view block) {
     return world.in_tag(block, "minecraft:climbable") || block == "minecraft:powder_snow";
 }
@@ -24,6 +25,7 @@ void push(std::vector<StepSound>& sounds, const StepInput& input, std::optional<
     if (cue) sounds.push_back({cue->event, cue->volume, cue->pitch, input.x, input.y, input.z});
 }
 
+// `Entity.playMuffledStepSound`: a step at a twentieth of the volume, lower.
 std::optional<BlockSoundCue> muffled(const BlockSoundType& type) {
     if (type.step.empty() || type.step == "intentionally_empty") return std::nullopt;
     return BlockSoundCue{type.step, type.volume * 0.05f, type.pitch * 0.8f};
@@ -39,6 +41,7 @@ void Footsteps::reset() {
     ground_without_blocks_ = false;
 }
 
+// `Entity.checkSupportingBlock`: the block under the feet, or the one just left.
 void Footsteps::find_support(const StepInput& input, const StepWorld& world) {
     const auto search = [&](double shift_x, double shift_z) -> std::optional<Pos> {
         const double min_x = input.x - kHalfWidth + shift_x;
@@ -81,6 +84,7 @@ void Footsteps::find_support(const StepInput& input, const StepWorld& world) {
     ground_without_blocks_ = !found.has_value();
 }
 
+// `Entity.getOnPos`: the block a given depth under the feet.
 Footsteps::Pos Footsteps::on_pos(const StepInput& input, const StepWorld& world, float below) const {
     if (has_support_) {
         if (!(below > 1.0e-5f)) return support_;
@@ -134,6 +138,7 @@ std::vector<StepSound> Footsteps::tick(const StepInput& input, const BlockSounds
                                        1.0f, 1.0f});
                 }
             }
+            // `LivingEntity.causeFallDamage`, `LivingEntity.calculateFallDamage`, `LivingEntity.playBlockFallSound`: the fall sounds when it hurts.
             if (hurts && !input.may_fly && distance > 0.0) {
                 const double power = distance + 1.0e-6 - input.safe_fall_distance;
                 const auto damage =
@@ -151,6 +156,7 @@ std::vector<StepSound> Footsteps::tick(const StepInput& input, const BlockSounds
         fall_distance_ = 0.0;
     }
 
+    // `Entity.applyMovementEmissionAndPlaySound`: distance walked, a step past the next whole one.
     const Pos on = on_pos(input, world, 1.0e-5f);
     const std::string on_block = world.block_at(on.x, on.y, on.z);
     const double moved_squared = input.moved_x * input.moved_x + input.moved_y * input.moved_y +
@@ -161,6 +167,7 @@ std::vector<StepSound> Footsteps::tick(const StepInput& input, const BlockSounds
     move_dist_ += climbable(world, on_block) ? total : horizontal;
     if (!(move_dist_ > next_step_) || is_air(on_block)) return sounds;
 
+    // `Entity.vibrationAndSoundEffectsFromBlock`, `Player.playStepSound`, `Entity.walkingStepSound`: one block's step.
     const auto steps_on = [&](const Pos& pos, const std::string& block, bool audible) {
         if (is_air(block)) return false;
         const bool climbing = climbable(world, block);
@@ -181,6 +188,7 @@ std::vector<StepSound> Footsteps::tick(const StepInput& input, const BlockSounds
                 push(sounds, input, cue(table.find(block), BlockSoundKind::Step));
             }
         }
+        // `Entity.playAmethystStepSound`: the chime, louder the more often.
         if (world.in_tag(block, "minecraft:crystal_sound_blocks") && ticks_ >= last_chime_ + 20) {
             chime_intensity_ *= static_cast<float>(std::pow(0.997, ticks_ - last_chime_));
             chime_intensity_ = std::min(1.0f, chime_intensity_ + 0.07f);

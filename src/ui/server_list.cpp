@@ -52,6 +52,7 @@ std::vector<size_t> ServerList::visible() const {
     return out;
 }
 
+// `ServerList.load`, `ServerData.read`: each entry's name, ip, icon, pack status and hidden flag.
 std::optional<ServerList> ServerList::decode(std::span<const uint8_t> bytes) {
     // The file's root is named, where the network form is not; dropping the
     // name turns one into the other.

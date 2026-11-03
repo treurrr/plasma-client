@@ -30,31 +30,39 @@ constexpr EffectInfo kEffects[] = {
     {"infested", false, 9214860},       {"breath_of_the_nautilus", true, 65518},
 };
 
+// `Mth.ceil`: rounds up to an int.
 int ceil_int(float value) {
     const int truncated = static_cast<int>(value);
     return value > static_cast<float>(truncated) ? truncated + 1 : truncated;
 }
 
+// `Mth.ceil`: rounds up to an int.
 int ceil_int(double value) {
     const int truncated = static_cast<int>(value);
     return value > static_cast<double>(truncated) ? truncated + 1 : truncated;
 }
 
+// `Mth.floor`: rounds down to an int.
 int floor_int(float value) {
     const int truncated = static_cast<int>(value);
     return value < static_cast<float>(truncated) ? truncated - 1 : truncated;
 }
 
+// `ARGB.as8BitChannel`: a 0-1 value as a byte.
 int channel(float value) { return floor_int(value * 255.0f); }
 
+// `ARGB.white`: white with the given alpha.
 uint32_t white(float alpha) { return static_cast<uint32_t>(channel(alpha)) << 24 | 0xFFFFFFu; }
 uint32_t white(int alpha) { return static_cast<uint32_t>(alpha) << 24 | 0xFFFFFFu; }
+// `ARGB.black`: black with the given alpha.
 uint32_t black(float alpha) { return static_cast<uint32_t>(channel(alpha)) << 24; }
 
+// `Mth.lerpDiscrete`: a step from one int to another.
 int lerp_discrete(float delta, int from, int to) {
     return from + floor_int(delta * static_cast<float>(to - from - 1)) + (delta > 0.0f ? 1 : 0);
 }
 
+// `Mth.hsvToArgb`: a hue, saturation and value as a colour.
 uint32_t hsv_to_argb(float h, float s, float v, int alpha) {
     const int sector = static_cast<int>(h * 6.0f) % 6;
     const float f = h * 6.0f - static_cast<float>(sector);
@@ -87,6 +95,7 @@ uint32_t background_colour(const Options& options, float opacity) {
     return black(used);
 }
 
+// `ARGB.multiply`: multiplies two colours channel by channel.
 uint32_t argb_multiply(uint32_t a, uint32_t b) {
     if (a == 0xFFFFFFFFu) return b;
     if (b == 0xFFFFFFFFu) return a;
@@ -97,6 +106,7 @@ uint32_t argb_multiply(uint32_t a, uint32_t b) {
     return out;
 }
 
+// `GuiGraphics.drawStringWithBackdrop`: text over the text-background box.
 void draw_with_backdrop(GuiGraphics& gfx, const Options& options, const std::vector<Run>& runs,
                         int x, int y, int width, uint32_t argb) {
     const uint32_t background = background_colour(options, 0.0f);
@@ -108,6 +118,7 @@ void draw_with_backdrop(GuiGraphics& gfx, const Options& options, const std::vec
 
 enum class HeartType { Container, Normal, Poisoned, Withered, Absorbing, Frozen };
 
+// `Gui.HeartType.getSprite`: the heart sprite for a type, hardcore, half and blinking.
 std::string_view heart_sprite(HeartType type, bool hardcore, bool half, bool blinking) {
     static constexpr std::string_view kNames[6][8] = {
         {"hud/heart/container", "hud/heart/container_blinking", "hud/heart/container",
@@ -137,6 +148,7 @@ std::string_view heart_sprite(HeartType type, bool hardcore, bool half, bool bli
     return kNames[static_cast<int>(type)][(hardcore ? 4 : 0) + (half ? 2 : 0) + (blinking ? 1 : 0)];
 }
 
+// `Gui.HeartType.forPlayer`: poisoned, withered, frozen or normal hearts.
 HeartType heart_type_for(const Player& player) {
     if (player.has_effect("poison")) return HeartType::Poisoned;
     if (player.has_effect("wither")) return HeartType::Withered;
@@ -144,10 +156,12 @@ HeartType heart_type_for(const Player& player) {
     return HeartType::Normal;
 }
 
+// `Gui.getCurrentAirSupplyBubble`: how many bubbles the air fills.
 int air_bubble(int air, int max_air, int offset) {
     return ceil_int(static_cast<float>((air + offset) * 10) / static_cast<float>(max_air));
 }
 
+// `MobEffectInstance.compareTo`: the game's order of effects.
 // The game's order of effects: running out soonest last, beacons apart.
 bool effect_before(const Effect& a, const Effect& b) {
     const auto colour = [](const Effect& e) {
@@ -188,6 +202,7 @@ bool Player::has_effect(std::string_view name) const {
     return false;
 }
 
+// `Gui.renderPlayerHealth`, `Gui.renderHearts`: heart rows, row spacing and heart counts.
 HeartLayout heart_layout(float max_health, int health, int display_health, float absorption) {
     HeartLayout layout;
     const float max = std::max(max_health, static_cast<float>(std::max(display_health, health)));
@@ -201,25 +216,30 @@ HeartLayout heart_layout(float max_health, int health, int display_health, float
 
 Gui::Gui() { reset_title_times(); }
 
+// `Gui.resetTitleTimes`: the default title fade in, stay and fade out.
 void Gui::reset_title_times() {
     title_fade_in_ = 10;
     title_stay_ = 70;
     title_fade_out_ = 20;
 }
 
+// `Gui.setOverlayMessage`: the action bar message for three seconds.
 void Gui::set_overlay_message(Component message, bool animate) {
     overlay_ = std::move(message);
     overlay_time_ = 60;
     animate_overlay_ = animate;
 }
 
+// `Gui.setTitle`: shows a title for its full time.
 void Gui::set_title(Component title) {
     title_ = std::move(title);
     title_time_ = title_fade_in_ + title_stay_ + title_fade_out_;
 }
 
+// `Gui.setSubtitle`: sets the subtitle.
 void Gui::set_subtitle(Component subtitle) { subtitle_ = std::move(subtitle); }
 
+// `Gui.setTimes`: new title times, restarting a showing title.
 void Gui::set_times(int fade_in, int stay, int fade_out) {
     if (fade_in >= 0) title_fade_in_ = fade_in;
     if (stay >= 0) title_stay_ = stay;
@@ -227,6 +247,7 @@ void Gui::set_times(int fade_in, int stay, int fade_out) {
     if (title_time_ > 0) title_time_ = title_fade_in_ + title_stay_ + title_fade_out_;
 }
 
+// `Gui.clearTitles`: drops the title and subtitle.
 void Gui::clear_titles() {
     title_.reset();
     subtitle_.reset();
@@ -240,6 +261,7 @@ void Gui::set_tab_list(Component header, Component footer, bool has_header, bool
     if (has_footer) tab_footer_ = std::move(footer);
 }
 
+// `Gui.onDisconnected`: clears the tab list, boss bars, chat and titles.
 void Gui::reset() {
     bosses_.clear();
     tab_header_.reset();
@@ -249,11 +271,13 @@ void Gui::reset() {
     reset_title_times();
 }
 
+// `LerpingBossEvent.getProgress`: boss progress eased over 100 ms.
 float Gui::Boss::current(int64_t millis) const {
     const float t = std::clamp(static_cast<float>(millis - set_time) / 100.0f, 0.0f, 1.0f);
     return progress + t * (target - progress);
 }
 
+// `BossHealthOverlay.update`: adds, removes or updates a boss bar.
 void Gui::boss_event(const BossEvent& event, int64_t millis) {
     auto found = std::find_if(bosses_.begin(), bosses_.end(),
                               [&](const Boss& boss) { return boss.uuid == event.uuid; });
@@ -297,6 +321,7 @@ void Gui::boss_event(const BossEvent& event, int64_t millis) {
     }
 }
 
+// `Gui.tick`: overlay and title timers, and the held item name timer.
 void Gui::tick(const Player& player, const Options& options) {
     if (overlay_time_ > 0) --overlay_time_;
     if (title_time_ > 0) {
@@ -324,6 +349,7 @@ void Gui::tick(const Player& player, const Options& options) {
     last_highlight_ = player.selected_name;
 }
 
+// `Gui.render`: every HUD layer in the game's order.
 void Gui::render(GuiGraphics& gfx, const Player& player, const Options& options,
                  const Frame& frame) {
     options_ = &options;
@@ -359,6 +385,7 @@ void Gui::render_camera_overlays(GuiGraphics& gfx, const Player& player, const O
     }
 }
 
+// `Gui.renderCrosshair`: the crosshair and the attack indicator under it.
 void Gui::render_crosshair(GuiGraphics& gfx, const Player& player, const Options& options) {
     if (!player.first_person) return;
     if (player.spectator() && !player.spectator_crosshair) return;
@@ -377,6 +404,7 @@ void Gui::render_crosshair(GuiGraphics& gfx, const Player& player, const Options
     }
 }
 
+// `Gui.renderHotbarAndDecorations`: hotbar, health, vehicle health, the contextual bar and the held item name.
 void Gui::render_hotbar_and_decorations(GuiGraphics& gfx, const Player& player,
                                         const Options& options, const Frame& frame) {
     if (!player.spectator()) render_item_hotbar(gfx, player, options, frame);
@@ -386,6 +414,7 @@ void Gui::render_hotbar_and_decorations(GuiGraphics& gfx, const Player& player,
     const int left = (gfx.width - 182) / 2;
     const int top = gfx.height - 24 - 5;
     if (player.jumpable_vehicle) {
+        // `JumpableVehicleBarRenderer.renderBackground`, `JumpableVehicleBarRenderer.render`: the jump bar.
         gfx.blit_sprite("hud/jump_bar_background", left, top, 182, 5);
         if (player.jump_cooldown > 0) {
             gfx.blit_sprite("hud/jump_bar_cooldown", left, top, 182, 5);
@@ -396,6 +425,7 @@ void Gui::render_hotbar_and_decorations(GuiGraphics& gfx, const Player& player,
             }
         }
     } else if (player.has_experience()) {
+        // `ExperienceBarRenderer.renderBackground`, `ExperienceBarRenderer.render`: the experience bar.
         const int filled = static_cast<int>(player.experience * 183.0f);
         gfx.blit_sprite("hud/experience_bar_background", left, top, 182, 5);
         if (filled > 0) {
@@ -403,6 +433,7 @@ void Gui::render_hotbar_and_decorations(GuiGraphics& gfx, const Player& player,
         }
     }
     if (player.has_experience() && player.level > 0) {
+        // `ContextualBarRenderer.renderExperienceLevel`: the outlined green level number.
         const auto runs = gfx.runs(translatable("gui.experience.level",
                                                 {literal(std::to_string(player.level))}));
         const int x = (gfx.width - gfx.font.width(runs)) / 2;
@@ -417,6 +448,7 @@ void Gui::render_hotbar_and_decorations(GuiGraphics& gfx, const Player& player,
     (void)options;
 }
 
+// `Gui.renderItemHotbar`: hotbar, selection, offhand slot, items and the hotbar attack indicator.
 void Gui::render_item_hotbar(GuiGraphics& gfx, const Player& player, const Options& options,
                              const Frame& frame) {
     const int centre = gfx.width / 2;
@@ -453,6 +485,7 @@ void Gui::render_item_hotbar(GuiGraphics& gfx, const Player& player, const Optio
     }
 }
 
+// `Gui.renderSlot`: an item, squashed while it pops, with its decorations.
 void Gui::render_slot(GuiGraphics& gfx, int x, int y, const Item& item, float partial) {
     if (item.empty()) return;
     const float pop = static_cast<float>(item.pop_time) - partial;
@@ -479,6 +512,7 @@ void Gui::render_slot(GuiGraphics& gfx, int x, int y, const Item& item, float pa
     if (item.bar_width >= 0) gfx.render_item_bar(x, y, item.bar_width, item.bar_rgb);
 }
 
+// `Gui.renderPlayerHealth`, `Gui.renderArmor`: health blink and lag, armour, hearts, food and air.
 void Gui::render_player_health(GuiGraphics& gfx, const Player& player, int64_t millis) {
     const int health = ceil_int(player.health);
     const bool blink = health_blink_time_ > tick_count_ &&
@@ -533,6 +567,7 @@ void Gui::render_player_health(GuiGraphics& gfx, const Player& player, int64_t m
     render_air(gfx, player, vehicle_hearts, air_y, right);
 }
 
+// `Gui.renderHearts`, `Gui.renderHeart`: containers, absorption, blinking and filled hearts.
 void Gui::render_hearts(GuiGraphics& gfx, const Player& player, int x, int y, int row_height,
                         int regen, float max_health, int health, int display_health,
                         int absorption, bool blink) {
@@ -572,6 +607,7 @@ void Gui::render_hearts(GuiGraphics& gfx, const Player& player, int x, int y, in
     }
 }
 
+// `Gui.renderFood`: the food row, shaking when saturation is gone.
 void Gui::render_food(GuiGraphics& gfx, const Player& player, int y, int right) {
     const bool hunger = player.has_effect("hunger");
     const std::string_view empty = hunger ? "hud/food_empty_hunger" : "hud/food_empty";
@@ -590,6 +626,7 @@ void Gui::render_food(GuiGraphics& gfx, const Player& player, int y, int right) 
     }
 }
 
+// `Gui.renderAirBubbles`: full, bursting and empty air bubbles.
 void Gui::render_air(GuiGraphics& gfx, const Player& player, int vehicle_hearts, int y,
                      int right) {
     const int max_air = player.max_air;
@@ -615,6 +652,7 @@ void Gui::render_air(GuiGraphics& gfx, const Player& player, int vehicle_hearts,
     }
 }
 
+// `Gui.renderVehicleHealth`: the mount's hearts in rows of ten.
 void Gui::render_vehicle_health(GuiGraphics& gfx, const Player& player) {
     if (!player.vehicle_hearts) return;
     int hearts = std::min(static_cast<int>(player.vehicle_max_health + 0.5f) / 2, 30);
@@ -635,6 +673,7 @@ void Gui::render_vehicle_health(GuiGraphics& gfx, const Player& player) {
     }
 }
 
+// `Gui.renderSelectedItemName`: the held item's name, fading out.
 void Gui::render_selected_item_name(GuiGraphics& gfx, const Player& player) {
     if (tool_highlight_timer_ <= 0 || last_highlight_id_ <= 0) return;
     const auto runs = gfx.runs(last_highlight_);
@@ -648,6 +687,7 @@ void Gui::render_selected_item_name(GuiGraphics& gfx, const Player& player) {
     if (alpha > 0) draw_with_backdrop(gfx, *options_, runs, x, y, width, white(alpha));
 }
 
+// `Gui.renderEffects`: effect icons, beneficial and harmful rows, blinking near the end.
 void Gui::render_effects(GuiGraphics& gfx, const Player& player, const Frame& frame) {
     if (player.effects.empty() || frame.screen_shows_effects) return;
     std::vector<Effect> sorted = player.effects;
@@ -687,6 +727,7 @@ void Gui::render_effects(GuiGraphics& gfx, const Player& player, const Frame& fr
     }
 }
 
+// `BossHealthOverlay.render`, `BossHealthOverlay.drawBar`: boss bars with notches and names.
 void Gui::render_bosses(GuiGraphics& gfx, int64_t millis) {
     static constexpr std::string_view kColours[] = {"pink", "blue", "red", "green",
                                                     "yellow", "purple", "white"};
@@ -714,6 +755,7 @@ void Gui::render_bosses(GuiGraphics& gfx, int64_t millis) {
     }
 }
 
+// `Gui.renderSleepOverlay`: the fade to dark while sleeping.
 void Gui::render_sleep(GuiGraphics& gfx, const Player& player) {
     if (player.sleep_timer <= 0) return;
     const float timer = static_cast<float>(player.sleep_timer);
@@ -724,6 +766,7 @@ void Gui::render_sleep(GuiGraphics& gfx, const Player& player) {
     gfx.fill(0, 0, gfx.width, gfx.height, colour);
 }
 
+// `PlayerTeam.formatNameForTeam`: a name with the team's prefix, suffix and colour.
 Component team_name(const Scoreboard::Team* team, Component name) {
     if (team == nullptr) return name;
     Component out = literal("");
@@ -770,6 +813,7 @@ Component format_score(const Scoreboard::Score* score, const Scoreboard::Objecti
     return literal(std::to_string(value), style);
 }
 
+// `Gui.renderScoreboardSidebar`, `Gui.displayScoreboardSidebar`: the sidebar objective, team slot first.
 void Gui::render_sidebar(GuiGraphics& gfx, const Options& options, const Frame& frame) {
     if (frame.scoreboard == nullptr) return;
     const Scoreboard& board = *frame.scoreboard;
@@ -845,6 +889,7 @@ void Gui::render_sidebar(GuiGraphics& gfx, const Options& options, const Frame& 
     }
 }
 
+// `Gui.renderOverlayMessage`: the action bar message, fading and maybe rainbow.
 void Gui::render_overlay_message(GuiGraphics& gfx, const Frame& frame) {
     if (!overlay_ || overlay_time_ <= 0) return;
     const float time = static_cast<float>(overlay_time_) - frame.partial;
@@ -860,6 +905,7 @@ void Gui::render_overlay_message(GuiGraphics& gfx, const Frame& frame) {
     gfx.pop_pose();
 }
 
+// `Gui.renderTitle`: title and subtitle with their fades.
 void Gui::render_title(GuiGraphics& gfx, const Frame& frame) {
     if (!title_ || title_time_ <= 0) return;
     const float time = static_cast<float>(title_time_) - frame.partial;

@@ -1,0 +1,24 @@
+# What Plasma deliberately never ports. Key: Class, Class.method, or a package path ending in /.
+client/telemetry/	skip		telemetry: usage reports sent to Mojang
+client/gui/screens/telemetry/	skip		telemetry: the screen that explains the reports
+client/gui/narration/	skip		narration: text-to-speech of screens; Plasma has no narrator
+GameNarrator	skip		narration: text-to-speech of screens; Plasma has no narrator
+NarratorStatus	skip		narration: text-to-speech of screens; Plasma has no narrator
+client/gui/screens/reporting/	skip		player reporting through Mojang's abuse service
+client/multiplayer/chat/report/	skip		player reporting through Mojang's abuse service
+ClientboundCustomReportDetailsPacket	skip		crash report details for the crash screen
+client/server/	skip		singleplayer: the integrated server and LAN hosting
+ShareToLanScreen	skip		singleplayer: LAN hosting
+client/gui/screens/worldselection/	skip		singleplayer: world creation and selection
+DemoIntroScreen	skip		demo mode: the trial version
+client/quickplay/	skip		launcher quick play arguments; Plasma has its own command line
+client/main/	skip		launcher entry point and arguments; Plasma has its own command line
+client/data/	skip		data generators Mojang runs at build time, not the game
+client/profiling/	skip		profiler for Mojang's own measurements
+client/renderer/debug/	skip		developer debug renderers fed by server debug subscriptions
+client/gui/components/debugchart/	skip		profiler charts of the debug screen
+mojang/blaze3d/opengl/	skip		OpenGL backend; Plasma renders with Vulkan
+world/entity/ai/	skip		server: mob AI runs on the server; the client sees only its result
+world/entity/schedule/	skip		server: villager schedules
+world/entity/raid/	skip		server: raids
+world/item/crafting/	skip		server: recipe matching; the client only shows the recipe displays it is sent

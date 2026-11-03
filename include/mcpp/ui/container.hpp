@@ -51,8 +51,11 @@ public:
     std::vector<std::pair<int16_t, ItemStack>> changed_since(const std::vector<ItemStack>& before) const;
 
     static bool same_item(const ItemStack& a, const ItemStack& b);
+    // `AbstractContainerMenu.getQuickcraftType`: the drag type in a quick craft button.
     static int quick_craft_type(int mask) { return (mask >> 2) & 3; }
+    // `AbstractContainerMenu.getQuickcraftHeader`: the drag stage in a quick craft button.
     static int quick_craft_header(int mask) { return mask & 3; }
+    // `AbstractContainerMenu.getQuickcraftMask`: packs a drag stage and type into a button.
     static int quick_craft_mask(int header, int type) { return (header & 3) | ((type & 3) << 2); }
     static int quick_craft_place_count(size_t slots, int type, const ItemStack& carried,
                                        int max_stack);

@@ -22,27 +22,41 @@ namespace mcpp::world {
 // sky and fog colours are worked out with it and a rounding of our own would
 // leave the sky one step off.
 namespace argb {
+// `ARGB.alpha`: the top byte.
 inline uint32_t alpha(uint32_t c) { return c >> 24; }
+// `ARGB.red`: the red byte.
 inline uint32_t red(uint32_t c) { return (c >> 16) & 0xFFu; }
+// `ARGB.green`: the green byte.
 inline uint32_t green(uint32_t c) { return (c >> 8) & 0xFFu; }
+// `ARGB.blue`: the low byte.
 inline uint32_t blue(uint32_t c) { return c & 0xFFu; }
+// `ARGB.color`: four channels packed, each cut to a byte.
 inline uint32_t pack(int32_t a, int32_t r, int32_t g, int32_t b) {
     return (static_cast<uint32_t>(a & 0xFF) << 24) | (static_cast<uint32_t>(r & 0xFF) << 16) |
            (static_cast<uint32_t>(g & 0xFF) << 8) | static_cast<uint32_t>(b & 0xFF);
 }
+// `Mth.floor`: rounds a float down to an int.
 inline int32_t floor_to_int(float value) {
     const auto truncated = static_cast<int32_t>(value);
     return value < static_cast<float>(truncated) ? truncated - 1 : truncated;
 }
+// `ARGB.as8BitChannel`: a 0 to 1 channel as a byte, rounded down.
 inline int32_t as_8bit(float value) { return floor_to_int(value * 255.0f); }
+// `ARGB.colorFromFloat`: four float channels packed.
 inline uint32_t from_floats(float a, float r, float g, float b) {
     return pack(as_8bit(a), as_8bit(r), as_8bit(g), as_8bit(b));
 }
+// `ARGB.redFloat`: the red byte over 255.
 inline float red_float(uint32_t c) { return static_cast<float>(red(c)) / 255.0f; }
+// `ARGB.greenFloat`: the green byte over 255.
 inline float green_float(uint32_t c) { return static_cast<float>(green(c)) / 255.0f; }
+// `ARGB.blueFloat`: the blue byte over 255.
 inline float blue_float(uint32_t c) { return static_cast<float>(blue(c)) / 255.0f; }
+// `ARGB.alphaFloat`: the alpha byte over 255.
 inline float alpha_float(uint32_t c) { return static_cast<float>(alpha(c)) / 255.0f; }
+// `ARGB.opaque`: alpha forced to full.
 inline uint32_t opaque(uint32_t c) { return c | 0xFF000000u; }
+// `Mth.lerpInt`: an int lerp, the step rounded down.
 inline int32_t lerp_int(float t, int32_t from, int32_t to) {
     return from + floor_to_int(t * static_cast<float>(to - from));
 }
@@ -314,6 +328,7 @@ std::optional<uint32_t> parse_colour(const nbt::Value& value, bool with_alpha);
 
 int32_t moon_phase_index(std::string_view name);
 
+// `GaussianSampler.sample`, `SpatialAttributeInterpolator.accumulate`: biome weights over a 6x6x6 kernel.
 template <typename BiomeAt>
 std::vector<BiomeWeight> gaussian_biomes(double x, double y, double z, BiomeAt&& biome_at) {
     static constexpr double kKernel[7] = {0.0, 1.0, 4.0, 6.0, 4.0, 1.0, 0.0};

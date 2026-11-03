@@ -12,6 +12,7 @@ struct FluidState {
     uint8_t amount = 0;     // 1 to 8; 8 for a source and for a falling column
     bool source = false;
     bool falling = false;
+    // `FluidState.getOwnHeight`, `FlowingFluid.getOwnHeight`: the amount over nine.
     // FluidState.getOwnHeight: how far up its block the surface sits.
     float own_height() const { return static_cast<float>(amount) / 9.0f; }
 };

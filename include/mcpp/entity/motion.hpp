@@ -91,6 +91,7 @@ struct Living {
     void snap_to(double nx, double ny, double nz, float yaw, float pitch);
     void lerp_head_to(float yaw, int32_t ticks);
     void swing(bool off_hand);
+    // `LivingEntity.animateHurt`: the red flash.
     void hurt() { hurt_time = 10; }
     void damaged();
 

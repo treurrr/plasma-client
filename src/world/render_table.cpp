@@ -52,9 +52,11 @@ bool RenderTable::open(const std::filesystem::path& path) {
     return !states_.empty();
 }
 
+// `BlockBehaviour.Properties.offsetType`, `BlockBehaviour.BlockStateBase.getOffset`: a plant's random offset.
 void block_offset(const RenderInfo& info, int32_t x, int32_t z, float out[3]) {
     out[0] = out[1] = out[2] = 0.0f;
     if (info.offset == OffsetKind::None) return;
+    // `Mth.getSeed`: the column's hash.
     // Mth.getSeed with y = 0; the first product wraps as a 32-bit int.
     const auto wrapped = static_cast<int32_t>(static_cast<uint32_t>(x) * 3129871u);
     int64_t seed = static_cast<int64_t>(wrapped) ^ (static_cast<int64_t>(z) * 116129781LL) ^ 0;

@@ -93,6 +93,7 @@ void Scene::moved(const EntityMove& move) {
     Tracked* tracked = find(move.id);
     if (tracked == nullptr) return;
     Living& l = tracked->living;
+    // `ClientPacketListener.handleEntityPositionSync`: a far jump snaps, the rest eases.
     if (move.absolute && move.has_position) {
         const double dx = l.x - move.x;
         const double dy = l.y - move.y;
@@ -109,6 +110,7 @@ void Scene::moved(const EntityMove& move) {
               move.has_rotation ? &move.pitch : nullptr);
 }
 
+// `ClientPacketListener.handleRotateMob`: the head eases over three ticks.
 void Scene::head(int32_t id, float yaw) {
     if (Tracked* tracked = find(id)) tracked->living.lerp_head_to(yaw, 3);
 }
@@ -130,6 +132,7 @@ void Scene::clear() {
     index_.clear();
 }
 
+// `ClientPacketListener.handleAnimate`: main or off hand swing.
 void Scene::animate(int32_t id, uint8_t action) {
     Tracked* tracked = find(id);
     if (tracked == nullptr) return;
@@ -137,10 +140,12 @@ void Scene::animate(int32_t id, uint8_t action) {
     if (action == kSwingOffHand) tracked->living.swing(true);
 }
 
+// `ClientPacketListener.handleHurtAnimation`: the hurt flash.
 void Scene::hurt(int32_t id) {
     if (Tracked* tracked = find(id)) tracked->living.hurt();
 }
 
+// `ClientPacketListener.handleDamageEvent`: the damage reaction.
 void Scene::damaged(int32_t id) {
     if (Tracked* tracked = find(id)) tracked->living.damaged();
 }
@@ -262,12 +267,14 @@ void Scene::draw_player(gpu::EntityRenderer& renderer, Tracked& tracked, const V
     Matrix root = translation(static_cast<float>(x - view.eye[0]),
                               static_cast<float>(y - view.eye[1]),
                               static_cast<float>(z - view.eye[2]));
+    // `LivingEntityRenderer.setupRotations`: face the body's yaw, tip over in death.
     root = multiply(root, rotation_y((180.0f - body) * kRadians));
     const float death = l.death_time > 0 ? static_cast<float>(l.death_time) + p : 0.0f;
     if (death > 0.0f) {
         const float fall = std::min(1.0f, std::sqrt((death - 1.0f) / 20.0f * 1.6f));
         root = multiply(root, rotation_z(fall * 90.0f * kRadians));
     }
+    // `LivingEntityRenderer.submit`, `AvatarRenderer.scale`: flip, scale, lift.
     root = multiply(root, scaling(-1.0f, -1.0f, 1.0f));
     root = multiply(root, scaling(0.9375f, 0.9375f, 0.9375f));
     root = multiply(root, translation(0.0f, -1.501f, 0.0f));

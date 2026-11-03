@@ -11,11 +11,13 @@ namespace {
 
 constexpr float kRadians = 0.017453292f;
 
+// `Mth.floor`: rounds a double down to an int.
 int32_t floor_i(double v) {
     const auto i = static_cast<int32_t>(v);
     return v < static_cast<double>(i) ? i - 1 : i;
 }
 
+// `AttributeInstance.calculateValue`: an attribute's value from its modifiers.
 // An attribute's value as the game computes it, leaving out one modifier.
 double value_without(const mcpp::Attribute& a, std::string_view skip) {
     double sum = a.base;
@@ -32,6 +34,7 @@ double value_without(const mcpp::Attribute& a, std::string_view skip) {
     return result;
 }
 
+// `Direction.getApproximateNearest`: the face a vector points at most.
 int direction_of(float x, float y, float z) {
     static constexpr int kNormals[6][3] = {{0, -1, 0}, {0, 1, 0}, {0, 0, -1},
                                            {0, 0, 1},  {-1, 0, 0}, {1, 0, 0}};
@@ -51,6 +54,7 @@ int direction_of(float x, float y, float z) {
 
 int opposite(int face) { return face ^ 1; }
 
+// `AABB.clip`, `AABB.getDirection`, `AABB.clipPoint`: where a segment enters a set of boxes.
 // The nearest face of any of the boxes a segment enters, as the game's box
 // clip finds it; t is the fraction of the segment, updated when closer.
 bool clip_boxes(std::span<const mcpp::world::Aabb> boxes, const double from[3], const double to[3],
@@ -85,6 +89,7 @@ bool clip_boxes(std::span<const mcpp::world::Aabb> boxes, const double from[3], 
     return found;
 }
 
+// `VoxelShape.clip`: a segment against one block's shape.
 // One block's outline, clipped the way the game clips it: a start inside
 // the shape hits at once, on the face against the ray.
 bool clip_shape(std::span<const mcpp::world::Aabb> boxes, const double from[3], const double to[3],
@@ -183,6 +188,7 @@ void player_tags(const mcpp::Session& session, const mcpp::world::BlockShapes& s
     mark("minecraft:walls", BlockTags::kWalls);
 }
 
+// `PositionMoveRotation.calculateAbsolute`, `ClientPacketListener.setValuesFromPositionPacket`: a teleport, relative parts kept.
 void apply_teleport(mcpp::world::Body& body, const mcpp::SessionEvents::Player::Teleport& t) {
     const uint32_t r = t.relative;
     const auto pick = [r](uint32_t bit, double was) { return (r & bit) != 0 ? was : 0.0; };
@@ -241,6 +247,7 @@ double mouse_scale(double sensitivity) {
     return d * d * d * 8.0;
 }
 
+// `Entity.turn`: the mouse turns the view.
 void turn(mcpp::world::Body& body, double dx, double dy) {
     const float pitch_change = static_cast<float>(dy) * 0.15f;
     const float yaw_change = static_cast<float>(dx) * 0.15f;
@@ -249,12 +256,14 @@ void turn(mcpp::world::Body& body, double dx, double dy) {
     body.pitch = std::clamp(body.pitch, -90.0f, 90.0f);
 }
 
+// `Entity.getEyePosition`: the eye between two ticks.
 void eye_position(const mcpp::world::Body& body, double partial, double out[3]) {
     out[0] = body.xo + partial * (body.x - body.xo);
     out[1] = body.yo + partial * (body.y - body.yo) + static_cast<double>(body.eye_height());
     out[2] = body.zo + partial * (body.z - body.zo);
 }
 
+// `Entity.calculateViewVector`: the look direction from pitch and yaw.
 void view_vector(float pitch, float yaw, double out[3]) {
     const float p = pitch * kRadians;
     const float y = -yaw * kRadians;
@@ -267,6 +276,7 @@ void view_vector(float pitch, float yaw, double out[3]) {
     out[2] = cy * cp;
 }
 
+// `BlockGetter.clip`, `BlockGetter.traverseBlocks`, `BlockGetter.clipWithInteractionOverride`: the block a ray hits first.
 Hit pick_block(const mcpp::world::BlockShapes& shapes, const mcpp::world::BlockAt& at,
                const double from[3], const double to[3]) {
     Hit hit;
@@ -326,6 +336,7 @@ Hit pick_block(const mcpp::world::BlockShapes& shapes, const mcpp::world::BlockA
     return hit;
 }
 
+// `BlockBehaviour.getDestroyProgress`, `Player.getDestroySpeed`: how far one tick breaks a block.
 float destroy_progress(float hardness, bool needs_tool, const DigContext& dig) {
     if (hardness == -1.0f) return 0.0f;
     float speed = dig.tool_speed;

@@ -79,6 +79,7 @@ int ContainerMenu::slot_of_inventory(int index) const {
     return -1;
 }
 
+// `AbstractContainerMenu.getQuickCraftPlaceCount`: how many items a drag puts in each slot.
 int ContainerMenu::quick_craft_place_count(size_t count, int type, const ItemStack& carried,
                                            int max_stack) {
     switch (type) {
@@ -90,6 +91,7 @@ int ContainerMenu::quick_craft_place_count(size_t count, int type, const ItemSta
     }
 }
 
+// `AbstractContainerMenu.canItemQuickReplace`: whether a slot can take the stack in a drag.
 bool ContainerMenu::can_quick_replace(int slot, const ItemStack& stack, bool stack_on_top) const {
     const bool free = slot < 0 || empty(slots[static_cast<size_t>(slot)]);
     if (!free && same_item(stack, slots[static_cast<size_t>(slot)])) {
@@ -99,13 +101,16 @@ bool ContainerMenu::can_quick_replace(int slot, const ItemStack& stack, bool sta
     return free;
 }
 
+// `AbstractContainerMenu.resetQuickCraft`: ends a drag.
 void ContainerMenu::reset_quick_craft() {
     quick_craft_status_ = 0;
     quick_craft_slots_.clear();
 }
 
+// `AbstractContainerMenu.clicked`: runs a click on the menu.
 void ContainerMenu::clicked(int slot, int button, ClickType type) { do_click(slot, button, type); }
 
+// `Slot.safeInsert`: puts up to a count of the stack into a slot.
 ItemStack ContainerMenu::safe_insert(size_t slot, ItemStack stack, int increment) {
     if (empty(stack) || !may_place(slot, stack)) return stack;
     ItemStack& here = slots[slot];
@@ -121,10 +126,12 @@ ItemStack ContainerMenu::safe_insert(size_t slot, ItemStack stack, int increment
     return stack;
 }
 
+// `Slot.safeTake`: takes up to a count out of a slot.
 ItemStack ContainerMenu::safe_take(size_t slot, int count, int decrement) {
     return split(slots[slot], std::min(count, decrement));
 }
 
+// `AbstractContainerMenu.doClick`: drags, pickups, swaps, clones, throws and double-click collects.
 void ContainerMenu::do_click(int slot, int button, ClickType type) {
     const auto at = [&](int index) -> ItemStack& { return slots[static_cast<size_t>(index)]; };
     if (type == ClickType::QuickCraft) {
@@ -307,6 +314,7 @@ void ContainerMenu::do_click(int slot, int button, ClickType type) {
     }
 }
 
+// `AbstractContainerMenu.moveItemStackTo`: merges into matching stacks, then the first free slot.
 bool ContainerMenu::move_item_stack_to(ItemStack& stack, int from, int to, bool backwards) {
     bool moved = false;
     int i = backwards ? to - 1 : from;
@@ -344,6 +352,7 @@ bool ContainerMenu::move_item_stack_to(ItemStack& stack, int from, int to, bool 
     return moved;
 }
 
+// `InventoryMenu.quickMoveStack`: shift-click routing between inventory sections.
 ItemStack ContainerMenu::quick_move_stack(int slot) {
     ItemStack& here = slots[static_cast<size_t>(slot)];
     if (empty(here)) return ItemStack{};

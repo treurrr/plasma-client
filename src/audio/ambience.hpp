@@ -26,6 +26,7 @@ struct Music {
     static Music credits() { return {"music.credits", 0, 0, true}; }
     static Music end_boss() { return {"music.dragon", 0, 0, true}; }
     static Music end() { return {"music.end", 6000, 24000, true}; }
+    // `Musics.createGameMusic`: game music, ten to twenty minutes apart.
     static Music game(std::string event = "music.game") { return {std::move(event), 12000, 24000, false}; }
 };
 

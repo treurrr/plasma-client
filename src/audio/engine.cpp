@@ -10,6 +10,7 @@
 
 namespace mcpp::audio {
 
+// `SimpleSoundInstance.forUI`: a sound on the listener, not attenuated.
 PlayRequest PlayRequest::ui(std::string_view event, float pitch, float volume) {
     PlayRequest request;
     request.event = std::string(event);
@@ -21,12 +22,14 @@ PlayRequest PlayRequest::ui(std::string_view event, float pitch, float volume) {
     return request;
 }
 
+// `SimpleSoundInstance.forMusic`: a song on the listener.
 PlayRequest PlayRequest::music(std::string_view event) {
     PlayRequest request = ui(event, 1.0f, 1.0f);
     request.category = Category::Music;
     return request;
 }
 
+// `SimpleSoundInstance.forLocalAmbience`: an ambient sound on the listener.
 PlayRequest PlayRequest::ambience(std::string_view event, float pitch, float volume) {
     PlayRequest request = ui(event, pitch, volume);
     request.category = Category::Ambient;
@@ -82,6 +85,7 @@ uint64_t SoundEngine::play(const PlayRequest& request, jmath::LegacyRandom& rand
     return start(request, random);
 }
 
+// `SoundEngine.play`: pick, volume, pitch, range, the silent check and a voice from its pool.
 uint64_t SoundEngine::start(const PlayRequest& request, jmath::LegacyRandom& random) {
     Active voice;
     voice.request = request;
@@ -97,6 +101,7 @@ uint64_t SoundEngine::start(const PlayRequest& request, jmath::LegacyRandom& ran
     voice.pitch = clamp_pitch(request.pitch * sound->pitch);
     voice.range = audible_range(voice.volume, sound->attenuation_distance);
 
+    // `SoundEngine.calculateVolume`: the clamped volume times the category's.
     const float gain = clamp_volume(voice.volume) * category_volume(request.category);
     if (gain == 0.0f && !request.start_silent && request.category != Category::Music) {
         log("silent", 0, voice, gains_of(voice));
@@ -254,6 +259,7 @@ void SoundEngine::update(const EntityPosition& entity_position) {
     pump();
 }
 
+// `SoundEngine.stop`: everything matching a category and an event.
 void SoundEngine::stop(std::optional<Category> category, std::string_view event) {
     const auto name = bare_name(event);
     if (!category && name.empty()) delayed_.clear();
@@ -275,6 +281,7 @@ float SoundEngine::category_volume(Category category) const {
     return std::clamp(volumes.gain(category), 0.0f, 1.0f) * category_gain_[static_cast<size_t>(category)];
 }
 
+// `SoundEngine.updateCategoryVolume`: a category's extra gain, 0 to 1.
 void SoundEngine::set_category_gain(Category category, float gain) {
     category_gain_[static_cast<size_t>(category)] = std::clamp(gain, 0.0f, 1.0f);
 }

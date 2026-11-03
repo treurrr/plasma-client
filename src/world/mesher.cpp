@@ -175,6 +175,7 @@ struct LiquidVertex {
     float x, y, z, u, v;
 };
 
+// `LiquidBlockRenderer.tesselate`: one liquid block's faces.
 // LiquidBlockRenderer, step for step: corner heights averaged over the
 // neighbours, the still or flowing texture turned along the flow, sides cut
 // at each corner's height, and the light of the block or the one above,
@@ -198,6 +199,7 @@ void mesh_liquid(int32_t state, const FluidTextures& textures, StateAt&& state_a
         return !up || height == 1.0f;
     };
     const bool self_full = render.at(state).has(RenderInfo::kSolidRender);
+    // `LiquidBlockRenderer.shouldRenderFace`: not hidden by the block itself and not the same fluid.
     const auto should_render = [&](int dx, int dy, int dz) { return !self_full && !same(dx, dy, dz); };
 
     const bool up = !same(0, 1, 0);
@@ -208,10 +210,12 @@ void mesh_liquid(int32_t state, const FluidTextures& textures, StateAt&& state_a
     const bool east = should_render(1, 0, 0);
     if (!up && !down && !north && !south && !west && !east) return;
 
+    // `LiquidBlockRenderer.getHeight`: a neighbour's surface, 1 under the same fluid, -1 for a solid block.
     const auto height = [&](int dx, int dz) -> float {
         if (same(dx, 0, dz)) return same(dx, 1, dz) ? 1.0f : fluid_at(dx, 0, dz).own_height();
         return info_at(dx, 0, dz).has(RenderInfo::kCollisionFull) ? -1.0f : 0.0f;
     };
+    // `LiquidBlockRenderer.addWeightedHeight`: high surfaces count ten times.
     const auto weighted = [](float sum[2], float h) {
         if (h >= 0.8f) {
             sum[0] += h * 10.0f;
@@ -221,6 +225,7 @@ void mesh_liquid(int32_t state, const FluidTextures& textures, StateAt&& state_a
             sum[1] += 1.0f;
         }
     };
+    // `LiquidBlockRenderer.calculateAverageHeight`: one corner from its three neighbours and the diagonal.
     const auto average = [&](float own, float a, float b, int dx, int dz) {
         if (b >= 1.0f || a >= 1.0f) return 1.0f;
         float sum[2] = {0.0f, 0.0f};
@@ -249,6 +254,7 @@ void mesh_liquid(int32_t state, const FluidTextures& textures, StateAt&& state_a
 
     const uint8_t here = light_at(0, 0, 0);
     const uint8_t above = light_at(0, 1, 0);
+    // `LiquidBlockRenderer.getLightColor`: the brighter of each light, here and above.
     const auto brighter = [](uint8_t a, uint8_t b) {
         return static_cast<uint8_t>(std::max(a & 0x0F, b & 0x0F) | std::max(a & 0xF0, b & 0xF0));
     };
@@ -262,6 +268,7 @@ void mesh_liquid(int32_t state, const FluidTextures& textures, StateAt&& state_a
         sw -= 0.001f;
         se -= 0.001f;
         ne -= 0.001f;
+        // `FlowingFluid.getFlow`: the flow vector.
         // FlowingFluid.getFlow: the push towards lower neighbours.
         double fx = 0.0;
         double fz = 0.0;
@@ -307,6 +314,7 @@ void mesh_liquid(int32_t state, const FluidTextures& textures, StateAt&& state_a
             top_texture = flowing;
             emit(top, flowing, 1, light, !lava);
         }
+        // `FluidState.shouldRenderBackwardUpFace`: an open or foreign cell around the one above.
         bool backward = false;
         for (int dx = -1; dx <= 1 && !backward; ++dx) {
             for (int dz = -1; dz <= 1; ++dz) {

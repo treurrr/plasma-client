@@ -36,6 +36,7 @@ void ByteBuffer::write_i64(int64_t v) {
 void ByteBuffer::write_f32(float v) { write_i32(static_cast<int32_t>(std::bit_cast<uint32_t>(v))); }
 void ByteBuffer::write_f64(double v) { write_i64(static_cast<int64_t>(std::bit_cast<uint64_t>(v))); }
 
+// `VarInt.write`: seven bits a byte, low first, top bit for more.
 void ByteBuffer::write_varint(int32_t v) {
     auto u = static_cast<uint32_t>(v);
     while (true) {
@@ -48,6 +49,7 @@ void ByteBuffer::write_varint(int32_t v) {
     }
 }
 
+// `VarLong.write`: seven bits a byte, low first, top bit for more.
 void ByteBuffer::write_varlong(int64_t v) {
     auto u = static_cast<uint64_t>(v);
     while (true) {
@@ -100,6 +102,7 @@ int64_t ByteBuffer::read_i64() {
 float ByteBuffer::read_f32() { return std::bit_cast<float>(static_cast<uint32_t>(read_i32())); }
 double ByteBuffer::read_f64() { return std::bit_cast<double>(static_cast<uint64_t>(read_i64())); }
 
+// `VarInt.read`: at most five bytes.
 int32_t ByteBuffer::read_varint() {
     uint32_t result = 0;
     for (int shift = 0; shift < 35; shift += 7) {
@@ -110,6 +113,7 @@ int32_t ByteBuffer::read_varint() {
     throw ProtocolError("varint longer than 5 bytes");
 }
 
+// `VarLong.read`: at most ten bytes.
 int64_t ByteBuffer::read_varlong() {
     uint64_t result = 0;
     for (int shift = 0; shift < 70; shift += 7) {
@@ -139,6 +143,7 @@ std::vector<uint8_t> ByteBuffer::read_bytes(size_t n) {
     return out;
 }
 
+// `VarInt.getByteSize`: the bytes a varint takes.
 size_t ByteBuffer::varint_size(int32_t v) {
     auto u = static_cast<uint32_t>(v);
     size_t n = 1;

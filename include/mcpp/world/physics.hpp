@@ -154,6 +154,7 @@ struct Body {
     float height() const;
     float eye_height() const;
     float eye_height(Pose p) const;
+    // `Entity.isInLava`: in lava, never on the first tick.
     bool in_lava() const { return !first_tick && lava_height > 0.0; }
     // The speed the body moves at now, with sprinting in it.
     static double speed(const Stats& stats, bool sprinting);

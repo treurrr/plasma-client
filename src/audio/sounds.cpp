@@ -97,6 +97,7 @@ int32_t SoundIndex::total_weight(std::string_view event) const {
     return total_weight(find(event), 0);
 }
 
+// `WeighedSoundEvents.getWeight`: the entries' weights summed.
 int32_t SoundIndex::total_weight(const SoundEventDefinition* definition, int depth) const {
     if (definition == nullptr || depth > kMaxDepth) return 0;
     int32_t total = 0;
@@ -116,6 +117,7 @@ std::optional<ResolvedSound> SoundIndex::pick(std::string_view event,
     return sound;
 }
 
+// `WeighedSoundEvents.getSound`: one weighted draw, an event reference multiplying in its volume and pitch.
 std::optional<ResolvedSound> SoundIndex::pick(const SoundEventDefinition* definition,
                                               jmath::LegacyRandom& random, int depth) const {
     const int32_t total = total_weight(definition, depth);

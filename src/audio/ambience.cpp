@@ -8,6 +8,7 @@
 namespace mcpp::audio {
 namespace {
 
+// `Mth.nextInt`: an int from low to high inclusive.
 int32_t next_int(jmath::LegacyRandom& random, int32_t low, int32_t high) {
     return low >= high ? low : random.next_int(high - low + 1) + low;
 }
@@ -25,11 +26,13 @@ int32_t block_floor(double value) { return static_cast<int32_t>(std::floor(value
 
 } // namespace
 
+// `BackgroundMusic.select`: underwater, else creative, else the default.
 std::optional<Music> BackgroundMusic::select(bool creative_mode, bool under_water) const {
     if (under_water && underwater) return underwater;
     return creative_mode && creative ? creative : default_music;
 }
 
+// `Minecraft.getSituationalMusic`: the screen's, the menu's, the dragon's or the place's music.
 std::optional<Music> situational_music(const MusicSituation& situation) {
     if (situation.screen) return situation.screen;
     if (!situation.in_world) return Music::menu();
@@ -40,6 +43,7 @@ std::optional<Music> situational_music(const MusicSituation& situation) {
 MusicManager::MusicManager()
     : random_(std::chrono::steady_clock::now().time_since_epoch().count()) {}
 
+// `MusicManager.MusicFrequency.getNextSongDelay`: the wait before the next song.
 int32_t MusicManager::next_delay(const std::optional<Music>& music) {
     const int32_t most = max_delay(frequency_);
     if (!music) return most;
@@ -47,11 +51,13 @@ int32_t MusicManager::next_delay(const std::optional<Music>& music) {
     return next_int(random_, std::min(music->min_delay, most), std::min(music->max_delay, most));
 }
 
+// `MusicManager.setMinutesBetweenSongs`: a new frequency and a fresh delay.
 void MusicManager::set_frequency(MusicFrequency frequency, const std::optional<Music>& music) {
     frequency_ = frequency;
     delay_ = next_delay(music);
 }
 
+// `MusicManager.tick`, `MusicManager.canReplace`: fade, replace, wait, then start.
 void MusicManager::tick(SoundEngine& engine, const std::optional<Music>& music, float music_volume) {
     if (voice_ != 0 && gain_ != music_volume && !fade(engine, music_volume)) return;
     if (!music) {
@@ -73,6 +79,7 @@ void MusicManager::tick(SoundEngine& engine, const std::optional<Music>& music, 
     if (voice_ == 0 && delay_-- <= 0) start(engine, *music);
 }
 
+// `MusicManager.startPlaying`: the song, and the toast when it is heard.
 void MusicManager::start(SoundEngine& engine, const Music& music) {
     const bool audible = engine.category_volume(Category::Music) > 0.0f;
     voice_ = engine.play(PlayRequest::music(music.event));
@@ -84,6 +91,7 @@ void MusicManager::start(SoundEngine& engine, const Music& music) {
     delay_ = std::numeric_limits<int32_t>::max();
 }
 
+// `MusicManager.stopPlaying`: the song stopped, a little more delay.
 void MusicManager::stop(SoundEngine& engine) {
     if (voice_ != 0) {
         engine.stop_voice(voice_);
@@ -94,6 +102,7 @@ void MusicManager::stop(SoundEngine& engine) {
     delay_ += 100;
 }
 
+// `MusicManager.fadePlaying`: the music gain eased towards the attribute.
 bool MusicManager::fade(SoundEngine& engine, float target) {
     if (voice_ == 0) return false;
     if (gain_ == target) return true;
@@ -124,6 +133,7 @@ void Ambience::reset(SoundEngine& engine) {
 
 void Ambience::tick(SoundEngine& engine, const AmbientSounds& sounds, const AmbientPlayer& player,
                     const LightAt& sky_light, const LightAt& block_light, jmath::LegacyRandom& level_random) {
+    // `LocalPlayer.updateIsUnderwater`, `UnderwaterAmbientSoundInstances.UnderwaterAmbientSoundInstance.tick`, `UnderwaterAmbientSoundInstances.SubSound.tick`: the water's sounds.
     // Entering and leaving the water, and its loop fading with the time spent in it.
     if (!was_under_water_ && player.under_water) {
         PlayRequest enter;
@@ -169,6 +179,7 @@ void Ambience::tick(SoundEngine& engine, const AmbientSounds& sounds, const Ambi
         return true;
     });
 
+    // `UnderwaterAmbientSoundHandler.tick`: the rare additions under water.
     // The underwater handler.
     --underwater_delay_;
     if (underwater_delay_ <= 0 && player.under_water) {
@@ -185,6 +196,7 @@ void Ambience::tick(SoundEngine& engine, const AmbientSounds& sounds, const Ambi
         }
     }
 
+    // `BubbleColumnAmbientSoundHandler.tick`: the sound of entering a column.
     // The bubble column handler.
     if (player.bubble_column) {
         if (!was_in_column_ && !first_tick_ && !player.spectator) {
@@ -204,6 +216,7 @@ void Ambience::tick(SoundEngine& engine, const AmbientSounds& sounds, const Ambi
     }
     first_tick_ = false;
 
+    // `BiomeAmbientSoundsHandler.tick`, `BiomeAmbientSoundsHandler.LoopSoundInstance.tick`, `BiomeAmbientSoundsHandler.LoopSoundInstance.fadeOut`, `BiomeAmbientSoundsHandler.LoopSoundInstance.fadeIn`: loop, additions and mood.
     // The biome handler: the loop cross-fades over two seconds.
     std::erase_if(loops_, [&](Fading& loop) {
         if (loop.fade < 0 || !engine.playing(loop.voice)) {
