@@ -130,6 +130,8 @@ private:
     int display_ = 0;
     int frame_ = 0;
     GuiGraphics* last_gfx_ = nullptr;
+    double focused_at_ = 0.0;
+    bool was_focused_ = false;
 };
 
 class Checkbox : public Widget {

@@ -196,6 +196,17 @@ public:
     void apply_pending();
     void resize(int gui_width, int gui_height);
 
+    // Raw input, in gui units, handed to the current screen the way the
+    // game's mouse and keyboard handlers do; false when no screen took it.
+    bool button(int button, bool pressed, int mods, double gx, double gy, double now_seconds);
+    void move(double gx, double gy);
+    bool scroll(double gx, double gy, double dx, double dy);
+    bool key(int key, int scancode, int action, int mods);
+    bool character(uint32_t code, int mods);
+    void tick();
+    double mouse_x = 0.0;
+    double mouse_y = 0.0;
+
     int gui_width = 320;
     int gui_height = 240;
     bool in_world = false;
@@ -213,6 +224,10 @@ public:
     World* world = nullptr;
 
 private:
+    int active_button_ = -1;
+    double last_click_ = -1.0;
+    int last_click_button_ = -1;
+    const Screen* last_click_screen_ = nullptr;
     std::shared_ptr<Screen> current_;
     std::shared_ptr<Screen> pending_;
     bool has_pending_ = false;

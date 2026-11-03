@@ -216,6 +216,83 @@ void ScreenManager::resize(int w, int h) {
     if (current_) current_->open(*this, w, h);
 }
 
+bool ScreenManager::button(int which, bool pressed, int mods, double gx, double gy,
+                           double now_seconds) {
+    mouse_x = gx;
+    mouse_y = gy;
+    if (pressed) {
+        active_button_ = which;
+    } else if (active_button_ >= 0) {
+        active_button_ = -1;
+    }
+    Screen* screen = current_.get();
+    if (screen == nullptr) return false;
+    (void)mods;
+    bool taken = false;
+    if (pressed) {
+        screen->double_click = last_click_ >= 0.0 && now_seconds - last_click_ < 0.25 &&
+                               last_click_screen_ == screen && last_click_button_ == which;
+        if (screen->mouse_clicked(gx, gy, which)) {
+            last_click_ = now_seconds;
+            last_click_screen_ = screen;
+            last_click_button_ = which;
+        }
+        taken = true;
+    } else {
+        screen->mouse_released(gx, gy, which);
+        taken = true;
+    }
+    apply_pending();
+    return taken;
+}
+
+void ScreenManager::move(double gx, double gy) {
+    const double dx = gx - mouse_x;
+    const double dy = gy - mouse_y;
+    mouse_x = gx;
+    mouse_y = gy;
+    Screen* screen = current_.get();
+    if (screen == nullptr) return;
+    screen->mouse_moved(gx, gy);
+    if (active_button_ >= 0) screen->mouse_dragged(gx, gy, active_button_, dx, dy);
+    apply_pending();
+}
+
+bool ScreenManager::scroll(double gx, double gy, double dx, double dy) {
+    Screen* screen = current_.get();
+    if (screen == nullptr) return false;
+    screen->mouse_scrolled(gx, gy, dx, dy);
+    apply_pending();
+    return true;
+}
+
+bool ScreenManager::key(int which, int scancode, int action, int mods) {
+    Screen* screen = current_.get();
+    if (screen == nullptr) return false;
+    KeyEvent event{which, scancode, mods, action == 2};
+    bool taken = false;
+    if (action == 0) {
+        taken = screen->key_released(event);
+    } else {
+        taken = screen->key_pressed(event);
+    }
+    apply_pending();
+    return taken;
+}
+
+bool ScreenManager::character(uint32_t code, int mods) {
+    Screen* screen = current_.get();
+    if (screen == nullptr) return false;
+    const bool taken = screen->char_typed(code, mods);
+    apply_pending();
+    return taken;
+}
+
+void ScreenManager::tick() {
+    if (current_) current_->tick();
+    apply_pending();
+}
+
 int gui_scale(int framebuffer_width, int framebuffer_height, int option, bool force_unicode) {
     int scale = 1;
     while (scale != option && scale < framebuffer_width && scale < framebuffer_height &&

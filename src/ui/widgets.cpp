@@ -429,6 +429,8 @@ void EditBox::tick() { ++frame_; }
 
 void EditBox::render(GuiGraphics& gfx, double, double) {
     last_gfx_ = &gfx;
+    if (focused && !was_focused_) focused_at_ = gfx.seconds;
+    was_focused_ = focused;
     if (bordered) {
         gfx.blit_sprite(focused ? "widget/text_field_highlighted" : "widget/text_field", x, y, w, h);
     }
@@ -456,33 +458,51 @@ void EditBox::render(GuiGraphics& gfx, double, double) {
         return runs;
     };
 
-    const int caret = std::clamp(cursor_ - display_, 0, static_cast<int>(shown.size()));
-    const bool blink_on = focused && static_cast<int>(std::floor(gfx.seconds / 0.3)) % 2 == 0;
-    int end_x = text_x;
+    const int caret = cursor_ - display_;
+    const bool caret_shown = caret >= 0 && caret <= static_cast<int>(shown.size());
+    const bool blink_on =
+        focused && caret_shown && static_cast<int64_t>((gfx.seconds - focused_at_) / 0.3) % 2 == 0;
+    int pen = text_x;
+    const int highlight =
+        std::clamp(selection_ - display_, 0, static_cast<int>(shown.size()));
     if (!shown.empty()) {
-        end_x = gfx.draw_string(literal_runs(shown), text_x, text_y, colour, true);
+        const std::string head =
+            caret_shown ? shown.substr(0, static_cast<size_t>(caret)) : shown;
+        pen = gfx.draw_string(literal_runs(head), pen, text_y, colour, true) - 1;
+        pen += 1;
     }
-    const int caret_x = text_x + gfx.width_of(literal_runs(shown.substr(0, static_cast<size_t>(caret))));
-    const bool at_end = cursor_ >= static_cast<int>(text_.size());
-    if (text_.empty() && !focused && !plain(hint).empty()) {
-        gfx.draw_string(hint, text_x, text_y, 0xFF808080u, true);
+    const bool caret_bar =
+        cursor_ < static_cast<int>(text_.size()) || text_.size() >= max_length;
+    int caret_x = pen;
+    if (!caret_shown) {
+        caret_x = caret > 0 ? text_x + w : text_x;
+    } else if (caret_bar) {
+        --caret_x;
+        --pen;
     }
-    if (!suggestion.empty() && at_end) {
-        gfx.draw_string(literal_runs(suggestion), end_x - 1, text_y, 0xFF808080u, true);
+    if (!shown.empty() && caret_shown && caret < static_cast<int>(shown.size())) {
+        gfx.draw_string(literal_runs(shown.substr(static_cast<size_t>(caret))), pen, text_y,
+                        colour, true);
+    }
+    if (!plain(hint).empty() && shown.empty() && !focused) {
+        gfx.draw_string(hint, pen, text_y, colour, true);
+    }
+    if (!caret_bar && !suggestion.empty()) {
+        gfx.draw_string(literal_runs(suggestion), caret_x - 1, text_y, 0xFF808080u, true);
+    }
+    if (highlight != caret) {
+        const int other = text_x + gfx.width_of(literal_runs(shown.substr(0, static_cast<size_t>(highlight))));
+        int x0 = std::min(caret_x, x + w);
+        int x1 = std::min(other - 1, x + w);
+        if (x0 > x1) std::swap(x0, x1);
+        gfx.fill(x0, text_y - 1, x1, text_y + 1 + 9, 0x800000FFu);
     }
     if (blink_on) {
-        if (at_end && text_.size() < max_length) {
-            gfx.draw_string(literal_runs("_"), caret_x, text_y, colour, true);
+        if (caret_bar) {
+            gfx.fill(caret_x, text_y - 1, caret_x + 1, text_y + 1 + 9, colour);
         } else {
-            gfx.fill(caret_x, text_y - 1, caret_x + 1, text_y + 1 + 9, 0xFFD0D0D0u);
+            gfx.draw_string(literal_runs("_"), caret_x, text_y, colour, true);
         }
-    }
-    if (selection_ != cursor_) {
-        const int sel = std::clamp(selection_ - display_, 0, static_cast<int>(shown.size()));
-        const int sel_x =
-            text_x + gfx.width_of(literal_runs(shown.substr(0, static_cast<size_t>(sel))));
-        gfx.fill(std::min(caret_x, sel_x), text_y - 1, std::max(caret_x, sel_x) - 1, text_y + 1 + 9,
-                 0x800000FFu);
     }
 }
 
