@@ -640,6 +640,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
     float pitch = placed ? -spawn_pitch : -8.0f;
     float physics_accumulator = 0.0f;
     float fov = 70.0f;
+    bool inventory_open = false;
 
     // Meshing runs here, never in the frame. The frame only ever does the copy.
     struct Batch {
@@ -729,13 +730,19 @@ int do_play(const std::string& target, size_t chunk_limit) {
     while (window.open() && !g_stop.load()) {
         const auto input = window.poll();
         if (input.quit) {
-            if (!menu_open) break;
-            menu_open = false;
-            window.capture_cursor(true);
+            if (inventory_open) {
+                inventory_open = false;
+                window.capture_cursor(!menu_open);
+            } else if (menu_open) {
+                menu_open = false;
+                window.capture_cursor(true);
+            } else {
+                break;
+            }
         }
         if (input.toggle_menu) {
             menu_open = !menu_open;
-            window.capture_cursor(!menu_open);
+            window.capture_cursor(!menu_open && !inventory_open);
         }
         if (input.toggle_fly) flying = !flying;
         if (input.start_typing && !menu_open) window.begin_typing();
@@ -886,7 +893,12 @@ int do_play(const std::string& target, size_t chunk_limit) {
             }
         }
 
-        if (!window.typing()) {
+        if (input.toggle_inventory && !window.typing()) {
+            inventory_open = !inventory_open;
+            window.capture_cursor(!inventory_open && !menu_open);
+        }
+
+        if (!window.typing() && !inventory_open) {
             if (input.pick_slot >= 0) {
                 session.send_held_slot(input.pick_slot);
             } else if (input.wheel != 0) {
@@ -959,6 +971,15 @@ int do_play(const std::string& target, size_t chunk_limit) {
             state.experience = vitals.experience;
             state.level = vitals.level;
             state.in_world = true;
+            state.inventory_open = inventory_open;
+            state.pointer_x = input.cursor_x;
+            state.pointer_y = input.cursor_y;
+            for (size_t i = 0; i < mcpp::Inventory::kSlots; ++i) {
+                state.slots[i] = inventory.slots[i].id;
+                state.slot_counts[i] = inventory.slots[i].count;
+            }
+            state.cursor_item = inventory.carried.id;
+            state.cursor_count = inventory.carried.count;
             state.armour = 0;
             for (size_t i = 0; i < mcpp::Inventory::kArmourSlots; ++i) {
                 const auto& piece = inventory.slots[mcpp::Inventory::kArmourFirst + i];
@@ -2000,6 +2021,23 @@ int do_ping(const std::string& target) {
 
 int main(int argc, char** argv) {
     const std::string command = argc > 1 ? argv[1] : "";
+
+    // --vanilla and --plasma pick which client the player sees, and override
+    // whatever the config last saved. Everything under the surface is shared.
+    std::vector<char*> arguments(argv, argv + argc);
+    for (auto it = arguments.begin(); it != arguments.end();) {
+        const std::string_view argument(*it);
+        if (argument == "--vanilla" || argument == "--plasma") {
+            mcpp::features::Registry::instance().set_profile(
+                argument == "--vanilla" ? mcpp::features::Profile::Vanilla
+                                        : mcpp::features::Profile::Plasma);
+            it = arguments.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    argv = arguments.data();
+    argc = static_cast<int>(arguments.size());
 
     try {
         if (command == "features") {

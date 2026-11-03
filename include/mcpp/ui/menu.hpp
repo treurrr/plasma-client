@@ -63,6 +63,14 @@ struct HudState {
     float experience = 0.0f;
     int32_t level = 0;
     bool in_world = false;
+    // All 46 slots and the stack on the cursor, for when the inventory is open.
+    bool inventory_open = false;
+    std::array<int32_t, 46> slots{};
+    std::array<int32_t, 46> slot_counts{};
+    int32_t cursor_item = 0;
+    int32_t cursor_count = 0;
+    float pointer_x = 0.0f;
+    float pointer_y = 0.0f;
 };
 
 void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,

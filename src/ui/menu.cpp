@@ -308,13 +308,13 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
         stack += 44.0f;
     };
 
-    if (registry.enabled(features::Id::FpsCounter)) {
+    if (registry.shows(features::Id::FpsCounter)) {
         readout(std::format("{}", state.fps), "FPS");
     }
-    if (registry.enabled(features::Id::PingDisplay)) {
+    if (registry.shows(features::Id::PingDisplay)) {
         readout(state.ping_ms > 0 ? std::format("{}", state.ping_ms) : "--", "MS");
     }
-    if (registry.enabled(features::Id::CpsCounter)) {
+    if (registry.shows(features::Id::CpsCounter)) {
         readout(std::format("{} | {}", state.cps_left, state.cps_right), "CPS");
     }
 
@@ -324,7 +324,7 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
     // our design space: a sprite drawn at a fraction of a pixel is a blurred
     // sprite, and these are eight pixel tall pictures.
     {
-        const bool plasma = registry.enabled(features::Id::PlasmaHotbar) || !quads.has_sprites();
+        const bool plasma = registry.shows(features::Id::PlasmaHotbar) || !quads.has_sprites();
         // The game picks the largest whole scale that still leaves 320 by 240
         // of room, up to four.
         float gui = 1.0f;
@@ -456,7 +456,66 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
                        name_y, gui, 0xFFFFFFFFu);
         }
 
-        if (!plasma) {
+        // The inventory screen, out of the game's own 176 by 166 window. The
+        // slot grid is the game's too: nine across, the three main rows at 84,
+        // the hotbar row at 142, armour down the left and the off hand beside
+        // it, all counted from the window's own corner.
+        if (state.inventory_open) {
+            constexpr float kWindowW = 176.0f;
+            constexpr float kWindowH = 166.0f;
+            const float window_x = std::round((width - kWindowW * gui) * 0.5f);
+            const float window_y = std::round((height - kWindowH * gui) * 0.5f);
+            quads.panel(0.0f, 0.0f, width, height, 0.0f, 0x000000A0u);
+            quads.sprite_part("container/inventory", window_x, window_y, kWindowW * gui,
+                              kWindowH * gui, kWindowW / 256.0f, kWindowH / 256.0f);
+
+            const auto slot_at = [](size_t index, float& sx, float& sy) {
+                if (index >= 36) {            // the hotbar row
+                    sx = 8.0f + static_cast<float>(index - 36) * 18.0f;
+                    sy = 142.0f;
+                } else if (index >= 9) {      // the three main rows
+                    sx = 8.0f + static_cast<float>((index - 9) % 9) * 18.0f;
+                    sy = 84.0f + static_cast<float>((index - 9) / 9) * 18.0f;
+                } else if (index >= 5) {      // helmet down to boots
+                    sx = 8.0f;
+                    sy = 8.0f + static_cast<float>(index - 5) * 18.0f;
+                } else if (index == 0) {      // the crafting result
+                    sx = 154.0f;
+                    sy = 28.0f;
+                } else {                      // the two by two crafting grid
+                    sx = 98.0f + static_cast<float>((index - 1) % 2) * 18.0f;
+                    sy = 18.0f + static_cast<float>((index - 1) / 2) * 18.0f;
+                }
+            };
+
+            for (size_t i = 0; i < state.slots.size(); ++i) {
+                if (state.slots[i] <= 0) continue;
+                float sx = 0.0f;
+                float sy = 0.0f;
+                if (i == 45) {
+                    // The off hand sits apart from the armour column.
+                    sx = 77.0f;
+                    sy = 62.0f;
+                } else {
+                    slot_at(i, sx, sy);
+                }
+                const float x = window_x + sx * gui;
+                const float y = window_y + sy * gui;
+                quads.icon(state.slots[i], x, y, 16.0f * gui);
+                if (state.slot_counts[i] > 1) {
+                    const std::string label = std::format("{}", state.slot_counts[i]);
+                    quads.text(label, x + 19.0f * gui - quads.text_width(label, gui),
+                               y + 9.0f * gui, gui, 0xFFFFFFFFu);
+                }
+            }
+            // Whatever is on the cursor follows the pointer rather than a slot.
+            if (state.cursor_item > 0) {
+                quads.icon(state.cursor_item, state.pointer_x - 8.0f * gui,
+                           state.pointer_y - 8.0f * gui, 16.0f * gui);
+            }
+        }
+
+        if (!plasma && !state.inventory_open) {
             const auto [cross_w, cross_h] = quads.sprite_size("hud/crosshair");
             quads.sprite("hud/crosshair", std::round((width - cross_w * gui) * 0.5f),
                          std::round((height - cross_h * gui) * 0.5f), cross_w * gui,
@@ -465,7 +524,9 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
     }
 
     // The frame cost, which is the claim this client is making, said in the
-    // two halves that actually make it up.
+    // two halves that actually make it up. The vanilla profile shows none of
+    // this: it is still measured, it just stays off the screen.
+    if (registry.profile() == features::Profile::Plasma) {
     paint.rect(24.0f, stack, 152.0f, 28.0f, 9.0f, kGlass, kGlassEdge, 1.0f);
     paint.middle(std::format("{:.2f}", state.gpu_ms), 38.0f, stack + 14.0f, 11.0f, kDim,
                  Style::Mono);
@@ -475,15 +536,16 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
     paint.right(std::format("{:.2f}", state.cpu_ms),
                 164.0f - paint.measure("cpu ", 9.0f, Style::Mono), stack + 14.0f, 11.0f, kDim,
                 Style::Mono);
+    }
 
-    if (registry.enabled(features::Id::Coordinates)) {
+    if (registry.shows(features::Id::Coordinates)) {
         const std::string line = std::format("{:.1f}  {:.1f}  {:.1f}", state.x, state.y, state.z);
         const float w = paint.measure(line, 13.0f, Style::Mono) + 30.0f;
         paint.rect(kDesignWidth - 24.0f - w, 24.0f, w, 34.0f, 10.0f, kGlass, kGlassEdge, 1.0f);
         paint.middle(line, kDesignWidth - 24.0f - w + 15.0f, 41.0f, 13.0f, kText, Style::Mono);
     }
 
-    if (registry.enabled(features::Id::Keystrokes)) {
+    if (registry.shows(features::Id::Keystrokes)) {
         const float base_x = 28.0f;
         const float base_y = kDesignHeight - 142.0f;
         const auto cap = [&](std::string_view name, float x, float y, float w, float h,

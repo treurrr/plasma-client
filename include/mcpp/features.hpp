@@ -50,9 +50,27 @@ struct Feature {
 // off, so the channel is part of the product rather than an extra.
 constexpr std::string_view kPluginChannel = "plasma:features";
 
+// Who the client is pretending to be. Vanilla draws nothing of its own, so a
+// player who only wants a faster game gets the game they already know; Plasma
+// turns on the overlay and the styling. Everything else - the renderer, the
+// physics, the protocol - is the same either way.
+enum class Profile : uint8_t { Vanilla, Plasma };
+
 class Registry {
 public:
     static Registry& instance();
+
+    Profile profile() const { return profile_; }
+    // `from_config` loses to a profile the player named on the command line,
+    // so a flag is not quietly undone by whatever was last saved.
+    void set_profile(Profile profile, bool from_config = false) {
+        if (from_config && profile_chosen_) return;
+        profile_ = profile;
+        if (!from_config) profile_chosen_ = true;
+    }
+    // A hud feature only draws in the Plasma profile; the vanilla one keeps
+    // the game's own screen clear whatever is switched on underneath.
+    bool shows(Id id) const { return profile_ == Profile::Plasma && enabled(id); }
 
     std::span<const Feature> all() const;
 
@@ -75,6 +93,7 @@ public:
 
     static const Feature* find(std::string_view key);
 
+
     void load(const std::filesystem::path& path);
     void save(const std::filesystem::path& path) const;
     static std::filesystem::path default_config_path();
@@ -85,6 +104,8 @@ private:
     bool enabled_[static_cast<size_t>(Id::Count)] = {};
     bool locked_[static_cast<size_t>(Id::Count)] = {};
     std::string lock_reason_[static_cast<size_t>(Id::Count)];
+    Profile profile_ = Profile::Plasma;
+    bool profile_chosen_ = false;
 };
 
 std::string_view category_name(Category category);

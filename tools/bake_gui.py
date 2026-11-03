@@ -21,7 +21,10 @@ from PIL import Image
 MAGIC = b"PLGU"
 VERSION = 2
 PREFIX = "assets/minecraft/textures/gui/sprites/"
-SIDE = 1024
+# The container backgrounds are not sprites: they are whole 256x256 sheets the
+# game blits a window out of, so they come in under their own names.
+CONTAINERS = "assets/minecraft/textures/gui/container/"
+SIDE = 2048
 PAD = 1
 
 
@@ -96,6 +99,10 @@ def main(args):
     with zipfile.ZipFile(jar_path) as jar:
         glyphs = read_font(jar)
         for name in sorted(jar.namelist()):
+            if name.startswith(CONTAINERS) and name.endswith(".png"):
+                image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")
+                sprites.append(("container/" + name[len(CONTAINERS):-len(".png")], image))
+                continue
             if not name.startswith(PREFIX) or not name.endswith(".png"):
                 continue
             image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")

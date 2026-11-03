@@ -310,6 +310,10 @@ FrameInput Window::poll() {
         slot_key_down_[i] = pressed;
     }
 
+    const bool inventory_now = down(GLFW_KEY_E);
+    input.toggle_inventory = inventory_now && !inventory_key_down_;
+    inventory_key_down_ = inventory_now;
+
     const bool menu_now = down(GLFW_KEY_M);
     input.toggle_menu = menu_now && !menu_key_down_;
     menu_key_down_ = menu_now;

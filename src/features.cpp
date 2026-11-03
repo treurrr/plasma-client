@@ -113,6 +113,10 @@ void Registry::load(const std::filesystem::path& path) {
         if (eq == std::string::npos) continue;
         const std::string_view key(line.data(), eq);
         const std::string_view value(line.data() + eq + 1, line.size() - eq - 1);
+        if (key == "profile") {
+            set_profile(value == "vanilla" ? Profile::Vanilla : Profile::Plasma, true);
+            continue;
+        }
         for (size_t i = 0; i < kFeatures.size(); ++i) {
             if (kFeatures[i].key == key) {
                 enabled_[i] = (value == "1" || value == "true" || value == "on");
@@ -129,6 +133,7 @@ void Registry::save(const std::filesystem::path& path) const {
     if (!file) return;
 
     file << "# Plasma Client\n";
+    file << "profile=" << (profile_ == Profile::Vanilla ? "vanilla" : "plasma") << '\n';
     for (size_t i = 0; i < kFeatures.size(); ++i) {
         file << kFeatures[i].key << '=' << (enabled_[i] ? 1 : 0) << '\n';
     }
