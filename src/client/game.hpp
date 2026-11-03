@@ -138,7 +138,10 @@ struct ScreensArea {
     std::chrono::steady_clock::time_point opened = std::chrono::steady_clock::now();
 };
 
+struct SoundRuntime;
 struct SoundArea {
+    // The engine and everything that plays through it, in src/client/sound.cpp.
+    std::shared_ptr<SoundRuntime> runtime;
 };
 
 struct Game {

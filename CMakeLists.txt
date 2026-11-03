@@ -179,6 +179,8 @@ mcpp_test(assets)
 mcpp_test(ui)
 mcpp_test(jmath)
 mcpp_test(data)
+mcpp_test(sound)
+add_subdirectory(src/audio)
 
 # The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it
 # with the game's own code. One line per probe.
@@ -190,3 +192,5 @@ endfunction()
 
 mcpp_probe(jmath_probe)
 mcpp_probe(codec_probe)
+mcpp_probe(sound_probe)
+target_link_libraries(sound_probe PRIVATE mcpp_audio)

@@ -66,6 +66,7 @@ def main(args):
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu",
         Path(report).parent / "registries.json", Path(report).parent / "items.json")
     ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")
+    ask_the_game("gen_block_sounds.py", out / f"block_sounds-{protocol}.txt")
     # The registries the client has built in, in id order: what an attribute,
     # an effect or an entity type number means.
     registries = json.loads((Path(report).parent / "registries.json").read_text())
