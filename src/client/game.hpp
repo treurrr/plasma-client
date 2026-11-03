@@ -5,7 +5,9 @@
 // and code to its own file; play.cpp and the other areas stay as they are.
 #include "client/common.hpp"
 
+#include "mcpp/entity/scene.hpp"
 #include "mcpp/gpu/device.hpp"
+#include "mcpp/gpu/entity_renderer.hpp"
 #include "mcpp/gpu/outline.hpp"
 #include "mcpp/gpu/sky.hpp"
 #include "mcpp/gpu/text.hpp"
@@ -109,6 +111,11 @@ struct WorldArea {
 };
 
 struct EntitiesArea {
+    mcpp::entity::Assets assets;
+    std::optional<mcpp::skins::Cache> skins;
+    std::optional<mcpp::entity::Scene> scene;
+    std::optional<mcpp::gpu::EntityRenderer> renderer;
+    mcpp::entity::TickClock clock;
 };
 
 struct PlayerArea {

@@ -1,4 +1,5 @@
 #include "client/common.hpp"
+#include "client/entityshot.hpp"
 #include "client/inspect.hpp"
 #include "client/screenshot.hpp"
 #include "client/hud_shot.hpp"
@@ -1732,6 +1733,9 @@ int main(int argc, char** argv) {
     argc = static_cast<int>(arguments.size());
 
     try {
+        if (const int entities = client::entity_command(argc, argv); entities >= 0) {
+            return entities;
+        }
         if (command == "features") {
             print_features();
             return 0;

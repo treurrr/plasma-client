@@ -72,6 +72,10 @@ mcpp_shader(outline.vert OutlineVert)
 mcpp_shader(outline.frag OutlineFrag)
 mcpp_shader(ui.vert UiVert)
 mcpp_shader(ui.frag UiFrag)
+mcpp_shader(entity.vert EntityVert)
+mcpp_shader(entity.frag EntityFrag)
+mcpp_shader(entity_flat.vert EntityFlatVert)
+mcpp_shader(entity_flat.frag EntityFlatFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
 if(glfw3_FOUND)
@@ -140,6 +144,13 @@ add_library(mcpp_net STATIC
     src/proto/metadata.cpp
     src/proto/metadata_gen.cpp
     src/proto/commands.cpp
+    src/entity/model.cpp
+    src/entity/assets.cpp
+    src/entity/motion.cpp
+    src/entity/humanoid.cpp
+    src/entity/scene.cpp
+    src/skins.cpp
+    src/gpu/entity_renderer.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)
@@ -166,7 +177,7 @@ if(glfw3_FOUND)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
     src/client/common.cpp src/client/screenshot.cpp src/client/hud_shot.cpp
-    src/client/clicktest.cpp src/client/inspect.cpp ${MCPP_PLAY_SOURCES})
+    src/client/clicktest.cpp src/client/inspect.cpp src/client/entityshot.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
@@ -192,6 +203,7 @@ mcpp_test(jmath)
 mcpp_test(data)
 mcpp_test(world)
 mcpp_test(hud)
+mcpp_test(entities)
 mcpp_test(sound)
 add_subdirectory(src/audio)
 
@@ -206,5 +218,6 @@ endfunction()
 mcpp_probe(jmath_probe)
 mcpp_probe(codec_probe)
 mcpp_probe(timeline_probe)
+mcpp_probe(model_probe)
 mcpp_probe(sound_probe)
 target_link_libraries(sound_probe PRIVATE mcpp_audio)

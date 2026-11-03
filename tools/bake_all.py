@@ -69,6 +69,11 @@ def main(args):
     ask_the_game("bake_block_render.py", out / f"block-render-{protocol}.txt")
     ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")
     ask_the_game("gen_block_sounds.py", out / f"block_sounds-{protocol}.txt")
+    models = out / f"entity_models-{protocol}.txt"
+    if ask_the_game("export/export_models.py", models):
+        run("bake_entities.py", jar, models, out / f"entities-{protocol}.plen")
+    else:
+        print("-- bake_entities.py skipped: it needs the model layers")
     # The registries the client has built in, in id order: what an attribute,
     # an effect or an entity type number means.
     registries = json.loads((Path(report).parent / "registries.json").read_text())

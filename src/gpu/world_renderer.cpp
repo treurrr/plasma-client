@@ -1348,7 +1348,24 @@ void WorldRenderer::upload_merged(const world::Mesh& mesh) {
 // Two passes over the same buffers: everything solid first, then whatever has
 // to be blended, drawn from the back forwards so the water in front does not
 // erase the water behind it.
-void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push) {
+// Entities go between the solid terrain and the translucent, as the game
+// orders them; their renderer binds its own pipeline, so the terrain's state
+// is bound again after.
+void WorldRenderer::draw_in_world(VkCommandBuffer command, const PushConstants& push,
+                                  const Camera& camera) {
+    if (!in_world_) return;
+    in_world_(command, push.view_projection.m, width_, height_, atmosphere_.fog_colour, camera);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+    const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
+                            &descriptor_set_, 2, dynamic_offsets);
+    const VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
+    vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
+}
+
+void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
+                                  const Camera& camera) {
     const auto send = [&](const float origin[3]) {
         push.origin[0] = origin[0];
         push.origin[1] = origin[1];
@@ -1367,6 +1384,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push) 
         if (opaque_index_count_ > 0) {
             vkCmdDrawIndexed(command, opaque_index_count_, 1, 0, 0, 0);
         }
+        draw_in_world(command, push, camera);
         if (index_count_ > opaque_index_count_) {
             vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
             push.eye[3] = kTranslucentCutout;
@@ -1392,6 +1410,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push) 
         ++drawn_sections_;
         drawn_triangles_ += section.opaque_count / 3;
     }
+    draw_in_world(command, push, camera);
 
     bool any_blended = false;
     for (const auto* section : visible_) {
@@ -1526,10 +1545,14 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
 
-        draw_geometry(command, push);
+        draw_geometry(command, push, camera);
         if (outline_ != nullptr && outlined_present_) {
             outline_->record(command, push.view_projection.m, outlined_);
         }
+    } else if (in_world_) {
+        const Mat4 matrix =
+            view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));
+        in_world_(command, matrix.m, width_, height_, atmosphere_.fog_colour, camera);
     }
     if (sky_ != nullptr) sky_->record_clouds(command, camera, width_, height_, atmosphere_);
     vkCmdEndRendering(command);

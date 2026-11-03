@@ -4,6 +4,7 @@
 #include "mcpp/nbt.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 
 namespace mcpp {
@@ -41,6 +42,25 @@ float read_angle(ByteBuffer& in) {
 }
 
 } // namespace
+
+std::string uuid_string(const uint64_t uuid[2]) {
+    std::string out;
+    size_t digits = 0;
+    for (int half = 0; half < 2; ++half) {
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            if (digits == 8 || digits == 12 || digits == 16 || digits == 20) out += '-';
+            out += "0123456789abcdef"[(uuid[half] >> shift) & 0xF];
+            ++digits;
+        }
+    }
+    return out;
+}
+
+void Session::send_input_state(uint8_t keys) {
+    ByteBuffer out;
+    out.write_u8(keys);
+    send(ids_->play_sb.player_input, out);
+}
 
 const std::map<int32_t, MobEffect>& Session::effects(int32_t entity) const {
     static const std::map<int32_t, MobEffect> none;
@@ -81,6 +101,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         entity.head_yaw = read_angle(in);
         entity.data = in.read_varint();
         const auto& stored = entities_.entities[entity.id] = entity;
+        entities_.move_bases[entity.id] = {entity.x, entity.y, entity.z};
         if (events_.entities.on_add) events_.entities.on_add(stored);
         return true;
     }
@@ -97,21 +118,24 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         entity.yaw = in.read_f32();
         entity.pitch = in.read_f32();
         entity.on_ground = in.read_bool();
+        entities_.move_bases[id] = {entity.x, entity.y, entity.z};
         if (events_.entities.on_move) events_.entities.on_move(entity);
+        if (events_.entities.on_moved) {
+            events_.entities.on_moved({id, entity.x, entity.y, entity.z, entity.yaw, entity.pitch,
+                                       true, true, true});
+        }
         return true;
     }
     if (packet.id == cb.move_entity_pos || packet.id == cb.move_entity_pos_rot ||
         packet.id == cb.move_entity_rot) {
-        // Positions move in 1/4096 of a block relative to where it last was;
-        // angles are absolute, yaw first. Every one ends on the ground flag.
+        // Positions move in 1/4096 of a block from the last position sent,
+        // rounded to that grid first; angles are absolute, yaw first. Every
+        // one ends on the ground flag.
         const int32_t id = in.read_varint();
-        double dx = 0.0;
-        double dy = 0.0;
-        double dz = 0.0;
-        if (packet.id != cb.move_entity_rot) {
-            dx = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
-            dy = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
-            dz = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+        int64_t delta[3] = {0, 0, 0};
+        const bool moved = packet.id != cb.move_entity_rot;
+        if (moved) {
+            for (int64_t& d : delta) d = static_cast<int16_t>(in.read_u16());
         }
         float yaw = 0.0f;
         float pitch = 0.0f;
@@ -124,15 +148,156 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         const auto found = entities_.entities.find(id);
         if (found != entities_.entities.end()) {
             Entity& entity = found->second;
-            entity.x += dx;
-            entity.y += dy;
-            entity.z += dz;
+            auto& base = entities_.move_bases[id];
+            if (moved) {
+                for (int axis = 0; axis < 3; ++axis) {
+                    if (delta[axis] == 0) continue;
+                    const auto encoded = static_cast<int64_t>(std::floor(base[axis] * 4096.0 + 0.5));
+                    base[axis] = static_cast<double>(encoded + delta[axis]) / 4096.0;
+                }
+                entity.x = base[0];
+                entity.y = base[1];
+                entity.z = base[2];
+            }
             if (turned) {
                 entity.yaw = yaw;
                 entity.pitch = pitch;
             }
             entity.on_ground = on_ground;
             if (events_.entities.on_move) events_.entities.on_move(entity);
+            if (events_.entities.on_moved) {
+                events_.entities.on_moved({id, base[0], base[1], base[2], yaw, pitch, moved,
+                                           turned, false});
+            }
+        }
+        return true;
+    }
+    if (packet.id == cb.teleport_entity) {
+        // Absolute unless a bit of the last int says that one field is an
+        // offset: x, y, z, yaw, pitch, then the three velocities.
+        const int32_t id = in.read_varint();
+        double values[6];
+        for (double& value : values) value = in.read_f64();
+        const float yaw = in.read_f32();
+        const float pitch = in.read_f32();
+        const auto relative = static_cast<uint32_t>(in.read_i32());
+        const bool on_ground = in.read_bool();
+        const auto found = entities_.entities.find(id);
+        if (found != entities_.entities.end()) {
+            Entity& entity = found->second;
+            double* fields[6] = {&entity.x, &entity.y, &entity.z, &entity.vx, &entity.vy,
+                                 &entity.vz};
+            const int bits[6] = {0, 1, 2, 5, 6, 7};
+            for (int i = 0; i < 6; ++i) {
+                *fields[i] = (relative & (1u << bits[i])) != 0 ? *fields[i] + values[i] : values[i];
+            }
+            entity.yaw = (relative & (1u << 3)) != 0 ? entity.yaw + yaw : yaw;
+            entity.pitch = (relative & (1u << 4)) != 0 ? entity.pitch + pitch : pitch;
+            entity.on_ground = on_ground;
+            if (events_.entities.on_move) events_.entities.on_move(entity);
+            if (events_.entities.on_moved) {
+                events_.entities.on_moved({id, entity.x, entity.y, entity.z, entity.yaw,
+                                           entity.pitch, true, true, true});
+            }
+        }
+        return true;
+    }
+    if (packet.id == cb.rotate_head) {
+        const int32_t id = in.read_varint();
+        const float head_yaw = read_angle(in);
+        if (const auto found = entities_.entities.find(id); found != entities_.entities.end()) {
+            found->second.head_yaw = head_yaw;
+            if (events_.entities.on_move) events_.entities.on_move(found->second);
+            if (events_.entities.on_head) events_.entities.on_head(id, head_yaw);
+        }
+        return true;
+    }
+    if (packet.id == cb.set_entity_motion) {
+        const int32_t id = in.read_varint();
+        double vx = 0.0;
+        double vy = 0.0;
+        double vz = 0.0;
+        read_velocity(in, vx, vy, vz);
+        if (const auto found = entities_.entities.find(id); found != entities_.entities.end()) {
+            found->second.vx = vx;
+            found->second.vy = vy;
+            found->second.vz = vz;
+        }
+        return true;
+    }
+    if (packet.id == cb.entity_event) {
+        const int32_t id = in.read_i32();
+        const uint8_t status = in.read_u8();
+        if (events_.entities.on_event) events_.entities.on_event(id, status);
+        return true;
+    }
+    if (packet.id == cb.animate) {
+        const int32_t id = in.read_varint();
+        const uint8_t action = in.read_u8();
+        if (events_.entities.on_animate) events_.entities.on_animate(id, action);
+        return true;
+    }
+    if (packet.id == cb.hurt_animation) {
+        const int32_t id = in.read_varint();
+        const float yaw = in.read_f32();
+        if (events_.entities.on_hurt) events_.entities.on_hurt(id, yaw);
+        return true;
+    }
+    if (packet.id == cb.damage_event) {
+        // The type, the entity behind it and the one that touched, each id
+        // shifted up by one so zero can mean none, and where it came from.
+        const int32_t id = in.read_varint();
+        in.read_varint();
+        in.read_varint();
+        in.read_varint();
+        if (in.read_bool()) {
+            in.read_f64();
+            in.read_f64();
+            in.read_f64();
+        }
+        if (events_.entities.on_damage) events_.entities.on_damage(id);
+        return true;
+    }
+    if (packet.id == cb.set_passengers) {
+        const int32_t vehicle = in.read_varint();
+        const int32_t count = in.read_varint();
+        if (count < 0 || count > 4096) throw ProtocolError("implausible passenger count");
+        std::vector<int32_t> riders;
+        for (int32_t i = 0; i < count; ++i) riders.push_back(in.read_varint());
+        const auto found = entities_.entities.find(vehicle);
+        if (found == entities_.entities.end()) return true;
+        for (const int32_t old_rider : found->second.passengers) {
+            if (const auto rider = entities_.entities.find(old_rider);
+                rider != entities_.entities.end() && rider->second.vehicle == vehicle) {
+                rider->second.vehicle = -1;
+            }
+        }
+        found->second.passengers = std::move(riders);
+        for (const int32_t rider_id : found->second.passengers) {
+            if (const auto rider = entities_.entities.find(rider_id);
+                rider != entities_.entities.end()) {
+                rider->second.vehicle = vehicle;
+            }
+        }
+        if (events_.entities.on_passengers) events_.entities.on_passengers(found->second);
+        return true;
+    }
+    if (packet.id == cb.set_entity_link) {
+        const int32_t attached = in.read_i32();
+        const int32_t holder = in.read_i32();
+        if (const auto found = entities_.entities.find(attached);
+            found != entities_.entities.end()) {
+            found->second.leashed_to = holder == 0 ? -1 : holder;
+        }
+        return true;
+    }
+    if (packet.id == cb.player_info_remove) {
+        const int32_t count = in.read_varint();
+        if (count < 0 || count > 4096) throw ProtocolError("implausible player list size");
+        for (int32_t i = 0; i < count; ++i) {
+            const auto uuid = detail::read_uuid(in);
+            entities_.players.erase(uuid);
+            if (events_.entities.on_player_remove) events_.entities.on_player_remove(uuid);
         }
         return true;
     }
@@ -141,6 +306,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         for (int32_t i = 0; i < count; ++i) {
             const int32_t id = in.read_varint();
             entities_.entities.erase(id);
+            entities_.move_bases.erase(id);
             entities_.effects.erase(id);
             entities_.attributes.erase(id);
             if (events_.entities.on_remove) events_.entities.on_remove(id);
@@ -204,8 +370,8 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
     return false;
 }
 
-// The game measures latency itself and publishes it in the player list, so the
-// number the hud shows is the server's own, not something we estimate.
+// Every line is kept whole: the name and skin are what a player entity is drawn
+// with, and the latency is the server's own measure of ours.
 void Session::read_player_list(ByteBuffer& in) {
     if (entities_.player_list_broken) return;
 
@@ -223,27 +389,33 @@ void Session::read_player_list(ByteBuffer& in) {
             return (actions & (1u << static_cast<uint8_t>(action))) != 0;
         };
 
+        std::vector<std::string> changed;
         for (int32_t i = 0; i < count; ++i) {
             const auto uuid = detail::read_uuid(in);
-            int32_t latency = -1;
+            PlayerInfo& info = entities_.players[uuid];
+            info.uuid = uuid;
             for (uint8_t action = 0; action < kActionCount; ++action) {
                 if (!selected(static_cast<Action>(action))) continue;
                 switch (action) {
                 case kAddPlayer: {
-                    in.read_string();
+                    info.name = in.read_string(16);
                     const int32_t properties = in.read_varint();
                     if (properties < 0 || properties > 64) {
                         throw ProtocolError("implausible property count");
                     }
+                    info.properties.clear();
                     for (int32_t p = 0; p < properties; ++p) {
-                        in.read_string();
-                        in.read_string(32767);
-                        if (in.read_bool()) in.read_string(32767);
+                        PlayerInfo::Property property;
+                        property.name = in.read_string(64);
+                        property.value = in.read_string(32767);
+                        if (in.read_bool()) property.signature = in.read_string(1024);
+                        info.properties.push_back(std::move(property));
                     }
                     break;
                 }
                 case kInitialiseChat:
-                    if (in.read_bool()) {
+                    info.chat_session = in.read_bool();
+                    if (info.chat_session) {
                         in.read_bytes(detail::kUuidBytes);
                         in.read_i64();
                         in.read_bytes(static_cast<size_t>(in.read_varint()));
@@ -251,29 +423,38 @@ void Session::read_player_list(ByteBuffer& in) {
                     }
                     break;
                 case kGameMode:
-                case kListPriority:
-                    in.read_varint();
+                    info.game_mode = in.read_varint();
                     break;
                 case kListed:
-                case kHat:
-                    in.read_bool();
+                    info.listed = in.read_bool();
                     break;
                 case kLatency:
-                    latency = in.read_varint();
+                    info.latency = in.read_varint();
+                    if (uuid == profile_uuid_) entities_.ping_ms = info.latency;
                     break;
                 case kDisplayName:
-                    if (in.read_bool()) nbt::read_network_tag(in);
+                    info.display_name =
+                        in.read_bool() ? detail::read_component(in, lookup_) : std::string();
+                    break;
+                case kListPriority:
+                    info.list_priority = in.read_varint();
+                    break;
+                case kHat:
+                    info.show_hat = in.read_bool();
                     break;
                 default:
                     break;
                 }
             }
-            if (latency >= 0 && uuid == profile_uuid_) entities_.ping_ms = latency;
+            changed.push_back(uuid);
         }
 
         // The packet has to end here. Anything left means the action list grew
         // and everything after this point was read as the wrong field.
         if (in.remaining() != 0) throw ProtocolError("trailing bytes");
+        if (events_.entities.on_player_info) {
+            for (const auto& uuid : changed) events_.entities.on_player_info(entities_.players[uuid]);
+        }
     } catch (const std::exception& error) {
         entities_.player_list_broken = true;
         entities_.ping_ms = -1;
