@@ -383,7 +383,8 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
 }
 
 void Session::connect() {
-    if (!options_.profile.valid()) {
+    // A recording is played back from disk; no server is ever joined.
+    if (options_.replay.empty() && !options_.profile.valid()) {
 #ifdef MCPP_DEV_OFFLINE
         status("development build: no ownership check, plays offline mode only");
 #else
