@@ -1716,6 +1716,13 @@ int do_digtest(const std::string& target) {
         changes.push_back(std::format("{} {} {} is now {} ({})", x, y, z, state,
                                       table.block_name(state)));
     };
+    size_t relit = 0;
+    events.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
+        const auto found = world.find({chunk_x, chunk_z});
+        if (found == world.end()) return;
+        mcpp::world::read_light_into(in, found->second);
+        ++relit;
+    };
 
     mcpp::Session session(options, events);
     session.connect();
@@ -1767,6 +1774,14 @@ int do_digtest(const std::string& target) {
     std::cout << std::format("- standing on {} {} {}: {} ({})\n", foot_x, target_y, foot_z,
                              before, table.block_name(before));
 
+    // The test gives itself something to build with, so placing is actually
+    // exercised rather than silently doing nothing with an empty hand.
+    session.send_command("give @s minecraft:stone 64");
+    pump_for(1.0);
+    session.send_held_slot(0);
+    const auto& hand = session.inventory().hotbar(0);
+    std::cout << std::format("- in hand: item {} x{}\n", hand.id, hand.count);
+
     session.send_position(spawn[0], spawn[1], spawn[2], 0.0f, 90.0f, true);
     session.send_dig(foot_x, target_y, foot_z, 1, false);
     session.send_swing();
@@ -1789,6 +1804,7 @@ int do_digtest(const std::string& target) {
     const int32_t rebuilt = block_at(foot_x, target_y, foot_z);
     std::cout << std::format("- after placing: {} ({})\n", rebuilt, table.block_name(rebuilt));
 
+    std::cout << std::format("- {} light updates arrived\n", relit);
     for (const auto& line : changes) std::cout << "    " << line << '\n';
     session.close();
 
