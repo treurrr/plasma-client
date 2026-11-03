@@ -15,6 +15,10 @@ struct GLFWwindow;
 namespace mcpp::gpu {
 
 // What the player did since the last frame, in the units the camera wants.
+// The screen stack sees every key and click first and hands on only what is
+// left for the game: while a screen is open, every gameplay field here is
+// zero, the way vanilla releases every binding when a screen opens. Keys come
+// from the keybind registry, so a field means its binding, not a fixed key.
 struct FrameInput {
     float forward = 0.0f;
     float right = 0.0f;
@@ -43,6 +47,35 @@ struct FrameInput {
     // -1, 0 or 1 for the wheel this frame, and 0..8 for a number key, or -1.
     int32_t wheel = 0;
     int32_t pick_slot = -1;
+    // Presses since the last frame, the way vanilla counts clicks: two quick
+    // clicks inside one frame are two attacks, not one held button.
+    int32_t attack_clicks = 0;
+    int32_t use_clicks = 0;
+    int32_t pick_item_clicks = 0;
+    bool swap_offhand = false;
+    // Drop with the control key held throws the whole stack.
+    bool drop_stack = false;
+    // The sprint binding alone; `sprint` also counts a double-tapped forward.
+    bool sprint_key = false;
+    bool jump = false;
+    // A screen has the keyboard and the pointer this frame.
+    bool screen_open = false;
+};
+
+// One raw event, in the order GLFW delivered it: what a screen needs, since
+// two keys or two clicks inside one frame are two events, not a state.
+struct InputEvent {
+    enum class Type : uint8_t { Key, Char, Button, Scroll, Move };
+    Type type = Type::Key;
+    // Key: GLFW key, scancode, action (0 release, 1 press, 2 repeat), mods.
+    // Button: button in `key`, action and mods. Char: codepoint in `key`.
+    int key = 0;
+    int scancode = 0;
+    int action = 0;
+    int mods = 0;
+    // Pointer position in window pixels, or the scroll offsets.
+    double x = 0.0;
+    double y = 0.0;
 };
 
 // GLFW only for the surface and the key state; everything after the surface is
@@ -80,6 +113,13 @@ public:
     using Overlay = std::function<void(VkCommandBuffer, uint32_t, uint32_t)>;
     void present(WorldRenderer& renderer, const Camera& camera, const Overlay& overlay = {});
     VkFormat colour_format() const { return format_; }
+    // Everything that happened since the last call, oldest first.
+    std::vector<InputEvent> take_events();
+    // The framebuffer over the window's own size, for a pointer in window
+    // coordinates on a high density screen.
+    double content_scale() const;
+    std::string clipboard() const;
+    void set_clipboard(const std::string& text);
 
     // Vanilla's VSync option. Off, the frame rate is the renderer's own:
     // mailbox where the driver has it, so a faster frame never tears.
@@ -143,6 +183,7 @@ private:
     std::string typed_;
     bool cursor_captured_ = false;
     double last_frame_ms_ = 0.0;
+    std::vector<InputEvent> events_;
 };
 
 } // namespace mcpp::gpu

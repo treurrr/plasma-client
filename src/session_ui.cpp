@@ -4,6 +4,7 @@
 #include "mcpp/json.hpp"
 #include "mcpp/nbt.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <format>
 
@@ -128,7 +129,122 @@ bool Session::handle_ui(PacketConnection::Packet& packet) {
         }
         return true;
     }
+    if (packet.id == cb.player_combat_kill) {
+        const int32_t player = in.read_varint();
+        const nbt::Value message = nbt::read_network_tag(in);
+        if (player == entity_id_ && events_.ui.on_combat_kill) events_.ui.on_combat_kill(message);
+        return true;
+    }
+    if (packet.id == cb.container_close) {
+        const int32_t container = in.read_varint();
+        if (events_.ui.on_container_close) events_.ui.on_container_close(container);
+        return true;
+    }
+    if (packet.id == cb.set_cursor_item) {
+        // An item stack: count, then the item and its component patch. A
+        // patch is not read here; the cursor keeps the id and count.
+        ItemStack stack;
+        stack.count = in.read_varint();
+        if (stack.count > 0) {
+            stack.id = in.read_varint();
+            stack.readable = in.read_varint() == 0;
+        } else {
+            stack.count = 0;
+        }
+        player_.inventory.carried = stack;
+        in.set_position(in.data().size());
+        return true;
+    }
+    if (packet.id == cb.server_links) {
+        std::vector<std::pair<nbt::Value, std::string>> links;
+        const int32_t count = in.read_varint();
+        for (int32_t i = 0; i < count; ++i) {
+            nbt::Value label;
+            if (in.read_bool()) {
+                label = nbt::Value(nbt::Value::Storage(static_cast<int32_t>(in.read_varint())));
+            } else {
+                label = nbt::read_network_tag(in);
+            }
+            links.emplace_back(std::move(label), in.read_string());
+        }
+        if (events_.ui.on_server_links) events_.ui.on_server_links(links);
+        return true;
+    }
     return false;
+}
+
+namespace {
+
+// The click packet's view of a stack: the item, the count and a hash per
+// component. Without the components the hashes are left out, which the
+// server reads as a mismatch for an item that has any, and answers by sending
+// that slot again.
+void write_hashed(ByteBuffer& out, const ItemStack& stack) {
+    if (stack.id <= 0 || stack.count <= 0) {
+        out.write_bool(false);
+        return;
+    }
+    out.write_bool(true);
+    out.write_varint(stack.id);
+    out.write_varint(stack.count);
+    out.write_varint(0);
+    out.write_varint(0);
+}
+
+} // namespace
+
+void Session::send_container_click(int32_t container, int16_t slot, int8_t button, int32_t mode,
+                                   const std::vector<std::pair<int16_t, ItemStack>>& changed,
+                                   const ItemStack& carried) {
+    if (state_ != SessionState::Play) return;
+    ByteBuffer out;
+    out.write_varint(container);
+    out.write_varint(player_.container_state);
+    out.write_u16(static_cast<uint16_t>(slot));
+    out.write_u8(static_cast<uint8_t>(button));
+    out.write_varint(mode);
+    out.write_varint(static_cast<int32_t>(std::min<size_t>(changed.size(), 128)));
+    for (size_t i = 0; i < changed.size() && i < 128; ++i) {
+        out.write_u16(static_cast<uint16_t>(changed[i].first));
+        write_hashed(out, changed[i].second);
+    }
+    write_hashed(out, carried);
+    send(ids_->play_sb.container_click, out);
+}
+
+void Session::send_container_close(int32_t container) {
+    if (state_ != SessionState::Play) return;
+    ByteBuffer out;
+    out.write_varint(container);
+    send(ids_->play_sb.container_close, out);
+}
+
+void Session::send_creative_slot(int16_t slot, const ItemStack& stack) {
+    if (state_ != SessionState::Play) return;
+    ByteBuffer out;
+    out.write_u16(static_cast<uint16_t>(slot));
+    if (stack.id <= 0 || stack.count <= 0) {
+        out.write_varint(0);
+    } else {
+        out.write_varint(stack.count);
+        out.write_varint(stack.id);
+        out.write_varint(0);
+        out.write_varint(0);
+    }
+    send(ids_->play_sb.set_creative_mode_slot, out);
+}
+
+void Session::predict_inventory(const std::array<ItemStack, Inventory::kSlots>& slots,
+                                const ItemStack& carried) {
+    player_.inventory.slots = slots;
+    player_.inventory.carried = carried;
+}
+
+void Session::send_respawn() {
+    if (state_ != SessionState::Play) return;
+    ByteBuffer out;
+    out.write_varint(0);
+    send(ids_->play_sb.client_command, out);
 }
 
 void Session::send_chat(std::string_view message) {

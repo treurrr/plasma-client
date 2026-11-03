@@ -8,6 +8,8 @@ layout(location = 4) in uint in_border;
 layout(location = 5) in uint in_glow;
 layout(location = 6) in int in_layer;
 layout(location = 7) in vec4 in_uv;
+layout(location = 8) in vec4 in_transform;
+layout(location = 9) in vec2 in_origin;
 
 layout(push_constant) uniform Screen {
     vec2 inverse_size;
@@ -24,6 +26,7 @@ layout(location = 6) out vec4 glow_colour;
 layout(location = 7) flat out int layer;
 layout(location = 8) flat out float linearise;
 layout(location = 9) out vec2 sprite_uv;
+layout(location = 10) flat out vec4 extra;
 
 vec3 to_linear(vec3 colour) {
     return mix(colour / 12.92, pow((colour + 0.055) / 1.055, vec3(2.4)), step(0.04045, colour));
@@ -48,14 +51,18 @@ void main() {
     glow_colour = unpack(in_glow);
     layer = in_layer;
     linearise = screen.linearise;
+    extra = in_uv;
 
     // The quad is grown past the rectangle so the glow and the antialiased
-    // edge have somewhere to land.
+    // edge have somewhere to land. Pictures are cut at the rectangle in the
+    // fragment shader, so the growth never shows a neighbour's texels.
     vec2 grown = half_size + in_params.z + 1.5;
     local = (corners[gl_VertexIndex] * 2.0 - 1.0) * grown;
     // Corner to corner across the rectangle itself, not the grown quad, so a
     // sprite lands exactly on the rectangle the caller asked for.
     sprite_uv = in_uv.xy + (local / half_size * 0.5 + 0.5) * in_uv.zw;
-    gl_Position = vec4((in_rect.xy + half_size + local) * screen.inverse_size * 2.0 - 1.0,
-                       0.0, 1.0);
+    vec2 point = in_rect.xy + half_size + local - in_origin;
+    point = vec2(in_transform.x * point.x + in_transform.y * point.y,
+                 in_transform.z * point.x + in_transform.w * point.y) + in_origin;
+    gl_Position = vec4(point * screen.inverse_size * 2.0 - 1.0, 0.0, 1.0);
 }

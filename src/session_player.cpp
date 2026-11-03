@@ -121,7 +121,8 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.container_set_content) {
         const int32_t container = in.read_varint();
-        in.read_varint();   // state id, only needed to echo back on a click
+        const int32_t state = in.read_varint();
+        if (container == 0) player_.container_state = state;
         const int32_t count = in.read_varint();
         if (container != 0 || count < 0) return true;   // only our own inventory for now
         bool readable = true;
@@ -138,7 +139,8 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.container_set_slot) {
         const int32_t container = in.read_varint();
-        in.read_varint();   // state id
+        const int32_t state = in.read_varint();
+        if (container == 0) player_.container_state = state;
         const auto slot = static_cast<int16_t>(in.read_u16());
         bool readable = true;
         const ItemStack stack = read_slot(in, readable);

@@ -12,7 +12,12 @@
 #include "mcpp/gpu/ui.hpp"
 #include "mcpp/gpu/window.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
+#include "mcpp/keybinds.hpp"
+#include "mcpp/options.hpp"
 #include "mcpp/session.hpp"
+#include "mcpp/translations.hpp"
+#include "mcpp/ui/screen.hpp"
+#include "mcpp/ui/world.hpp"
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
@@ -112,13 +117,25 @@ struct PlayerArea {
 };
 
 struct ScreensArea {
+    ScreensArea() : menu(mcpp::ui::ContainerMenu::player_inventory(&items)) {}
+
     std::mutex chat_guard;
     std::vector<std::string> chat;
     std::optional<mcpp::gpu::TextRenderer> hud;
     std::optional<mcpp::gpu::UiRenderer> quads;
     bool menu_open = false;
     int menu_filter = -1;
+    // Set while any screen has the input; the name is older than the stack.
     bool inventory_open = false;
+
+    mcpp::ui::ScreenManager manager;
+    mcpp::Translations lang;
+    mcpp::Options options;
+    mcpp::Keybinds keybinds;
+    mcpp::ui::ItemTable items;
+    mcpp::ui::ContainerMenu menu;
+    mcpp::ui::World world;
+    std::chrono::steady_clock::time_point opened = std::chrono::steady_clock::now();
 };
 
 struct SoundArea {

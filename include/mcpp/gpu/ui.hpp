@@ -30,6 +30,11 @@ struct Quad {
     // in the interface atlas, anything else the inventory icon for that item.
     int32_t layer = -1;
     float uv[4]{};
+    // An affine turn and shear about `origin`, in screen pixels: x' = a x + b y,
+    // y' = c x + d y. Italic text leans, a splash text tilts; everything else
+    // is the identity.
+    float transform[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    float origin[2] = {0.0f, 0.0f};
 };
 
 // Shapes are signed distance fields in the fragment shader rather than
@@ -84,7 +89,49 @@ public:
                bool shadow = true);
     float text_width(std::string_view utf8, float scale) const;
     float line_height(float scale) const { return 9.0f * scale; }
+    // One codepoint, and how far the pen moves for it in font pixels. A
+    // codepoint the font has no glyph for draws nothing and moves nothing.
+    float glyph(uint32_t code, float x, float y, float scale, uint32_t rgba);
+    float advance(uint32_t code) const;
+    // Another glyph exactly as wide, chosen by `seed`: what obfuscated text
+    // scrambles through.
+    uint32_t glyph_like(uint32_t code, uint32_t seed) const;
     bool has_font() const { return !glyphs_.empty(); }
+
+    // A window of a sprite, in its own texels, onto a rectangle; and the same
+    // window repeated across a rectangle at `scale` screen pixels per texel.
+    void sprite_region(std::string_view name, float sx, float sy, float sw, float sh, float x,
+                       float y, float width, float height, uint32_t rgba = 0xFFFFFFFFu);
+    void sprite_tiled(std::string_view name, float sx, float sy, float sw, float sh, float x,
+                      float y, float width, float height, float scale,
+                      uint32_t rgba = 0xFFFFFFFFu);
+    // A plain rectangle of one colour, edges on whole pixels, which is what
+    // the game's own fill is.
+    void fill(float x, float y, float width, float height, uint32_t rgba);
+    // Everything added until the matching pop is cut to this rectangle, in
+    // screen pixels. Nested rectangles are intersected, the way the game's are.
+    void push_scissor(float x, float y, float width, float height);
+    void pop_scissor();
+    // Applied to every quad added after it until reset.
+    void set_transform(float a, float b, float c, float d, float origin_x, float origin_y);
+    void reset_transform();
+
+    // Pictures that arrive while the game runs: a server's icon, a skin. Each
+    // is one 64x64 layer; drawing a layer nobody filled draws nothing.
+    static constexpr uint32_t kDynamicSide = 64;
+    static constexpr uint32_t kDynamicLayers = 64;
+    void set_dynamic(uint32_t layer, const std::vector<uint8_t>& rgba, uint32_t width,
+                     uint32_t height);
+    void dynamic(uint32_t layer, float x, float y, float width, float height,
+                 uint32_t rgba = 0xFFFFFFFFu);
+
+    // The six faces of the title screen's panorama, in the game's order.
+    void set_panorama(const std::vector<uint8_t> (&faces)[6], uint32_t side);
+    bool has_panorama() const { return panorama_side_ > 1; }
+    // The panorama seen from its centre, turned `yaw` degrees and tilted
+    // `pitch`, blurred over `blur` screen pixels, over the rectangle.
+    void panorama(float x, float y, float width, float height, float yaw, float pitch,
+                  float blur, uint32_t rgba = 0xFFFFFFFFu);
 
     static std::filesystem::path default_items_path(int32_t protocol);
     static std::filesystem::path default_gui_path(int32_t protocol);
@@ -117,13 +164,32 @@ private:
                         uint32_t layers, VkImage& image, VkDeviceMemory& memory,
                         VkImageView& view, VkImageViewType view_type);
     void create_atlas(const std::filesystem::path& items, const std::filesystem::path& gui);
+    void write_descriptors();
+    void copy_layer(VkImage image, uint32_t layer, uint32_t width, uint32_t height,
+                    const std::vector<uint8_t>& pixels);
     void create_pipeline(VkFormat colour_format);
     void destroy();
 
     Device& device_;
     bool linearise_ = false;
     uint32_t count_ = 0;
-    static constexpr uint32_t kCapacity = 4096;
+    static constexpr uint32_t kCapacity = 32768;
+    struct Segment {
+        uint32_t first;
+        VkRect2D scissor;
+    };
+    std::vector<Segment> segments_;
+    std::vector<VkRect2D> scissors_;
+    void start_segment();
+    float transform_[6] = {1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    VkImage dynamic_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory dynamic_memory_ = VK_NULL_HANDLE;
+    VkImageView dynamic_view_ = VK_NULL_HANDLE;
+    VkImage panorama_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory panorama_memory_ = VK_NULL_HANDLE;
+    VkImageView panorama_view_ = VK_NULL_HANDLE;
+    uint32_t panorama_side_ = 1;
+    VkSampler linear_sampler_ = VK_NULL_HANDLE;
     Quad* mapped_ = nullptr;
     VkBuffer buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
@@ -134,6 +200,7 @@ private:
     std::vector<uint8_t> item_armour_;
     std::map<std::string, Sprite, std::less<>> sprites_;
     std::unordered_map<uint32_t, Glyph> glyphs_;
+    std::map<int, std::vector<uint32_t>> glyphs_by_width_;
     std::map<std::string, Slicing, std::less<>> slicing_;
     VkImage gui_image_ = VK_NULL_HANDLE;
     VkDeviceMemory gui_memory_ = VK_NULL_HANDLE;

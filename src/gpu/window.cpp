@@ -77,15 +77,43 @@ Window::Window(Device& device, uint32_t width, uint32_t height, const std::strin
     glfwSetWindowUserPointer(window_, this);
     glfwSetCharCallback(window_, [](GLFWwindow* handle, unsigned int code) {
         auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
-        if (self == nullptr || !self->typing_) return;
+        if (self == nullptr) return;
+        self->events_.push_back({InputEvent::Type::Char, static_cast<int>(code), 0, 0, 0, 0.0, 0.0});
+        if (!self->typing_) return;
         if (code >= 32 && code < 127 && self->typed_.size() < 256) {
             self->typed_ += static_cast<char>(code);
         }
     });
 
-    glfwSetScrollCallback(window_, [](GLFWwindow* handle, double, double y) {
+    glfwSetScrollCallback(window_, [](GLFWwindow* handle, double x, double y) {
         auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
-        if (self != nullptr) self->wheel_ += y;
+        if (self == nullptr) return;
+        self->wheel_ += y;
+        self->events_.push_back({InputEvent::Type::Scroll, 0, 0, 0, 0, x, y});
+    });
+    glfwSetKeyCallback(window_, [](GLFWwindow* handle, int key, int scancode, int action,
+                                   int mods) {
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
+        if (self == nullptr) return;
+        self->events_.push_back({InputEvent::Type::Key, key, scancode, action, mods, 0.0, 0.0});
+    });
+    glfwSetMouseButtonCallback(window_, [](GLFWwindow* handle, int button, int action, int mods) {
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
+        if (self == nullptr) return;
+        double x = 0.0, y = 0.0;
+        glfwGetCursorPos(handle, &x, &y);
+        self->events_.push_back({InputEvent::Type::Button, button, 0, action, mods, x, y});
+    });
+    glfwSetCursorPosCallback(window_, [](GLFWwindow* handle, double x, double y) {
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
+        if (self == nullptr) return;
+        // Moves collapse into one per frame: only the last position matters.
+        if (!self->events_.empty() && self->events_.back().type == InputEvent::Type::Move) {
+            self->events_.back().x = x;
+            self->events_.back().y = y;
+            return;
+        }
+        self->events_.push_back({InputEvent::Type::Move, 0, 0, 0, 0, x, y});
     });
 
     check(glfwCreateWindowSurface(device_.instance(), window_, nullptr, &surface_),
@@ -393,6 +421,26 @@ void Window::end_typing() {
     typing_ = false;
     typed_.clear();
     capture_cursor(true);
+}
+
+std::vector<InputEvent> Window::take_events() {
+    std::vector<InputEvent> out;
+    out.swap(events_);
+    return out;
+}
+
+std::string Window::clipboard() const {
+    const char* text = glfwGetClipboardString(window_);
+    return text != nullptr ? std::string(text) : std::string{};
+}
+
+void Window::set_clipboard(const std::string& text) { glfwSetClipboardString(window_, text.c_str()); }
+
+double Window::content_scale() const {
+    int window_w = 0, window_h = 0, frame_w = 0, frame_h = 0;
+    glfwGetWindowSize(window_, &window_w, &window_h);
+    glfwGetFramebufferSize(window_, &frame_w, &frame_h);
+    return window_w > 0 ? static_cast<double>(frame_w) / window_w : 1.0;
 }
 
 int Window::clicks_per_second(bool right_button) const {
