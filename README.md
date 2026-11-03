@@ -2,41 +2,48 @@
 
 A Minecraft: Java Edition client written from scratch in C++23 and Vulkan.
 
-Clean-room. No decompiled game code is read or used: the protocol comes from the
-packet reports the official server jar generates itself, block geometry from the
-datapack JSON in the jar, and textures from the player's own installation at run
-time. Nothing from Mojang is in this repository, and nothing from Mojang ships
-with the client.
+Vanilla to the method, faster underneath. Plasma follows the vanilla client
+method by method, translated from the game's own code into C++, and draws it
+with a Vulkan renderer of its own. The goal is a client that feels like an
+advantage the moment you start it, never like an imitation: see
+[docs/GAMEPLAN.md](docs/GAMEPLAN.md).
+
+How the game's behaviour is known: each developer decompiles the vanilla client
+from their own copy, with Mojang's official mappings, on their own machine, and
+the C++ translates it with the same order of operations, constants and random
+draws. Small oracle programs run the game's own functions and ours on the same
+inputs and compare the results bit for bit (`tools/oracle/run.py`). Decompiled
+code, game files and the tables read from them never enter this repository and
+never ship: they are baked from the player's own installation, and
+`tools/check_public_tree.py` refuses them on every commit. See
+[docs/METHOD.md](docs/METHOD.md).
 
 ![A world rendered by the client](docs/preview/world.png)
 
 ## State
 
-It signs in with a Microsoft account, joins a real server, opens a window, and
-lets you walk through the world it streams. The player is a box that falls,
-collides and jumps rather than a camera that flies. Chat works both ways, typed
-in the window. Chunks arriving while you play are meshed on a worker and
-appended to the gpu rather than rebuilding everything.
+Not ready to play on yet. What works today:
 
-The world is drawn the way the game draws it: sky light and block light from
-the chunk, smooth lighting, the seven tints the game applies to grass, foliage,
-water and the three leaves that ignore the colour maps, distance fog, a sky
-with clouds, and every multiplier applied in the same gamma space Minecraft
-uses. Every colour the client puts on grass or leaves is within 2 of 255 of the
-colour the game would put there.
+- Signs in with a Microsoft account and joins real servers on protocol 774
+  (1.21.11) and 776 (26.2).
+- Movement and collision follow vanilla's code step by step: 14,394 values
+  equal to the game's own, and a vanilla server sends no corrections while
+  walking, sprinting, jumping, swimming, climbing or on ice and slabs.
+- The world with vanilla's sky, fog, clouds, day and night, animated textures,
+  water and lava (1,248 environment values equal to the game's).
+- Other players with their skins, walking, looking, punching and sneaking, from
+  the game's own model layers (1,776 vertices equal).
+- Vanilla's HUD: hotbar, hearts, food, armour, air, experience, crosshair,
+  chat, titles, boss bars, scoreboard and the player list.
+- The survival and creative inventories, with clicks the server agrees with.
+- Sounds picked the way the game picks them (2,832 picks equal), footsteps,
+  music and ambience.
+- Every item component, entity data type and recipe packet decoded.
 
-The biome registry the server sends is read, and so are the game's own colour
-maps, so a swamp or a badlands resolves to its real colour. The renderer still
-paints every block with the plains values; wiring the per-block biome through
-to the shader is the next step there.
-
-The interface is the client's own: a heads-up display with numbers that are
-measured rather than estimated, and a feature menu you click to switch things
-on and off.
-
-Entities are tracked as the server reports them but not drawn, water is opaque
-where it should be see-through, blocks cannot be placed or broken, and there is
-no singleplayer.
+Missing, and next in line: the title and pause screens, breaking-block
+animation and particles, the hand and held items, icons for block items,
+crafting results, non-full block outlines, texture mipmaps as vanilla builds
+them, and smooth lighting.
 
 Measured on an RTX 4070 Laptop with 16 threads, 1920x1080, 200 chunks of
 overworld, 2.06 million triangles, 862k of them drawn after culling:
