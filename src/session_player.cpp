@@ -1,5 +1,6 @@
 #include "mcpp/session.hpp"
 
+#include <algorithm>
 #include <format>
 
 namespace mcpp {
@@ -24,6 +25,28 @@ ItemStack read_slot(ByteBuffer& in, bool& readable) {
     }
     for (int32_t i = 0; i < removed; ++i) in.read_varint();
     return stack;
+}
+
+// The game's packed velocity: three 15-bit components and a scale.
+void read_lp_vec3(ByteBuffer& in, double& x, double& y, double& z) {
+    const uint8_t first = in.read_u8();
+    if (first == 0) {
+        x = y = z = 0.0;
+        return;
+    }
+    const uint8_t second = in.read_u8();
+    const auto rest = static_cast<uint32_t>(in.read_i32());
+    const uint64_t packed =
+        (static_cast<uint64_t>(rest) << 16) | (static_cast<uint64_t>(second) << 8) | first;
+    uint64_t scale = packed & 3;
+    if ((packed & 4) != 0) scale |= static_cast<uint64_t>(in.read_varint()) << 2;
+    const auto component = [&](int shift) {
+        const uint64_t bits = std::min<uint64_t>((packed >> shift) & 0x7FFF, 32766);
+        return (static_cast<double>(bits) * 2.0 / 32766.0 - 1.0) * static_cast<double>(scale);
+    };
+    x = component(3);
+    y = component(18);
+    z = component(33);
 }
 
 int64_t pack_position(int32_t x, int32_t y, int32_t z) {
@@ -83,6 +106,20 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         }
         accept_teleport(teleport, player_.last_x, player_.last_y, player_.last_z,
                         player_.last_yaw, player_.last_pitch);
+        return true;
+    }
+    if (packet.id == cb.set_entity_motion && events_.player.on_motion) {
+        const auto before = in.position();
+        const int32_t id = in.read_varint();
+        if (id != entity_id_) {
+            in.set_position(before);
+            return false;
+        }
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        read_lp_vec3(in, x, y, z);
+        events_.player.on_motion(x, y, z);
         return true;
     }
     if (packet.id == cb.player_abilities) {

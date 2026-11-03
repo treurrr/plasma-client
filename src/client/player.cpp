@@ -249,7 +249,10 @@ void camera_tick(Game& game) {
 
 } // namespace
 
+void player_bind_motion(Game& game, mcpp::SessionEvents& events);
+
 void player_bind(Game& game, mcpp::SessionEvents& events) {
+    player_bind_motion(game, events);
     events.player.on_teleport = [&game](const mcpp::SessionEvents::Player::Teleport& t) {
         auto& player = game.player;
         apply_teleport(player.body, t);
@@ -265,6 +268,15 @@ void player_bind(Game& game, mcpp::SessionEvents& events) {
         }
         player.placed = true;
         game.session->accept_teleport(t.id, body.x, body.y, body.z, body.yaw, body.pitch);
+    };
+}
+
+void player_bind_motion(Game& game, mcpp::SessionEvents& events) {
+    events.player.on_motion = [&game](double x, double y, double z) {
+        auto& body = game.player.body;
+        body.vx = x;
+        body.vy = y;
+        body.vz = z;
     };
 }
 

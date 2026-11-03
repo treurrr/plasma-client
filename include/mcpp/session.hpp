@@ -180,6 +180,9 @@ struct SessionEvents {
             uint32_t relative = 0;
         };
         std::function<void(const Teleport&)> on_teleport;
+        // The server setting our own velocity: knockback, a launch. The game
+        // takes it as the body's new delta movement.
+        std::function<void(double, double, double)> on_motion;
     } player;
 
     struct Ui {

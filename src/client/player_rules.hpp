@@ -8,6 +8,7 @@
 #include "mcpp/world/shapes.hpp"
 
 #include <cstdint>
+#include <string>
 
 namespace client {
 
@@ -60,5 +61,10 @@ struct DigContext {
     bool on_ground = true;
 };
 float destroy_progress(float hardness, bool needs_tool, const DigContext& dig);
+
+// Joins as PlasmaE, builds a movement course far from spawn and runs walking,
+// sprinting, jumping, sneaking, ice, steps, ladders, swimming and the slowing
+// blocks through the real tick and packets, counting the server's corrections.
+int movetest(const std::string& target);
 
 } // namespace client
