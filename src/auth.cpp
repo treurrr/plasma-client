@@ -75,7 +75,7 @@ Response request(const char* url, const std::string& body, bool json_body,
     return response;
 }
 
-[[maybe_unused]] std::string quoted(std::string_view value) {
+std::string json_string(std::string_view value) {
     std::string out = "\"";
     for (char c : value) {
         switch (c) {
@@ -90,7 +90,7 @@ Response request(const char* url, const std::string& body, bool json_body,
     return out + "\"";
 }
 
-[[maybe_unused]] std::string form_escaped(std::string_view value) {
+std::string form_escaped(std::string_view value) {
     std::string out;
     for (unsigned char c : value) {
         if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
@@ -107,13 +107,13 @@ Response request(const char* url, const std::string& body, bool json_body,
     return out;
 }
 
-[[maybe_unused]] std::string field(const json::Value& root, std::string_view key) {
+std::string field(const json::Value& root, std::string_view key) {
     const auto* value = root.find(key);
     return value ? value->string_or("") : std::string{};
 }
 
 // Dashed form, because that is how the rest of the client writes a uuid.
-[[maybe_unused]] std::string dashed(const std::string& compact) {
+std::string dashed(const std::string& compact) {
     if (compact.size() != 32) return compact;
     return compact.substr(0, 8) + "-" + compact.substr(8, 4) + "-" + compact.substr(12, 4) + "-" +
            compact.substr(16, 4) + "-" + compact.substr(20);
@@ -177,6 +177,297 @@ std::string Session::client_id() {
 #else
     return {};
 #endif
+}
+
+
+namespace {
+
+struct Stored {
+    std::string refresh_token;
+    std::string minecraft_token;
+    std::string uuid;
+    std::string name;
+    long long expires_at = 0;   // seconds since the epoch
+};
+
+long long now_seconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+Stored read_stored(const std::filesystem::path& path) {
+    Stored stored;
+    std::ifstream file(path);
+    if (!file) return stored;
+    const std::string text((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    try {
+        const auto root = json::parse(text);
+        stored.refresh_token = field(root, "refresh_token");
+        stored.minecraft_token = field(root, "minecraft_token");
+        stored.uuid = field(root, "uuid");
+        stored.name = field(root, "name");
+        if (const auto* value = root.find("expires_at"); value != nullptr) {
+            stored.expires_at = static_cast<long long>(value->number_or(0));
+        }
+    } catch (const std::exception&) {
+        return {};
+    }
+    return stored;
+}
+
+void write_stored(const std::filesystem::path& path, const Stored& stored) {
+    std::error_code ignored;
+    std::filesystem::create_directories(path.parent_path(), ignored);
+    std::ofstream file(path, std::ios::trunc);
+    if (!file) return;
+    file << "{\"refresh_token\":" << json_string(stored.refresh_token)
+         << ",\"minecraft_token\":" << json_string(stored.minecraft_token)
+         << ",\"uuid\":" << json_string(stored.uuid)
+         << ",\"name\":" << json_string(stored.name)
+         << ",\"expires_at\":" << stored.expires_at << "}\n";
+    file.close();
+    // The file holds a token that is as good as the password; nobody else on
+    // the machine gets to read it.
+    std::filesystem::permissions(path, std::filesystem::perms::owner_read |
+                                           std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace, ignored);
+}
+
+} // namespace
+
+// Each of these four exchanges hands its answer to the next one. They are
+// separate because each fails in its own way, and the player needs to be told
+// which one said no.
+struct Session::Exchange {
+    Session& session;
+
+    bool fail(Failure failure, std::string message) {
+        session.failure_ = failure;
+        session.message_ = std::move(message);
+        return false;
+    }
+
+    // Microsoft access token, either fresh from the device flow or refreshed.
+    bool microsoft_refresh(const std::string& refresh_token, std::string& access_token,
+                           std::string& new_refresh) {
+        const std::string form = "client_id=" + form_escaped(Session::client_id()) +
+                                 "&grant_type=refresh_token&refresh_token=" +
+                                 form_escaped(refresh_token) + "&scope=" + form_escaped(kScope);
+        const auto response = request(kTokenUrl, form, false);
+        if (response.transport_failed) return fail(Failure::Network, "no answer from Microsoft");
+        if (response.status != 200) return fail(Failure::Declined, "the sign-in has expired");
+        const auto root = json::parse(response.body);
+        access_token = field(root, "access_token");
+        new_refresh = field(root, "refresh_token");
+        return !access_token.empty();
+    }
+
+    // Xbox Live, then XSTS, then Minecraft, then the profile that proves the
+    // account owns the game.
+    bool to_profile(const std::string& microsoft_token, Profile& profile) {
+        const std::string xbox_body =
+            R"({"Properties":{"AuthMethod":"RPS","SiteName":"user.auth.xboxlive.com",)"
+            R"("RpsTicket":)" + json_string("d=" + microsoft_token) +
+            R"(},"RelyingParty":"http://auth.xboxlive.com","TokenType":"JWT"})";
+        auto response = request(kXboxLiveUrl, xbox_body, true);
+        if (response.transport_failed) return fail(Failure::Network, "no answer from Xbox Live");
+        if (response.status != 200) {
+            return fail(Failure::NoXboxProfile, "Xbox Live refused the sign-in");
+        }
+        auto root = json::parse(response.body);
+        const std::string xbox_token = field(root, "Token");
+        std::string user_hash;
+        if (const auto* claims = root.find("DisplayClaims"); claims != nullptr) {
+            if (const auto* xui = claims->find("xui"); xui != nullptr) {
+                if (const auto* first = xui->at(0); first != nullptr) {
+                    user_hash = field(*first, "uhs");
+                }
+            }
+        }
+        if (xbox_token.empty() || user_hash.empty()) {
+            return fail(Failure::NoXboxProfile, "Xbox Live answered without a token");
+        }
+
+        const std::string xsts_body =
+            R"({"Properties":{"SandboxId":"RETAIL","UserTokens":[)" + json_string(xbox_token) +
+            R"(]},"RelyingParty":"rp://api.minecraftservices.com/","TokenType":"JWT"})";
+        response = request(kXstsUrl, xsts_body, true);
+        if (response.transport_failed) return fail(Failure::Network, "no answer from Xbox");
+        if (response.status == 401) {
+            const auto reason = json::parse(response.body);
+            const auto code = static_cast<long long>(
+                reason.find("XErr") != nullptr ? reason.find("XErr")->number_or(0) : 0);
+            switch (code) {
+            case 2148916233: return fail(Failure::NoXboxProfile, "this account has no Xbox profile");
+            case 2148916235: return fail(Failure::CountryUnavailable, "Xbox Live is not available here");
+            case 2148916238: return fail(Failure::ChildAccount, "child account: add it to a family");
+            default: return fail(Failure::NoXboxProfile, "Xbox refused this account");
+            }
+        }
+        if (response.status != 200) return fail(Failure::NoXboxProfile, "Xbox refused the token");
+        root = json::parse(response.body);
+        const std::string xsts_token = field(root, "Token");
+        if (xsts_token.empty()) return fail(Failure::NoXboxProfile, "Xbox answered without a token");
+
+        const std::string minecraft_body =
+            R"({"identityToken":)" + json_string("XBL3.0 x=" + user_hash + ";" + xsts_token) + "}";
+        response = request(kMinecraftLoginUrl, minecraft_body, true);
+        if (response.transport_failed) return fail(Failure::Network, "no answer from Mojang");
+        if (response.status == 403) {
+            return fail(Failure::NotApprovedByMojang, "Mojang has not approved this client");
+        }
+        if (response.status != 200) return fail(Failure::Network, "Mojang refused the token");
+        root = json::parse(response.body);
+        profile.access_token = field(root, "access_token");
+        const auto lifetime = root.find("expires_in") != nullptr
+                                  ? root.find("expires_in")->number_or(86400)
+                                  : 86400;
+        profile.expires = std::chrono::system_clock::now() +
+                          std::chrono::seconds(static_cast<long long>(lifetime));
+        if (profile.access_token.empty()) return fail(Failure::Network, "Mojang gave no token");
+
+        response = request(kProfileUrl, {}, true, profile.access_token);
+        if (response.transport_failed) return fail(Failure::Network, "no answer from Mojang");
+        if (response.status == 404) {
+            return fail(Failure::DoesNotOwnGame, "this account does not own Minecraft: Java Edition");
+        }
+        if (response.status != 200) return fail(Failure::Network, "Mojang refused the profile");
+        root = json::parse(response.body);
+        profile.uuid = dashed(field(root, "id"));
+        profile.name = field(root, "name");
+        return profile.valid();
+    }
+};
+
+std::optional<Profile> Session::restore() {
+    failure_ = Failure::None;
+    message_.clear();
+    if (!configured()) {
+        failure_ = Failure::NotApprovedByMojang;
+        message_ = "this build has no application id";
+        return std::nullopt;
+    }
+
+    auto stored = read_stored(token_path());
+    if (stored.refresh_token.empty()) return std::nullopt;
+
+    if (!stored.minecraft_token.empty() && stored.expires_at > now_seconds() + 60) {
+        Profile profile;
+        profile.uuid = stored.uuid;
+        profile.name = stored.name;
+        profile.access_token = stored.minecraft_token;
+        profile.expires = std::chrono::system_clock::from_time_t(
+            static_cast<std::time_t>(stored.expires_at));
+        if (profile.valid()) return profile;
+    }
+
+    Exchange exchange{*this};
+    std::string microsoft_token;
+    std::string refreshed;
+    if (!exchange.microsoft_refresh(stored.refresh_token, microsoft_token, refreshed)) {
+        return std::nullopt;
+    }
+    Profile profile;
+    if (!exchange.to_profile(microsoft_token, profile)) return std::nullopt;
+
+    stored.refresh_token = refreshed.empty() ? stored.refresh_token : refreshed;
+    stored.minecraft_token = profile.access_token;
+    stored.uuid = profile.uuid;
+    stored.name = profile.name;
+    stored.expires_at = std::chrono::duration_cast<std::chrono::seconds>(
+                            profile.expires.time_since_epoch())
+                            .count();
+    write_stored(token_path(), stored);
+    return profile;
+}
+
+std::optional<Profile> Session::sign_in(const std::function<void(const DeviceCode&)>& show) {
+    failure_ = Failure::None;
+    message_.clear();
+    if (!configured()) {
+        failure_ = Failure::NotApprovedByMojang;
+        message_ = "this build has no application id";
+        return std::nullopt;
+    }
+
+    Exchange exchange{*this};
+
+    const std::string start = "client_id=" + form_escaped(client_id()) + "&scope=" +
+                              form_escaped(kScope);
+    auto response = request(kDeviceCodeUrl, start, false);
+    if (response.transport_failed) {
+        exchange.fail(Failure::Network, "no answer from Microsoft");
+        return std::nullopt;
+    }
+    if (response.status != 200) {
+        exchange.fail(Failure::Network, std::format("Microsoft answered {}", response.status));
+        return std::nullopt;
+    }
+
+    auto root = json::parse(response.body);
+    DeviceCode code;
+    code.user_code = field(root, "user_code");
+    code.verification_uri = field(root, "verification_uri");
+    const std::string device_code = field(root, "device_code");
+    if (const auto* value = root.find("interval"); value != nullptr) {
+        code.interval = std::chrono::seconds(static_cast<long long>(value->number_or(5)));
+    }
+    if (device_code.empty() || code.user_code.empty()) {
+        exchange.fail(Failure::Network, "Microsoft gave no device code");
+        return std::nullopt;
+    }
+    if (show) show(code);
+
+    const std::string poll = "client_id=" + form_escaped(client_id()) +
+                             "&grant_type=urn:ietf:params:oauth:grant-type:device_code"
+                             "&device_code=" + form_escaped(device_code);
+    const auto deadline = std::chrono::steady_clock::now() + kSignInTimeout;
+    std::string microsoft_token;
+    std::string refresh_token;
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(code.interval);
+        response = request(kTokenUrl, poll, false);
+        if (response.transport_failed) continue;
+        root = json::parse(response.body);
+        if (response.status == 200) {
+            microsoft_token = field(root, "access_token");
+            refresh_token = field(root, "refresh_token");
+            break;
+        }
+        const std::string error = field(root, "error");
+        if (error == "authorization_pending") continue;
+        if (error == "slow_down") {
+            code.interval += std::chrono::seconds(5);
+            continue;
+        }
+        if (error == "authorization_declined" || error == "access_denied") {
+            exchange.fail(Failure::Declined, "you declined the sign-in");
+            return std::nullopt;
+        }
+        if (error == "expired_token") break;
+        exchange.fail(Failure::Network, error.empty() ? "Microsoft refused the sign-in" : error);
+        return std::nullopt;
+    }
+    if (microsoft_token.empty()) {
+        exchange.fail(Failure::TimedOut, "the sign-in took too long");
+        return std::nullopt;
+    }
+
+    Profile profile;
+    if (!exchange.to_profile(microsoft_token, profile)) return std::nullopt;
+
+    Stored stored;
+    stored.refresh_token = refresh_token;
+    stored.minecraft_token = profile.access_token;
+    stored.uuid = profile.uuid;
+    stored.name = profile.name;
+    stored.expires_at = std::chrono::duration_cast<std::chrono::seconds>(
+                            profile.expires.time_since_epoch())
+                            .count();
+    write_stored(token_path(), stored);
+    return profile;
 }
 
 std::filesystem::path Session::token_path() { return state_directory() / "account.json"; }

@@ -68,6 +68,8 @@ public:
     static std::filesystem::path token_path();
 
 private:
+    struct Exchange;
+
     Failure failure_ = Failure::None;
     std::string message_;
 };

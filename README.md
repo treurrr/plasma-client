@@ -45,6 +45,26 @@ entities, no interface - so it is not what a finished client will show.
 Protocols 774 (1.21.11) and 776 (26.2) are supported, meaning a generated packet
 table exists and a join against a real server of that version has been tested.
 
+## Signing in
+
+Joining a server in online mode needs a Microsoft account. The whole flow is
+here - device code, Xbox Live, XSTS, Mojang, and the profile request that is
+the actual proof the account owns the game - but a build has to carry an
+application id of its own:
+
+```sh
+export PLASMA_MSA_CLIENT_ID=<your azure application id>
+plasma-client login
+```
+
+Register the application under Microsoft Entra as a public client with the
+device-code flow enabled; a client secret is neither needed nor wanted. Mojang
+approves applications separately before they may sign players in for real.
+Without an id the client says so and refuses rather than pretending.
+
+A build configured with `-DMCPP_DEV_OFFLINE=ON` skips the ownership check and
+can only join servers in offline mode. It is for testing and never ships.
+
 ## Building
 
 Needs a C++23 compiler, CMake, Ninja, Vulkan headers and loader, glslang, and

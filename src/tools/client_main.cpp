@@ -1,3 +1,4 @@
+#include "mcpp/auth.hpp"
 #include "mcpp/features.hpp"
 #include "mcpp/gpu/ui.hpp"
 #include "mcpp/ui/menu.hpp"
@@ -42,6 +43,51 @@
 #include <thread>
 
 namespace {
+// A signed-in account if there is one. The client does not refuse to run
+// without it, but a server in online mode will.
+mcpp::auth::Profile signed_in_profile(std::string& username) {
+    mcpp::auth::Session account;
+    if (const auto profile = account.restore()) {
+        username = profile->name;
+        std::cout << std::format("- signed in as {}\n", profile->name);
+        return *profile;
+    }
+    if (account.last_failure() != mcpp::auth::Failure::None) {
+        std::cout << std::format("- not signed in: {}\n", account.last_message());
+    }
+    return {};
+}
+
+int do_login() {
+    mcpp::auth::Session account;
+    if (const auto existing = account.restore()) {
+        std::cout << std::format("already signed in as {} ({})\n", existing->name,
+                                 existing->uuid);
+        return 0;
+    }
+    const auto profile = account.sign_in([](const mcpp::auth::DeviceCode& code) {
+        std::cout << std::format("open {} and enter the code {}\n", code.verification_uri,
+                                 code.user_code);
+        std::cout.flush();
+    });
+    if (!profile) {
+        std::cerr << std::format("sign-in failed: {}\n", account.last_message().empty()
+                                     ? mcpp::auth::describe(account.last_failure())
+                                     : account.last_message());
+        return 1;
+    }
+    std::cout << std::format("signed in as {} ({})\n", profile->name, profile->uuid);
+    return 0;
+}
+
+int do_logout() {
+    mcpp::auth::Session account;
+    account.sign_out();
+    std::cout << "signed out\n";
+    return 0;
+}
+
+
 
 void print_banner() {
     std::cout << std::format("Plasma Client 0.1.0  ·  target version {} (protocol {})\n",
@@ -127,7 +173,9 @@ std::vector<mcpp::world::Chunk> load_chunks(const Address& address, size_t limit
     mcpp::SessionOptions options;
     options.host = address.host;
     options.port = address.port;
-    options.username = "PlasmaShot";
+    std::string username = "PlasmaShot";
+    options.profile = signed_in_profile(username);
+    options.username = username;
 
     mcpp::SessionEvents events;
     if (!quiet) {
@@ -370,6 +418,7 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
 
 
 
+
 #ifdef MCPP_HAVE_WINDOW
 // A clean exit matters: it is what writes the pipeline cache to disk, which is
 // most of the next start-up.
@@ -395,7 +444,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
     mcpp::SessionOptions options;
     options.host = address.host;
     options.port = address.port;
-    options.username = "PlasmaDev";
+    std::string username = "PlasmaDev";
+    options.profile = signed_in_profile(username);
+    options.username = username;
 
     double spawn[3] = {0.0, 0.0, 0.0};
     float spawn_yaw = 0.0f;
@@ -738,7 +789,9 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     mcpp::SessionOptions options;
     options.host = address.host;
     options.port = address.port;
-    options.username = "PlasmaShot";
+    std::string username = "PlasmaShot";
+    options.profile = signed_in_profile(username);
+    options.username = username;
 
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
@@ -1528,6 +1581,12 @@ int main(int argc, char** argv) {
             const uint32_t width = argc > 3 ? static_cast<uint32_t>(std::stoul(argv[3])) : 1280;
             const uint32_t height = argc > 4 ? static_cast<uint32_t>(std::stoul(argv[4])) : 720;
             return do_render(out, width, height);
+        }
+        if (command == "login") {
+            return do_login();
+        }
+        if (command == "logout") {
+            return do_logout();
         }
         if (command == "gpu") {
             return do_gpu();
