@@ -125,7 +125,13 @@ target_link_libraries(mc-ping PRIVATE mcpp_net)
 mcpp_defaults(mc-ping)
 
 enable_testing()
-add_executable(test_protocol tests/test_protocol.cpp)
-target_link_libraries(test_protocol PRIVATE mcpp_net)
-mcpp_defaults(test_protocol)
-add_test(NAME protocol COMMAND test_protocol)
+# One line per test: tests/test_<area>.cpp becomes test_<area>.
+function(mcpp_test area)
+    add_executable(test_${area} tests/test_${area}.cpp)
+    target_link_libraries(test_${area} PRIVATE mcpp_net)
+    mcpp_defaults(test_${area})
+    add_test(NAME ${area} COMMAND test_${area})
+endfunction()
+
+mcpp_test(protocol)
+mcpp_test(packet_ids)

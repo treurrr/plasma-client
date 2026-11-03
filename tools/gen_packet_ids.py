@@ -1,131 +1,195 @@
 #!/usr/bin/env python3
-"""Emit src/proto/packet_ids_gen.cpp from Mojang's own packets.json reports.
+"""Generate the packet id tables from Mojang's own packets.json reports.
 
 Usage: gen_packet_ids.py <protocol>=<reports/packets.json> ...
+
+Writes include/mcpp/proto/packet_ids.hpp and src/proto/packet_ids_gen.cpp.
+Every packet of every state and direction in any of the reports gets a field,
+named after the packet without its namespace; a version that lacks a packet
+has -1 there, which is how 1.8.9 will carry an empty configuration state.
 
 Generate a report with the official server jar, which is observable output and
 not decompiled code:
     java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports
 """
 import json
+import os
+import re
 import sys
+import tempfile
+import textwrap
 from pathlib import Path
 
-# field name -> packet name in the report. A packet the version does not have
-# becomes -1, which is how 1.8.9 will carry an empty configuration state.
-CURATED = {
-    "login_cb": ("login", "clientbound", {
-        "disconnect": "login_disconnect", "hello": "hello", "finished": "login_finished",
-        "compression": "login_compression", "custom_query": "custom_query",
-        "cookie_request": "cookie_request",
-    }),
-    "login_sb": ("login", "serverbound", {
-        "hello": "hello", "key": "key", "custom_query_answer": "custom_query_answer",
-        "acknowledged": "login_acknowledged", "cookie_response": "cookie_response",
-    }),
-    "config_cb": ("configuration", "clientbound", {
-        "cookie_request": "cookie_request", "custom_payload": "custom_payload",
-        "disconnect": "disconnect", "finish": "finish_configuration", "keep_alive": "keep_alive",
-        "ping": "ping", "registry_data": "registry_data", "reset_chat": "reset_chat",
-        "resource_pack_push": "resource_pack_push", "select_known_packs": "select_known_packs",
-        "store_cookie": "store_cookie", "transfer": "transfer", "update_tags": "update_tags",
-        "update_enabled_features": "update_enabled_features", "code_of_conduct": "code_of_conduct",
-        "show_dialog": "show_dialog",
-    }),
-    "config_sb": ("configuration", "serverbound", {
-        "client_information": "client_information", "cookie_response": "cookie_response",
-        "custom_payload": "custom_payload", "finish": "finish_configuration",
-        "keep_alive": "keep_alive", "pong": "pong", "resource_pack": "resource_pack",
-        "select_known_packs": "select_known_packs",
-        "accept_code_of_conduct": "accept_code_of_conduct",
-    }),
-    "play_cb": ("play", "clientbound", {
-        "login": "login", "keep_alive": "keep_alive", "ping": "ping", "disconnect": "disconnect",
-        "system_chat": "system_chat", "player_chat": "player_chat",
-        "disguised_chat": "disguised_chat", "start_configuration": "start_configuration",
-        "player_position": "player_position", "custom_payload": "custom_payload",
-        "set_health": "set_health", "respawn": "respawn", "game_event": "game_event",
-        "level_chunk_with_light": "level_chunk_with_light",
-        "chunk_batch_start": "chunk_batch_start", "chunk_batch_finished": "chunk_batch_finished",
-        "forget_level_chunk": "forget_level_chunk", "light_update": "light_update",
-        "block_update": "block_update", "section_blocks_update": "section_blocks_update",
-        "set_chunk_cache_center": "set_chunk_cache_center",
-        "set_chunk_cache_radius": "set_chunk_cache_radius",
-        "add_entity": "add_entity", "remove_entities": "remove_entities",
-        "move_entity_pos": "move_entity_pos", "move_entity_pos_rot": "move_entity_pos_rot",
-        "move_entity_rot": "move_entity_rot",
-        "entity_position_sync": "entity_position_sync",
-        "player_info_update": "player_info_update", "player_info_remove": "player_info_remove",
-        "container_set_content": "container_set_content",
-        "container_set_slot": "container_set_slot", "container_close": "container_close",
-        "set_held_slot": "set_held_slot", "set_experience": "set_experience",
-        "set_cursor_item": "set_cursor_item", "set_player_inventory": "set_player_inventory",
-        "block_changed_ack": "block_changed_ack", "bundle_delimiter": "bundle_delimiter",
-        "player_abilities": "player_abilities", "change_difficulty": "change_difficulty",
-        "update_mob_effect": "update_mob_effect", "remove_mob_effect": "remove_mob_effect",
-        "update_tags": "update_tags", "update_attributes": "update_attributes",
-    }),
-    "play_sb": ("play", "serverbound", {
-        "keep_alive": "keep_alive", "pong": "pong", "chat": "chat",
-        "chat_command": "chat_command", "chat_ack": "chat_ack",
-        "client_information": "client_information",
-        "configuration_acknowledged": "configuration_acknowledged",
-        "custom_payload": "custom_payload", "accept_teleportation": "accept_teleportation",
-        "move_player_pos": "move_player_pos", "move_player_pos_rot": "move_player_pos_rot",
-        "client_tick_end": "client_tick_end",
-        "chunk_batch_received": "chunk_batch_received",
-        "set_carried_item": "set_carried_item", "container_click": "container_click",
-        "container_close": "container_close", "player_action": "player_action",
-        "use_item_on": "use_item_on", "use_item": "use_item", "swing": "swing",
-        "player_loaded": "player_loaded", "client_command": "client_command",
-        "player_abilities": "player_abilities",
-    }),
+ROOT = Path(__file__).resolve().parent.parent
+HEADER = ROOT / "include/mcpp/proto/packet_ids.hpp"
+SOURCE = ROOT / "src/proto/packet_ids_gen.cpp"
+
+# (field in PacketIds, struct name, state in the report, direction)
+GROUPS = [
+    ("handshake_sb", "HandshakeServerbound", "handshake", "serverbound"),
+    ("status_cb", "StatusClientbound", "status", "clientbound"),
+    ("status_sb", "StatusServerbound", "status", "serverbound"),
+    ("login_cb", "LoginClientbound", "login", "clientbound"),
+    ("login_sb", "LoginServerbound", "login", "serverbound"),
+    ("config_cb", "ConfigClientbound", "configuration", "clientbound"),
+    ("config_sb", "ConfigServerbound", "configuration", "serverbound"),
+    ("play_cb", "PlayClientbound", "play", "clientbound"),
+    ("play_sb", "PlayServerbound", "play", "serverbound"),
+]
+
+CPP_KEYWORDS = {
+    "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor", "bool", "break",
+    "case", "catch", "char", "class", "compl", "concept", "const", "consteval", "constexpr",
+    "constinit", "const_cast", "continue", "co_await", "co_return", "co_yield", "decltype",
+    "default", "delete", "do", "double", "dynamic_cast", "else", "enum", "explicit", "export",
+    "extern", "false", "float", "for", "friend", "goto", "if", "inline", "int", "long",
+    "mutable", "namespace", "new", "noexcept", "not", "not_eq", "nullptr", "operator", "or",
+    "or_eq", "private", "protected", "public", "register", "reinterpret_cast", "requires",
+    "return", "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct",
+    "switch", "template", "this", "thread_local", "throw", "true", "try", "typedef", "typeid",
+    "typename", "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while",
+    "xor", "xor_eq",
 }
 
 
-def resolve(report, state, direction, packet):
-    entry = report.get(state, {}).get(direction, {}).get("minecraft:" + packet)
-    return entry["protocol_id"] if entry else -1
+def field_name(packet):
+    namespace, _, name = packet.partition(":")
+    if namespace != "minecraft" or not name:
+        sys.exit(f"unexpected packet name {packet!r}")
+    # Four play packets live under debug/; a slash cannot be in a field name.
+    field = name.replace("/", "_")
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", field) or field in CPP_KEYWORDS:
+        sys.exit(f"packet {packet!r} does not make a usable field name")
+    return field
+
+
+def load(args):
+    versions = []
+    for arg in args:
+        protocol, _, path = arg.partition("=")
+        if not protocol.isdigit() or not path:
+            sys.exit(__doc__)
+        versions.append((int(protocol), json.loads(Path(path).read_text())))
+    versions.sort(key=lambda v: v[0])
+    if len({p for p, _ in versions}) != len(versions):
+        sys.exit("a protocol is given twice")
+    return versions
+
+
+def collect(versions):
+    """Field names per group, and each version's id for each of them."""
+    names = {}
+    ids = {}
+    for group, _, state, direction in GROUPS:
+        fields = {}
+        for protocol, report in versions:
+            packets = report.get(state, {}).get(direction, {})
+            seen = {}
+            for packet, entry in packets.items():
+                field = field_name(packet)
+                if field in seen:
+                    sys.exit(f"{packet!r} and {seen[field]!r} make the same field")
+                seen[field] = packet
+                fields.setdefault(field, {})[protocol] = int(entry["protocol_id"])
+            numbers = sorted(int(e["protocol_id"]) for e in packets.values())
+            if numbers != list(range(len(numbers))):
+                sys.exit(f"protocol {protocol}: {state} {direction} ids are not 0..n-1")
+        names[group] = sorted(fields)
+        ids[group] = fields
+    return names, ids
+
+
+def wrap(prefix, items, indent):
+    body = textwrap.wrap(", ".join(items) + ";", width=100 - indent,
+                         initial_indent=prefix, subsequent_indent="    ",
+                         break_on_hyphens=False)
+    return [" " * indent + line for line in body]
+
+
+def header(names, protocols):
+    out = ["// Generated by tools/gen_packet_ids.py. Do not edit by hand.",
+           "#pragma once",
+           "#include <cstdint>",
+           "#include <span>",
+           "",
+           "// Login and configuration ids happen to match between 774 and 776, but 102 of",
+           "// the 139 clientbound play ids differ. Every id therefore comes from the",
+           "// version's own table; nothing is shared by assumption. Every packet of every",
+           "// state is here, named as the report names it, and -1 in a version without it.",
+           f"// Generated from protocols {', '.join(str(p) for p in protocols)}.",
+           "namespace mcpp::proto {",
+           "",
+           "struct PacketIds {",
+           "    int32_t protocol;"]
+    for group, struct, _, _ in GROUPS:
+        out.append("")
+        out.append(f"    struct {struct} {{")
+        out += wrap("int32_t ", names[group], 8)
+        out.append(f"    }} {group};")
+    out += ["};",
+            "",
+            "const PacketIds* ids_for(int32_t protocol);",
+            "std::span<const PacketIds> all_tables();",
+            "",
+            "} // namespace mcpp::proto",
+            ""]
+    return "\n".join(out)
+
+
+def source(names, ids, protocols):
+    out = ["// Generated by tools/gen_packet_ids.py. Do not edit by hand.",
+           '#include "mcpp/proto/packet_ids.hpp"', "", "namespace mcpp::proto {", "",
+           "namespace {", "", "constexpr PacketIds kTables[] = {"]
+    for protocol in protocols:
+        out.append("    {")
+        out.append(f"        .protocol = {protocol},")
+        for group, _, _, _ in GROUPS:
+            inner = ", ".join(f".{name} = {ids[group][name].get(protocol, -1)}"
+                              for name in names[group])
+            out.append(f"        .{group} = {{{inner}}},")
+        out.append("    },")
+    out += ["};", "", "} // namespace", "",
+            "const PacketIds* ids_for(int32_t protocol) {",
+            "    for (const auto& table : kTables) {",
+            "        if (table.protocol == protocol) return &table;",
+            "    }",
+            "    return nullptr;",
+            "}", "",
+            "std::span<const PacketIds> all_tables() { return {kTables, std::size(kTables)}; }",
+            "", "} // namespace mcpp::proto", ""]
+    return "\n".join(out)
+
+
+def write_whole(path, text):
+    # Into a temporary file beside the target, then renamed over it: a run that
+    # dies half way leaves the old table rather than half of a new one.
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
+    try:
+        with os.fdopen(descriptor, "w") as out:
+            out.write(text)
+        os.replace(temporary, path)
+    except BaseException:
+        os.unlink(temporary)
+        raise
 
 
 def main(args):
     if not args:
         sys.exit(__doc__)
-
-    versions = []
-    for arg in args:
-        protocol, _, path = arg.partition("=")
-        report = json.loads(Path(path).read_text())
-        groups = {}
-        for group, (state, direction, fields) in CURATED.items():
-            groups[group] = {name: resolve(report, state, direction, packet)
-                             for name, packet in fields.items()}
-            for name, value in groups[group].items():
-                if value < 0:
-                    print(f"  protocol {protocol}: {group}.{name} does not exist", file=sys.stderr)
-        versions.append((int(protocol), groups))
-    versions.sort()
-
-    out = ['// Generated by tools/gen_packet_ids.py. Do not edit by hand.',
-           '#include "mcpp/proto/packet_ids.hpp"', '', 'namespace mcpp::proto {', '',
-           'namespace {', '', 'constexpr PacketIds kTables[] = {']
-    for protocol, groups in versions:
-        out.append(f"    {{")
-        out.append(f"        .protocol = {protocol},")
-        for group, (_, _, fields) in CURATED.items():
-            inner = ", ".join(f".{name} = {groups[group][name]}" for name in fields)
-            out.append(f"        .{group} = {{{inner}}},")
-        out.append("    },")
-    out += ['};', '', '} // namespace', '',
-            'const PacketIds* ids_for(int32_t protocol) {',
-            '    for (const auto& table : kTables) {',
-            '        if (table.protocol == protocol) return &table;',
-            '    }',
-            '    return nullptr;',
-            '}', '',
-            'std::span<const PacketIds> all_tables() { return {kTables, std::size(kTables)}; }',
-            '', '} // namespace mcpp::proto', '']
-    print("\n".join(out))
+    versions = load(args)
+    names, ids = collect(versions)
+    protocols = [p for p, _ in versions]
+    for group, _, state, direction in GROUPS:
+        for name in names[group]:
+            missing = [p for p in protocols if p not in ids[group][name]]
+            if missing:
+                print(f"  {group}.{name} is not in {', '.join(map(str, missing))}",
+                      file=sys.stderr)
+    write_whole(HEADER, header(names, protocols))
+    write_whole(SOURCE, source(names, ids, protocols))
+    total = sum(len(n) for n in names.values())
+    print(f"{total} packets in {len(GROUPS)} groups for {len(protocols)} protocols",
+          file=sys.stderr)
 
 
 if __name__ == "__main__":

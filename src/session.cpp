@@ -318,16 +318,16 @@ void Session::run_login() {
         auto packet = connection_.receive();
         const auto& cb = ids_->login_cb;
 
-        if (packet.id == cb.compression) {
+        if (packet.id == cb.login_compression) {
             const int32_t threshold = packet.data.read_varint();
             connection_.set_compression_threshold(threshold);
             status(std::format("compression from {} bytes", threshold));
             continue;
         }
-        if (packet.id == cb.finished) {
+        if (packet.id == cb.login_finished) {
             profile_uuid_ = read_uuid(packet.data);
             profile_name_ = packet.data.read_string(16);
-            send(ids_->login_sb.acknowledged, ByteBuffer{});
+            send(ids_->login_sb.login_acknowledged, ByteBuffer{});
             status(std::format("logged in as {} ({})", profile_name_, profile_uuid_));
             return;
         }
@@ -367,7 +367,7 @@ void Session::run_login() {
             status("encryption on");
             continue;
         }
-        if (packet.id == cb.disconnect) {
+        if (packet.id == cb.login_disconnect) {
             fail(std::format("server refused the login: {}",
                              json::strip_formatting(
                                  json::flatten_component(json::parse(packet.data.read_string())))));
@@ -514,8 +514,8 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
         send(ids_->config_sb.accept_code_of_conduct, ByteBuffer{});
         return true;
     }
-    if (packet.id == cb.finish) {
-        send(ids_->config_sb.finish, ByteBuffer{});
+    if (packet.id == cb.finish_configuration) {
+        send(ids_->config_sb.finish_configuration, ByteBuffer{});
         state_ = SessionState::Play;
         status("in the play state");
         return true;

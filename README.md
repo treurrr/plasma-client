@@ -132,12 +132,15 @@ glance that a landscape hides completely.
 ## Packet ids are generated, never typed
 
 The official server jar emits a report of every packet id; a script turns that
-into a table.
+into a table holding every packet of every state, for every version given at once.
 
 ```sh
 java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output out
-python3 tools/gen_packet_ids.py 774=out/reports/packets.json > src/proto/packet_ids_gen.cpp
+python3 tools/gen_packet_ids.py 774=out/reports/packets.json 776=../26.2/out/reports/packets.json
 ```
+
+It writes `include/mcpp/proto/packet_ids.hpp` and `src/proto/packet_ids_gen.cpp`
+itself, and only once both are complete.
 
 This is not tidiness. While this was built, the protocol wiki listed
 `select_known_packs` as 0x0F and `code_of_conduct` as 0x14, where 774 and 776

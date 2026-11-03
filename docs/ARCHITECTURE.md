@@ -35,9 +35,13 @@ Not from the wiki, and not by hand. `tools/gen_packet_ids.py` reads the
 
 ```
 java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports
-python3 tools/gen_packet_ids.py 774=774/packets.json 776=776/packets.json \
-    > src/proto/packet_ids_gen.cpp
+python3 tools/gen_packet_ids.py 774=774/packets.json 776=776/packets.json
 ```
+
+Every packet of every state gets a field, named as the report names it, so the
+table never has to be regenerated to handle one more packet. The script writes
+the header and the table itself, through a temporary file each: a shell
+redirect once truncated the table when the run failed.
 
 That is observable output of the game, not decompiled code. It is also
 demonstrably more reliable than the documentation: while this was being built,
