@@ -63,6 +63,18 @@ block, named `<area>-<what>.plrc` (`world-nether.plrc`, `data-inventory.plrc`),
 so no two people ever write the same binary file. `corpus/README` says how to
 make one.
 
+## Vanilla citations
+
+- A function that ports a vanilla method opens with the one-line citation
+  `` // `Class.method`: what it does. `` (several: `` `A.b`, `C.d` ``). It is
+  the one comment the ~1% rule always allows. Our own approach cites nothing.
+- A parity fix starts with `python3 tools/port_ledger.py where`, `class` or
+  `todo`, never with a grep, and a branch runs
+  `python3 tools/port_ledger.py check --base main` before it is merged: it
+  must report no stale citation. `docs/PORT-LEDGER.md` has the details.
+- Verdict rows go in `tools/port_map/<area>.tsv`, one file per area or batch,
+  so two people adding rows don't edit the same file.
+
 ## Tests
 
 Each block adds `tests/test_<area>.cpp` and one line, `mcpp_test(<area>)`, in

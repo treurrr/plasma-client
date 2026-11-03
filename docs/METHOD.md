@@ -23,6 +23,25 @@ entity animation, text layout - the C++ follows vanilla's algorithm in the
 same order, with the same float and double types. Everything else is built
 our own way for speed, and speed never changes a value or a pixel.
 
+## Vanilla next to ours: the port ledger
+
+`tools/port_ledger.py` (`PORT-LEDGER.md`) lists every vanilla method next to
+the function that ports it, or the reason it needs none, or that nothing does
+yet, so nothing is forgotten and nobody greps for where a method lives.
+
+- Every function that ports a vanilla method opens with one line citing it:
+  `` // `Entity.collide`: the move after collision with blocks. `` It is the
+  one comment the ~1% rule always allows, and it is what makes the port
+  findable for people, agents and the ledger.
+- Every parity fix starts with `port_ledger.py where Class.method`, `class
+  Class` or `todo --package p`: read the vanilla lines it names, then the port
+  beside them, then change the C++.
+- A class or package we never port gets a `skip` row with its reason in
+  `tools/port_map/*.tsv`, and a known gap an `absent` row, so coverage counts
+  what matters.
+- Before a branch is merged it runs `port_ledger.py check --base main`: no
+  stale citation, and what it ports is cited.
+
 ## The game's arithmetic
 
 `include/mcpp/jmath.hpp` holds the places where the game does not compute
