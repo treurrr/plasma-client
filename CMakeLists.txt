@@ -111,6 +111,7 @@ add_library(mcpp_net STATIC
     src/gpu/ui.cpp
     ${MCPP_WINDOW_SOURCES}
     src/image_png.cpp
+    src/image_png_read.cpp
     src/proto/packet_ids_gen.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
