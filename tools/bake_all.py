@@ -37,7 +37,8 @@ def main(args):
     run("bake_atlas.py", jar, table, out / f"atlas-{protocol}.plat")
     run("bake_colormaps.py", jar, out / f"colormaps-{protocol}.plcm")
     run("bake_sky.py", jar, out / f"sky-{protocol}.plsk")
-    run("bake_items.py", jar, Path(report).parent / "registries.json", protocol,
+    run("bake_items.py", jar, Path(report).parent / "registries.json",
+        Path(report).parent / "items.json", protocol,
         out / f"items-{protocol}.plit")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu")
     print(f"\n{out} is ready for protocol {protocol}")

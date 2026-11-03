@@ -56,10 +56,16 @@ public:
     bool has_icons() const { return item_layers_ > 1; }
     // "diamond_sword", or empty for an id this build has no name for.
     std::string_view item_name(int32_t id) const;
+    // Armour points this item is worth, from the game's own item report.
+    int32_t item_armour(int32_t id) const;
 
     // One of the game's own interface sprites, stretched over the rectangle.
     void sprite(std::string_view name, float x, float y, float width, float height,
                 uint32_t rgba = 0xFFFFFFFFu);
+    // Part of a sprite, cut out rather than squashed: a bar that is half full
+    // is the left half of its picture, not the whole picture at half width.
+    void sprite_part(std::string_view name, float x, float y, float width, float height,
+                     float fraction_x, float fraction_y, uint32_t rgba = 0xFFFFFFFFu);
     // Its natural size in game pixels, or {0, 0} when this build has no such
     // sprite, which is also what a caller should check before leaning on one.
     std::pair<float, float> sprite_size(std::string_view name) const;
@@ -110,6 +116,7 @@ private:
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     uint32_t item_layers_ = 0;
     std::vector<std::string> item_names_;
+    std::vector<uint8_t> item_armour_;
     std::map<std::string, Sprite, std::less<>> sprites_;
     std::unordered_map<uint32_t, Glyph> glyphs_;
     VkImage gui_image_ = VK_NULL_HANDLE;

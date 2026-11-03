@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -227,7 +228,7 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
         input.read(magic, 4);
         uint32_t header[6]{};
         input.read(reinterpret_cast<char*>(header), sizeof(header));
-        if (std::memcmp(magic, "PLIT", 4) == 0 && header[0] == 2 && header[3] > 0) {
+        if (std::memcmp(magic, "PLIT", 4) == 0 && header[0] == 3 && header[3] > 0) {
             tile = header[2];
             item_layers_ = header[3];
             input.seekg(static_cast<std::streamoff>(((4 + sizeof(header)) + 7) & ~size_t{7}));
@@ -240,8 +241,11 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
                 input.read(reinterpret_cast<char*>(&length), sizeof(length));
                 std::string name(length, '\0');
                 if (length != 0) input.read(name.data(), length);
+                uint8_t armour = 0;
+                input.read(reinterpret_cast<char*>(&armour), sizeof(armour));
                 if (!input) break;
                 item_names_.push_back(std::move(name));
+                item_armour_.push_back(armour);
             }
         }
     }
@@ -252,6 +256,7 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
         tile = kTile;
         pixels.assign(static_cast<size_t>(tile) * tile * 4, 0);
         item_names_.clear();
+        item_armour_.clear();
     }
     upload_texture(pixels, tile, tile, item_layers_, item_image_, item_memory_, item_view_,
                    VK_IMAGE_VIEW_TYPE_2D_ARRAY);
@@ -684,10 +689,34 @@ float UiRenderer::text_width(std::string_view utf8, float scale) const {
     return width;
 }
 
+void UiRenderer::sprite_part(std::string_view name, float x, float y, float width, float height,
+                             float fraction_x, float fraction_y, uint32_t rgba) {
+    const auto found = sprites_.find(name);
+    if (found == sprites_.end() || fraction_x <= 0.0f || fraction_y <= 0.0f) return;
+    Quad quad;
+    quad.x = x;
+    quad.y = y;
+    quad.width = width;
+    quad.height = height;
+    quad.fill_top = rgba;
+    quad.fill_bottom = rgba;
+    quad.layer = -2;
+    quad.uv[0] = found->second.u;
+    quad.uv[1] = found->second.v;
+    quad.uv[2] = found->second.du * fraction_x;
+    quad.uv[3] = found->second.dv * fraction_y;
+    add(quad);
+}
+
 std::pair<float, float> UiRenderer::sprite_size(std::string_view name) const {
     const auto found = sprites_.find(name);
     if (found == sprites_.end()) return {0.0f, 0.0f};
     return {found->second.width, found->second.height};
+}
+
+int32_t UiRenderer::item_armour(int32_t id) const {
+    if (id < 0 || id >= static_cast<int32_t>(item_armour_.size())) return 0;
+    return item_armour_[static_cast<size_t>(id)];
 }
 
 std::filesystem::path UiRenderer::default_gui_path(int32_t protocol) {

@@ -512,6 +512,17 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         }
         return true;
     }
+    if (packet.id == cb.set_health) {
+        vitals_.health = in.read_f32();
+        vitals_.food = in.read_varint();
+        vitals_.saturation = in.read_f32();
+        return true;
+    }
+    if (packet.id == cb.set_experience) {
+        vitals_.experience = in.read_f32();
+        vitals_.level = in.read_varint();
+        return true;
+    }
     if (packet.id == cb.set_held_slot) {
         const int32_t slot = in.read_varint();
         if (slot >= 0 && slot < static_cast<int32_t>(Inventory::kHotbarSlots)) {

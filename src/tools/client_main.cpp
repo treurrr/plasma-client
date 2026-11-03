@@ -953,6 +953,17 @@ int do_play(const std::string& target, size_t chunk_limit) {
             const auto& in_hand = inventory.hotbar(static_cast<size_t>(inventory.held));
             state.held_name = in_hand.count > 0 ? pretty_item(quads.item_name(in_hand.id))
                                                 : std::string{};
+            const auto& vitals = session.vitals();
+            state.health = vitals.health;
+            state.food = vitals.food;
+            state.experience = vitals.experience;
+            state.level = vitals.level;
+            state.in_world = true;
+            state.armour = 0;
+            for (size_t i = 0; i < mcpp::Inventory::kArmourSlots; ++i) {
+                const auto& piece = inventory.slots[mcpp::Inventory::kArmourFirst + i];
+                if (piece.count > 0) state.armour += quads.item_armour(piece.id);
+            }
         }
         state.entities = session.entity_count();
         state.typing = window.typing();
@@ -1365,6 +1376,16 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             state.held = inventory.held;
             const auto& in_hand = inventory.hotbar(static_cast<size_t>(inventory.held));
             if (in_hand.count > 0) state.held_name = pretty_item(quads->item_name(in_hand.id));
+            const auto& vitals = session.vitals();
+            state.health = vitals.health;
+            state.food = vitals.food;
+            state.experience = vitals.experience;
+            state.level = vitals.level;
+            state.in_world = true;
+            for (size_t i = 0; i < mcpp::Inventory::kArmourSlots; ++i) {
+                const auto& piece = inventory.slots[mcpp::Inventory::kArmourFirst + i];
+                if (piece.count > 0) state.armour += quads->item_armour(piece.id);
+            }
             mcpp::ui::draw_hud(*quads, *text, static_cast<float>(shot_width),
                                static_cast<float>(shot_height), state);
         }

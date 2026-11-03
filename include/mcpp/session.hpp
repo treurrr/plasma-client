@@ -79,6 +79,9 @@ struct Inventory {
     ItemStack carried{};
     int32_t held = 0;   // which of the nine the player has in hand
 
+    static constexpr size_t kArmourFirst = 5;   // head, chest, legs, feet
+    static constexpr size_t kArmourSlots = 4;
+
     const ItemStack& hotbar(size_t index) const { return slots[kHotbarFirst + index]; }
 };
 
@@ -100,6 +103,17 @@ public:
     // palette indexes into.
     const world::BiomeTable& biomes() const { return biomes_; }
     const Inventory& inventory() const { return inventory_; }
+
+    // What the hud shows about the player. Health and food are in half units,
+    // the way the game counts hearts and drumsticks.
+    struct Vitals {
+        float health = 20.0f;
+        int32_t food = 20;
+        float saturation = 5.0f;
+        float experience = 0.0f;   // 0 to 1 across the bar
+        int32_t level = 0;
+    };
+    const Vitals& vitals() const { return vitals_; }
     // Switches the hand locally and tells the server, the way the wheel does.
     void send_held_slot(int32_t slot);
     // One tick of being a player rather than a viewer. Vanilla wants the tick
@@ -118,6 +132,7 @@ private:
     bool light_format_warned_ = false;
     bool slot_format_warned_ = false;
     Inventory inventory_;
+    Vitals vitals_;
     bool player_list_broken_ = false;
     int32_t ping_ms_ = -1;
 

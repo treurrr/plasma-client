@@ -55,6 +55,14 @@ struct HudState {
     std::array<int32_t, 9> hotbar_counts{};
     int32_t held = 0;
     std::string held_name;
+    // What the bars above the hotbar show. Health is in half hearts and food
+    // in half drumsticks, which is how the game counts them.
+    float health = 20.0f;
+    int32_t food = 20;
+    int32_t armour = 0;
+    float experience = 0.0f;
+    int32_t level = 0;
+    bool in_world = false;
 };
 
 void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,

@@ -332,11 +332,14 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
             gui += 1.0f;
         }
 
+        // Every offset below is the game's own, counted in game pixels up from
+        // the bottom of the screen: the hotbar sits 22 up with its foot on the
+        // edge, the experience bar 32, the hearts and food 39, armour 49.
         constexpr float kSlot = 20.0f;
         const float slot = kSlot * gui;
         const float bar = slot * 9.0f;
-        const float left = std::round((width - bar) * 0.5f);
-        const float top = std::round(height - slot - 4.0f * gui);
+        const float left = std::round(width * 0.5f - 91.0f * gui);
+        const float top = std::round(height - 21.0f * gui);
 
         if (plasma) {
             constexpr float kGap = 2.0f;
@@ -352,11 +355,12 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
             }
         } else {
             const auto [bar_w, bar_h] = quads.sprite_size("hud/hotbar");
-            quads.sprite("hud/hotbar", left - gui, top - gui, bar_w * gui, bar_h * gui);
+            quads.sprite("hud/hotbar", left - gui, height - 22.0f * gui, bar_w * gui,
+                         bar_h * gui);
             const auto [sel_w, sel_h] = quads.sprite_size("hud/hotbar_selection");
             quads.sprite("hud/hotbar_selection",
-                         left + static_cast<float>(state.held) * slot - gui, top - 2.0f * gui,
-                         sel_w * gui, sel_h * gui);
+                         left + static_cast<float>(state.held) * slot - gui,
+                         height - 23.0f * gui, sel_w * gui, sel_h * gui);
         }
 
         for (int i = 0; i < 9; ++i) {
@@ -376,10 +380,80 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
                            icon_y + 9.0f * gui, gui, 0xFFFFFFFFu);
             }
         }
+
+        // Health, armour, food and the experience bar, at the offsets the game
+        // uses: the bar ten above the hotbar, the rows ten above that, counted
+        // out from the same left edge the hotbar starts at.
+        if (!plasma && state.in_world) {
+            const float bar_top = height - 29.0f * gui;
+            quads.sprite("hud/experience_bar_background", left, bar_top, 182.0f * gui,
+                         5.0f * gui);
+            const auto [progress_w, progress_h] = quads.sprite_size("hud/experience_bar_progress");
+            const float filled = std::round(state.experience * 182.0f);
+            if (filled > 0.0f) {
+                quads.sprite_part("hud/experience_bar_progress", left, bar_top, filled * gui,
+                                  progress_h * gui, filled / std::max(progress_w, 1.0f), 1.0f);
+            }
+            if (state.level > 0) {
+                const std::string label = std::format("{}", state.level);
+                const float label_x =
+                    std::round(width * 0.5f - quads.text_width(label, gui) * 0.5f);
+                const float label_y = height - 35.0f * gui;
+                // The game outlines this one in black rather than shadowing it,
+                // because it sits on a bar that is already dark and bright.
+                for (const auto [dx, dy] : {std::pair{-1, 0}, {1, 0}, {0, -1}, {0, 1}}) {
+                    quads.text(label, label_x + static_cast<float>(dx) * gui,
+                               label_y + static_cast<float>(dy) * gui, gui, 0x000000FFu, false);
+                }
+                quads.text(label, label_x, label_y, gui, 0x80FF20FFu, false);
+            }
+
+            const float rows_top = height - 39.0f * gui;
+            const int hearts = static_cast<int>(std::ceil(state.health / 2.0f));
+            for (int i = 0; i < 10; ++i) {
+                const float x = left + static_cast<float>(i) * 8.0f * gui;
+                quads.sprite("hud/heart/container", x, rows_top, 9.0f * gui, 9.0f * gui);
+                if (i < hearts - 1 || (i == hearts - 1 && state.health >= (i + 1) * 2.0f)) {
+                    quads.sprite("hud/heart/full", x, rows_top, 9.0f * gui, 9.0f * gui);
+                } else if (i == hearts - 1) {
+                    quads.sprite("hud/heart/half", x, rows_top, 9.0f * gui, 9.0f * gui);
+                }
+            }
+            for (int i = 0; i < 10; ++i) {
+                // Food fills from the right, which is why it is counted back.
+                const float x = left + 173.0f * gui - static_cast<float>(i) * 8.0f * gui;
+                quads.sprite("hud/food_empty", x, rows_top, 9.0f * gui, 9.0f * gui);
+                const int full = state.food / 2;
+                if (i < full) {
+                    quads.sprite("hud/food_full", x, rows_top, 9.0f * gui, 9.0f * gui);
+                } else if (i == full && (state.food & 1) != 0) {
+                    quads.sprite("hud/food_half", x, rows_top, 9.0f * gui, 9.0f * gui);
+                }
+            }
+            if (state.armour > 0) {
+                const float armour_top = height - 49.0f * gui;
+                for (int i = 0; i < 10; ++i) {
+                    const float x = left + static_cast<float>(i) * 8.0f * gui;
+                    const int points = state.armour - i * 2;
+                    if (points >= 2) {
+                        quads.sprite("hud/armor_full", x, armour_top, 9.0f * gui, 9.0f * gui);
+                    } else if (points == 1) {
+                        quads.sprite("hud/armor_half", x, armour_top, 9.0f * gui, 9.0f * gui);
+                    } else {
+                        quads.sprite("hud/armor_empty", x, armour_top, 9.0f * gui, 9.0f * gui);
+                    }
+                }
+            }
+        }
+
+        // The name of what is in hand sits clear above everything else, which
+        // is where the game puts it once the bars are in the way.
         if (!state.held_name.empty()) {
+            const float name_y = (plasma || !state.in_world) ? top - 13.0f * gui
+                                                             : height - 59.0f * gui;
             quads.text(state.held_name,
                        std::round(width * 0.5f - quads.text_width(state.held_name, gui) * 0.5f),
-                       top - 13.0f * gui, gui, 0xFFFFFFFFu);
+                       name_y, gui, 0xFFFFFFFFu);
         }
 
         if (!plasma) {
