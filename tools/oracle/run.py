@@ -50,7 +50,7 @@ def main(args):
     with tempfile.TemporaryDirectory() as out:
         subprocess.run(["javac", "-cp", cp, "-d", out, str(HERE / f"{oracle}.java")], check=True)
         expected = subprocess.run(["java", "-cp", out + os.pathsep + cp, oracle],
-                                  capture_output=True, text=True, check=True).stdout.splitlines()
+                                  capture_output=True, text=True, check=True, cwd=out).stdout.splitlines()
     # A probe that decodes what the game wrote reads the oracle's lines on stdin.
     actual = subprocess.run([probe], input="\n".join(expected) + "\n", capture_output=True,
                             text=True, check=True).stdout.splitlines()
