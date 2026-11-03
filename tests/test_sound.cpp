@@ -3,6 +3,7 @@
 #include "audio/categories.hpp"
 #include "audio/engine.hpp"
 #include "audio/footsteps.hpp"
+#include "audio/level_events.hpp"
 #include "audio/mixer.hpp"
 #include "mcpp/jmath.hpp"
 #include "audio/sounds.hpp"
@@ -205,6 +206,61 @@ void test_block_sounds() {
     check(step && near(step->volume, 0.045) && near(step->pitch, 1.0), "anvil step");
     check(!cue(table.find("cactus_flower"), BlockSoundKind::Step), "no event, no sound");
     check(table.find("water").step == "intentionally_empty", "fluids are silent");
+}
+
+void test_level_events() {
+    LevelEvent event;
+    event.x = -3000;
+    event.y = 150;
+    event.z = 3000;
+    event.type = 1031;
+    // new java.util.Random(42).nextFloat() is 0.7275637: the anvil lands at 0.3
+    // and 0.9 plus a tenth of that.
+    jmath::LegacyRandom random(42);
+    auto anvil = level_event_sound(event, random);
+    check(anvil && anvil->event == "block.anvil.land" && anvil->category == Category::Block &&
+              near(anvil->volume, 0.3) && near(anvil->pitch, 0.7275637f * 0.1f + 0.9f) &&
+              near(anvil->x, -2999.5) && near(anvil->y, 150.5),
+          "the anvil landing");
+
+    event.type = 1015;
+    random.set_seed(42);
+    jmath::LegacyRandom twin(42);
+    const float a = twin.next_float();
+    const float b = twin.next_float();
+    const auto warn = level_event_sound(event, random);
+    check(warn && near(warn->volume, 10.0) && near(warn->pitch, (a - b) * 0.2f + 1.0f),
+          "the ghast's warning: the first float less the second");
+
+    event.type = 2001;
+    event.data_block = "minecraft:oak_planks";
+    const auto broken = level_event_sound(event, random);
+    check(broken && broken->event == "block.wood.break" && near(broken->volume, 1.0) &&
+              near(broken->pitch, 0.8),
+          "a block breaking plays its own type");
+    event.data_block = "minecraft:air";
+    check(!level_event_sound(event, random), "air breaks silently");
+
+    event.type = 3012;
+    event.camera[0] = -2999.5 + 80.0;
+    event.camera[1] = 150.5;
+    event.camera[2] = 3000.5;
+    const auto far = level_event_sound(event, random);
+    check(far && far->delay == 40, "80 blocks away the trial spawner is heard two seconds late");
+
+    event.type = 1028;
+    event.camera[0] = 0.0;
+    event.camera[1] = 64.0;
+    event.camera[2] = 0.0;
+    event.x = 99;
+    event.y = 63;
+    event.z = -1;
+    const auto death = global_level_event_sound(event);
+    check(death && near(death->x, 2.0, 1e-3) && near(death->y, 64.0, 0.02) && near(death->volume, 5.0),
+          "the dragon's death two blocks off towards it");
+    event.type = 2010;
+    check(!level_event_sound(event, random), "particles only");
+    check(jukebox_sound_event("minecraft:pigstep", nullptr) == "music_disc.pigstep", "a record");
 }
 
 std::shared_ptr<Pcm> tone(int channels, size_t frames, int16_t value) {
@@ -451,6 +507,7 @@ int main() {
     test_attenuation();
     test_categories();
     test_block_sounds();
+    test_level_events();
     test_mixer();
     test_engine_on_assets();
     if (failures == 0) std::cout << "all sound tests passed\n";

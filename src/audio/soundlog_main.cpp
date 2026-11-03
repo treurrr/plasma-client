@@ -252,6 +252,7 @@ int do_replay(const std::string& file, bool realtime) {
     std::map<std::pair<int32_t, int32_t>, mcpp::world::Chunk> world;
     std::map<int32_t, mcpp::Entity> entities;
     mcpp::jmath::LegacyRandom client_random(1);
+    mcpp::audio::Jukeboxes jukeboxes;
     mcpp::Session* session_ptr = nullptr;
     double now = 0.0;
 
@@ -351,29 +352,21 @@ int do_replay(const std::string& file, bool realtime) {
     events.sound.on_level_event = [&](int32_t type, int32_t x, int32_t y, int32_t z, int32_t data, bool global) {
         std::cout << std::format("{:8.3f} packet  level_event {} at {} {} {} data {}{}\n", now, type, x, y, z,
                                  data, global ? " global" : "");
-        mcpp::audio::PlayRequest request;
-        request.x = x + 0.5;
-        request.y = y + 0.5;
-        request.z = z + 0.5;
-        if (type == mcpp::audio::kLevelEventBlockBreak) {
-            const auto& type_of = mcpp::audio::BlockSounds::builtin().find(
-                table.is_open() ? std::string(table.block_name(data)) : std::string());
-            if (const auto sound = mcpp::audio::cue(type_of, mcpp::audio::BlockSoundKind::Break)) {
-                request.event = sound->event;
-                request.category = mcpp::audio::Category::Block;
-                request.volume = sound->volume;
-                request.pitch = sound->pitch;
-                engine.play(request, client_random);
-            }
-            return;
-        }
-        if (const auto sound = mcpp::audio::level_event_sound(type)) {
-            request.event = sound->event;
-            request.category = sound->category;
-            request.volume = sound->volume;
-            request.pitch = sound->pitch_low + client_random.next_float() * (sound->pitch_high - sound->pitch_low);
-            engine.play(request, client_random);
-        }
+        mcpp::audio::LevelEvent event;
+        event.type = type;
+        event.x = x;
+        event.y = y;
+        event.z = z;
+        event.data = data;
+        const std::string data_block = table.is_open() ? std::string(table.block_name(data)) : std::string();
+        const std::string here = block_name_at(x, y, z);
+        event.data_block = data_block;
+        event.block_here = here;
+        event.camera[0] = engine.listener().x;
+        event.camera[1] = engine.listener().y;
+        event.camera[2] = engine.listener().z;
+        mcpp::audio::play_level_event(engine, jukeboxes, event, global, session_ptr->registries(),
+                                      client_random);
     };
 
     mcpp::Session session(options, events);
