@@ -15,7 +15,8 @@ enum class Style : uint32_t { Sans, Bold, Mono };
 enum class Icon : uint32_t {
     Heart, HeartOutline, Lock, Search, Gear, Grid, Display, Layers, Signal, Warning, Chevron,
     Running, Crosshair, Flask, Shield, Shirt, Eye, Fire, List, Cube, Keyboard, Bolt, Gauge,
-    Mouse, Compass, Clock, Helmet, Vest, Socks, Boot, Expand, Sneaking
+    Mouse, Compass, Clock, Helmet, Vest, Socks, Boot, Expand, Sneaking,
+    MarkBody, MarkCore, Wordmark
 };
 
 class TextRenderer {

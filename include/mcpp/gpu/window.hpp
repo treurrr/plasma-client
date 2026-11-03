@@ -4,6 +4,7 @@
 #include "mcpp/gpu/world_renderer.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -42,10 +43,10 @@ public:
 
     bool open() const;
     FrameInput poll();
-    // `overlay`, when given, is drawn on the swapchain image after the world,
-    // at screen resolution rather than scaled up from the render target.
-    void present(WorldRenderer& renderer, const Camera& camera,
-                 TextRenderer* overlay = nullptr);
+    // `overlay`, when given, is recorded over the swapchain image after the
+    // world, at screen resolution rather than scaled up from the render target.
+    using Overlay = std::function<void(VkCommandBuffer, uint32_t, uint32_t)>;
+    void present(WorldRenderer& renderer, const Camera& camera, const Overlay& overlay = {});
     VkFormat colour_format() const { return format_; }
 
     uint32_t width() const { return extent_.width; }

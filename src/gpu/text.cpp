@@ -539,11 +539,11 @@ std::filesystem::path TextRenderer::default_font_path() {
     std::error_code error;
     const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
     if (!error) {
-        const auto path = executable.parent_path() / "assets" / "font-32.plft";
+        const auto path = executable.parent_path() / "assets" / "font-48.plft";
         if (std::filesystem::exists(path)) return path;
     }
     return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
-           "assets" / "font-32.plft";
+           "assets" / "font-48.plft";
 }
 
 TextRenderer::~TextRenderer() {

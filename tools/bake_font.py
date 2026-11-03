@@ -74,6 +74,14 @@ ICONS = [
     (SOLID, 0xF504),    # sneaking
 ]
 
+# Brand art, baked as coverage like everything else. The mark is two inks, so
+# it is two layers the client stacks in the two brand colours.
+IMAGES = [
+    ("brand/source/plasma-mark.png", (0x4A, 0x32, 0xF0)),
+    ("brand/source/plasma-mark.png", (0xE0, 0x55, 0xF0)),
+    ("brand/source/plasma-wordmark.png", None),
+]
+
 GLYPH = struct.Struct("<5h2h")   # x, y, w, h, advance, bearing_x, bearing_y
 assert GLYPH.size == 14, GLYPH.size
 
@@ -85,6 +93,34 @@ def render(font, ch):
     image = Image.new("L", (width + 2 * PAD, height + 2 * PAD), 0)
     ImageDraw.Draw(image).text((PAD - box[0], PAD - box[1]), ch, font=font, fill=255)
     return image, box, int(font.getlength(ch))
+
+
+def layer(path, ink, size):
+    """One ink of an image, trimmed and scaled to the baked size."""
+    image = Image.open(Path(__file__).resolve().parent.parent / path).convert("RGBA")
+    pixels = image.load()
+    mask = Image.new("L", image.size, 0)
+    out = mask.load()
+    inks = [other for _, other in IMAGES if other is not None]
+    for y in range(image.height):
+        for x in range(image.width):
+            r, g, b, a = pixels[x, y]
+            if a == 0:
+                continue
+            if ink is not None:
+                nearest = min(inks, key=lambda c: (c[0] - r) ** 2 + (c[1] - g) ** 2 +
+                              (c[2] - b) ** 2)
+                if nearest != ink:
+                    continue
+            out[x, y] = a
+    # Every ink is cropped to the whole image's bounds, so the layers still
+    # line up when the client stacks them.
+    mask = mask.crop(image.getchannel("A").getbbox())
+    scaled = mask.resize((max(1, round(mask.width * size / mask.height)), size),
+                         Image.LANCZOS)
+    padded = Image.new("L", (scaled.width + 2 * PAD, scaled.height + 2 * PAD), 0)
+    padded.paste(scaled, (PAD, PAD))
+    return padded
 
 
 def main(args):
@@ -108,6 +144,10 @@ def main(args):
         font = ImageFont.truetype(path, size)
         image, box, _ = render(font, chr(code))
         rendered.append((image, box, image.width - 2 * PAD))
+
+    for path, ink in IMAGES:
+        image = layer(path, ink, size)
+        rendered.append((image, (0, 0, image.width, image.height), image.width - 2 * PAD))
 
     atlas_width = 1024
     x = y = row_height = 0
@@ -137,11 +177,13 @@ def main(args):
                                   image.height - 2 * PAD, advance, box[0], box[1]))
 
     header = MAGIC + struct.pack("<9I", VERSION, size, line_height, ascent, len(rendered),
-                                 atlas_width, atlas_height, len(STYLES), len(ICONS))
+                                 atlas_width, atlas_height, len(STYLES),
+                                 len(ICONS) + len(IMAGES))
     out_path.write_bytes(header + bytes(records) + atlas.tobytes())
 
     print(f"{out_path}: {(len(header) + len(records) + atlas_width * atlas_height) / 1024:.0f} KB")
-    print(f"  {len(STYLES)} styles, {len(ICONS)} icons, atlas {atlas_width}x{atlas_height}, "
+    print(f"  {len(STYLES)} styles, {len(ICONS) + len(IMAGES)} icons, "
+          f"atlas {atlas_width}x{atlas_height}, "
           f"line height {line_height}, ascent {ascent}")
 
 

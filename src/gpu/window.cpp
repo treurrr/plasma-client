@@ -263,7 +263,7 @@ FrameInput Window::poll() {
 }
 
 void Window::present(WorldRenderer& renderer, const Camera& camera,
-                     TextRenderer* overlay) {
+                     const Overlay& overlay) {
     const auto started = std::chrono::steady_clock::now();
     Frame& frame = frames_[frame_index_];
 
@@ -325,7 +325,7 @@ void Window::present(WorldRenderer& renderer, const Camera& camera,
     blit_info.filter = VK_FILTER_NEAREST;
     vkCmdBlitImage2(frame.command, &blit_info);
 
-    if (overlay != nullptr) {
+    if (overlay) {
         transition(frame.command, images_[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_BLIT_BIT,
                    VK_ACCESS_2_TRANSFER_WRITE_BIT,
@@ -347,7 +347,7 @@ void Window::present(WorldRenderer& renderer, const Camera& camera,
         rendering.pColorAttachments = &colour;
 
         vkCmdBeginRendering(frame.command, &rendering);
-        overlay->record(frame.command, extent_.width, extent_.height);
+        overlay(frame.command, extent_.width, extent_.height);
         vkCmdEndRendering(frame.command);
 
         transition(frame.command, images_[index], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,

@@ -374,76 +374,6 @@ std::atomic<bool> g_stop{false};
 
 void stop_on_signal(int) { g_stop.store(true); }
 
-// The feature menu, drawn with the same pipeline as the hud. Colours and
-// shapes follow brand/menu.html so the client and the mockups cannot drift.
-void draw_feature_menu(mcpp::gpu::TextRenderer& ui, float width, float height) {
-    constexpr uint32_t kScrim = 0x0A0A0BCCu;
-    constexpr uint32_t kPanel = 0x121315FFu;
-    constexpr uint32_t kRule = 0x212226FFu;
-    constexpr uint32_t kText = 0xECEDEFFFu;
-    constexpr uint32_t kDim = 0x9BA0A6FFu;
-    constexpr uint32_t kMute = 0x6B7076FFu;
-    constexpr uint32_t kAccent = 0x4A32F0FFu;
-    constexpr uint32_t kOn = 0x1E3A2AFFu;
-    constexpr uint32_t kOnText = 0x6EE7A0FFu;
-
-    const auto& registry = mcpp::features::Registry::instance();
-    const auto all = registry.all();
-
-    ui.fill(0.0f, 0.0f, width, height, kScrim);
-
-    const float margin = 56.0f;
-    const float gap = 14.0f;
-    const float card_h = 86.0f;
-    const float rows = static_cast<float>((all.size() + 4) / 5);
-    const float panel_x = margin;
-    const float panel_w = width - margin * 2.0f;
-    // Height follows the content instead of the screen, so the panel is not
-    // mostly empty space below the last row.
-    const float panel_h = 92.0f + rows * (card_h + gap) + 46.0f;
-    const float panel_y = (height - panel_h) * 0.5f;
-    ui.fill(panel_x, panel_y, panel_w, panel_h, kPanel);
-
-    ui.draw("PLASMA", panel_x + 26.0f, panel_y + 22.0f, 0.62f, kText);
-    ui.draw("FEATURES", panel_x + 150.0f, panel_y + 28.0f, 0.34f, kMute);
-    ui.draw("M to close", panel_x + panel_w - 150.0f, panel_y + 28.0f, 0.34f, kMute);
-    ui.fill(panel_x, panel_y + 68.0f, panel_w, 1.0f, kRule);
-
-    // Cards, five across, in the order the registry lists them.
-    const float card_w = (panel_w - 52.0f - gap * 4.0f) / 5.0f;
-    float x = panel_x + 26.0f;
-    float y = panel_y + 92.0f;
-
-    for (size_t i = 0; i < all.size(); ++i) {
-        const auto& feature = all[i];
-        const bool on = registry.enabled(static_cast<mcpp::features::Id>(i));
-
-        // A border drawn as four hairlines; the pipeline only fills rectangles.
-        ui.fill(x, y, card_w, card_h, kRule);
-        ui.fill(x + 1.0f, y + 1.0f, card_w - 2.0f, card_h - 2.0f, 0x0A0A0BFFu);
-        ui.draw(feature.label, x + 12.0f, y + 12.0f, 0.40f, kText);
-        if (feature.server_may_object) {
-            ui.draw("some servers forbid this", x + 12.0f, y + 32.0f, 0.26f, kMute);
-        }
-
-        const float button_h = 24.0f;
-        const float button_y = y + card_h - button_h - 10.0f;
-        ui.fill(x + 10.0f, button_y, card_w - 20.0f, button_h, on ? kOn : kRule);
-        ui.draw(on ? "Enabled" : "Disabled", x + 20.0f, button_y + 5.0f, 0.32f,
-                on ? kOnText : kDim);
-
-        x += card_w + gap;
-        if ((i + 1) % 5 == 0) {
-            x = panel_x + 26.0f;
-            y += card_h + gap;
-        }
-    }
-
-    ui.fill(panel_x, panel_y + panel_h - 46.0f, panel_w, 1.0f, kRule);
-    ui.draw("No reach, aim assist, auto-clicker or ESP. That stays that way.",
-            panel_x + 26.0f, panel_y + panel_h - 32.0f, 0.30f, kMute);
-    ui.fill(panel_x + panel_w - 120.0f, panel_y + panel_h - 36.0f, 96.0f, 3.0f, kAccent);
-}
 #endif
 
 #ifdef MCPP_HAVE_WINDOW
@@ -603,6 +533,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
     mcpp::gpu::TextRenderer hud(device, mcpp::gpu::TextRenderer::default_font_path(),
                                 window.colour_format());
+    mcpp::gpu::UiRenderer quads(device, window.colour_format());
     double fps = 0.0;
     bool menu_open = false;
 
@@ -706,31 +637,44 @@ int do_play(const std::string& target, size_t chunk_limit) {
         // The numbers are measured here, not estimated: fps from the wall clock,
         // gpu from the timestamps the frame itself wrote.
         fps = fps == 0.0 ? 1.0 / dt : fps * 0.92 + (1.0 / dt) * 0.08;
-        constexpr uint32_t kText = 0xECEDEFFFu;
-        constexpr uint32_t kAccent = 0xB48CFFFFu;
-        constexpr uint32_t kShadow = 0x0A0A0BC0u;
+
+        mcpp::ui::HudState state;
+        state.fps = static_cast<int>(fps + 0.5);
+        state.gpu_ms = renderer.last_gpu_ms();
+        state.cpu_ms = window.last_frame_ms();
+        state.x = eye[0];
+        state.y = eye[1] - 1.62;
+        state.z = eye[2];
+        state.yaw = yaw;
+        state.forward = input.forward > 0.0f;
+        state.back = input.forward < 0.0f;
+        state.left = input.right < 0.0f;
+        state.right = input.right > 0.0f;
+        state.jump = input.up > 0.0f;
+        state.sections = renderer.drawn_sections();
+        state.entities = session.entity_count();
+
         hud.begin();
-        // A hud sits over whatever the world happens to be. Without a shadow it
-        // is unreadable against a bright sky, which is most of the time.
-        const auto line = [&](std::string_view text, float x, float y, float scale,
-                              uint32_t colour) {
-            hud.draw(text, x + 1.6f, y + 1.6f, scale, kShadow);
-            hud.draw(text, x, y, scale, colour);
-        };
-        line(std::format("{:.0f} fps", fps), 18.0f, 16.0f, 0.62f, kAccent);
-        line(std::format("{:.2f} ms gpu", renderer.last_gpu_ms()), 18.0f, 44.0f, 0.46f, kText);
-        line(std::format("{:.1f} {:.1f} {:.1f}", eye[0], eye[1] - 1.62f, eye[2]), 18.0f, 64.0f,
-             0.46f, kText);
-        line(std::format("{} sections  {} entities", renderer.drawn_sections(),
-                         session.entity_count()),
-             18.0f, 84.0f, 0.46f, kText);
-        line("PLASMA", 18.0f, static_cast<float>(window.height()) - 34.0f, 0.46f, kAccent);
+        quads.begin();
+        mcpp::ui::draw_hud(quads, hud, static_cast<float>(window.width()),
+                           static_cast<float>(window.height()), state);
         if (menu_open) {
-            draw_feature_menu(hud, static_cast<float>(window.width()),
-                              static_cast<float>(window.height()));
+            mcpp::ui::MenuState menu;
+            menu.server = address.host;
+            menu.fps = state.fps;
+            menu.ping_ms = state.ping_ms;
+            menu.x = state.x;
+            menu.y = state.y;
+            menu.z = state.z;
+            menu.yaw = state.yaw;
+            mcpp::ui::draw_menu(quads, hud, static_cast<float>(window.width()),
+                                static_cast<float>(window.height()), menu);
         }
 
-        window.present(renderer, camera, &hud);
+        window.present(renderer, camera, [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
+            quads.record(command, w, h);
+            hud.record(command, w, h);
+        });
         gpu_total += renderer.last_gpu_ms();
         if (frames > 30) frame_times.push_back(window.last_frame_ms());
         ++frames;
@@ -763,7 +707,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
 #endif
 
 int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
-                 const std::string& view, bool with_menu) {
+                 const std::string& view, const std::string& overlay_kind) {
     const auto address = parse_address(target);
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
@@ -934,10 +878,25 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         camera.target[2] = centre_z;
     }
 
+    // Fog that reaches exactly as far as the world we loaded, so the edge of
+    // the loaded area fades into the sky instead of ending in mid-air.
+    {
+        float reach = 0.0f;
+        for (const float corner_x : {min_cx * 16.0f, (max_cx + 1) * 16.0f}) {
+            for (const float corner_z : {min_cz * 16.0f, (max_cz + 1) * 16.0f}) {
+                const float dx = corner_x - camera.eye[0];
+                const float dz = corner_z - camera.eye[2];
+                reach = std::max(reach, std::sqrt(dx * dx + dz * dz));
+            }
+        }
+        camera.fog_end = reach * 0.92f;
+        camera.fog_start = reach * 0.45f;
+    }
+
     mcpp::gpu::WorldRenderer::Overlay overlay;
     std::optional<mcpp::gpu::TextRenderer> text;
     std::optional<mcpp::gpu::UiRenderer> quads;
-    if (with_menu) {
+    if (overlay_kind != "none") {
         // A frame rate the scene actually reaches, measured here rather than
         // written into the picture.
         const auto before = std::chrono::steady_clock::now();
@@ -953,21 +912,33 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                      renderer.colour_format());
         quads.emplace(device, renderer.colour_format());
 
-        mcpp::ui::MenuState state;
-        state.server = address.host;
-        state.fps = static_cast<int>(1000.0 / std::max(per_frame, 0.001));
-        state.ping_ms = 1;
-        state.cps_left = 0;
-        state.cps_right = 0;
-        state.x = camera.eye[0];
-        state.y = camera.eye[1];
-        state.z = camera.eye[2];
-        state.yaw = -135.0f;
-
         quads->begin();
         text->begin();
-        mcpp::ui::draw_menu(*quads, *text, static_cast<float>(shot_width),
-                            static_cast<float>(shot_height), state);
+        if (overlay_kind == "menu") {
+            mcpp::ui::MenuState state;
+            state.server = address.host;
+            state.fps = static_cast<int>(1000.0 / std::max(per_frame, 0.001));
+            state.ping_ms = 1;
+            state.x = camera.eye[0];
+            state.y = camera.eye[1];
+            state.z = camera.eye[2];
+            state.yaw = -135.0f;
+            mcpp::ui::draw_menu(*quads, *text, static_cast<float>(shot_width),
+                                static_cast<float>(shot_height), state);
+        } else {
+            mcpp::ui::HudState state;
+            state.fps = static_cast<int>(1000.0 / std::max(per_frame, 0.001));
+            state.gpu_ms = renderer.last_gpu_ms();
+            state.cpu_ms = per_frame;
+            state.ping_ms = 1;
+            state.x = camera.eye[0];
+            state.y = camera.eye[1];
+            state.z = camera.eye[2];
+            state.forward = true;
+            state.sections = renderer.drawn_sections();
+            mcpp::ui::draw_hud(*quads, *text, static_cast<float>(shot_width),
+                               static_cast<float>(shot_height), state);
+        }
         overlay = [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
             quads->record(command, w, h);
             text->record(command, w, h);
@@ -1500,11 +1471,14 @@ int main(int argc, char** argv) {
             return 1;
 #endif
         }
-        if ((command == "worldshot" || command == "menushot") && argc > 2) {
+        if ((command == "worldshot" || command == "menushot" || command == "hudshot") &&
+            argc > 2) {
             const std::string out = argc > 3 ? argv[3] : "world.png";
             const size_t limit = argc > 4 ? std::stoul(argv[4]) : 120;
             const std::string view = argc > 5 ? argv[5] : "wide";
-            return do_worldshot(argv[2], out, limit, view, command == "menushot");
+            const std::string overlay = command == "worldshot" ? "none"
+                                                               : command.substr(0, 4);
+            return do_worldshot(argv[2], out, limit, view, overlay);
         }
         if (command == "render") {
             const std::string out = argc > 2 ? argv[2] : "frame.png";

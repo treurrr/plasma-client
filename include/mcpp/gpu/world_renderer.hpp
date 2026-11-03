@@ -15,6 +15,11 @@ struct Camera {
     float fov_degrees = 70.0f;
     float near_plane = 0.1f;
     float far_plane = 2000.0f;
+    // Distance in blocks where the world starts and finishes fading into the
+    // sky. Zero means no fog, which is what a screenshot of the raw geometry
+    // wants and what a game never does.
+    float fog_start = 0.0f;
+    float fog_end = 0.0f;
 };
 
 // Draws a meshed world into an image we read back. The window path will reuse

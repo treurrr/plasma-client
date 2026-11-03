@@ -43,6 +43,9 @@ void parallel_for(size_t count, Body&& body) {
 
 
 constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
+
+// The sky the world is cleared to, and the colour distance fades into.
+constexpr float kSky[3] = {0.45f, 0.62f, 0.86f};
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 void check(VkResult result, std::string_view what) {
@@ -120,6 +123,8 @@ struct Mat4 {
 struct PushConstants {
     Mat4 view_projection;
     float origin[4];   // the section's corner in world space
+    float eye[4];      // camera in world space, w is where the fog starts
+    float sky[4];      // what the fog fades into, w is where it finishes
 };
 
 // Gribb-Hartmann: each clip-space boundary is a sum or difference of two rows
@@ -498,7 +503,7 @@ void WorldRenderer::create_targets() {
 
 void WorldRenderer::create_pipeline() {
     VkPushConstantRange push{};
-    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     push.size = sizeof(PushConstants);
 
     VkPipelineLayoutCreateInfo layout{};
@@ -967,7 +972,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue.color = {{0.45f, 0.62f, 0.86f, 1.0f}};
+    color.clearValue.color = {{kSky[0], kSky[1], kSky[2], 1.0f}};
 
     VkRenderingAttachmentInfo depth_attachment{};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -995,6 +1000,14 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         vkCmdSetScissor(command, 0, 1, &scissor);
 
         PushConstants push{};
+        push.eye[0] = camera.eye[0];
+        push.eye[1] = camera.eye[1];
+        push.eye[2] = camera.eye[2];
+        push.eye[3] = camera.fog_start;
+        push.sky[0] = kSky[0];
+        push.sky[1] = kSky[1];
+        push.sky[2] = kSky[2];
+        push.sky[3] = camera.fog_end;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
@@ -1008,7 +1021,8 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         drawn_triangles_ = 0;
 
         if (sections_.empty()) {
-            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                                &push);
             vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
             drawn_triangles_ = index_count_ / 3;
@@ -1021,7 +1035,8 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
                 push.origin[0] = section.origin[0];
                 push.origin[1] = section.origin[1];
                 push.origin[2] = section.origin[2];
-                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                                    &push);
                 vkCmdDrawIndexed(command, section.index_count, 1, section.first_index,
                                  section.vertex_offset, 0);
@@ -1151,7 +1166,7 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue.color = {{0.45f, 0.62f, 0.86f, 1.0f}};
+    color.clearValue.color = {{kSky[0], kSky[1], kSky[2], 1.0f}};
 
     VkRenderingAttachmentInfo depth_attachment{};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -1179,6 +1194,14 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
         vkCmdSetScissor(command, 0, 1, &scissor);
 
         PushConstants push{};
+        push.eye[0] = camera.eye[0];
+        push.eye[1] = camera.eye[1];
+        push.eye[2] = camera.eye[2];
+        push.eye[3] = camera.fog_start;
+        push.sky[0] = kSky[0];
+        push.sky[1] = kSky[1];
+        push.sky[2] = kSky[2];
+        push.sky[3] = camera.fog_end;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
@@ -1192,7 +1215,8 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
         drawn_triangles_ = 0;
 
         if (sections_.empty()) {
-            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+            vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                                &push);
             vkCmdDrawIndexed(command, index_count_, 1, 0, 0, 0);
             drawn_triangles_ = index_count_ / 3;
@@ -1205,7 +1229,8 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
                 push.origin[0] = section.origin[0];
                 push.origin[1] = section.origin[1];
                 push.origin[2] = section.origin[2];
-                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push),
+                vkCmdPushConstants(command, layout_, VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push),
                                    &push);
                 vkCmdDrawIndexed(command, section.index_count, 1, section.first_index,
                                  section.vertex_offset, 0);

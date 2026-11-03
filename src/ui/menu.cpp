@@ -32,6 +32,7 @@ constexpr uint32_t kMute       = 0x6B7076FFu;
 constexpr uint32_t kFaint      = 0x4D5157FFu;
 constexpr uint32_t kAccent     = 0x4A32F0FFu;
 constexpr uint32_t kAccentLit  = 0x6B4CFFFFu;
+constexpr uint32_t kAccentCore = 0xE055F0FFu;
 constexpr uint32_t kAccentGlow = 0x4A32F055u;
 constexpr uint32_t kOnFill     = 0x15361FFFu;
 constexpr uint32_t kOnEdge     = 0x2C6B45FFu;
@@ -279,6 +280,85 @@ void preview(const Painter& paint, size_t index, float x, float y, float w,
 
 } // namespace
 
+void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,
+              const HudState& state) {
+    Painter paint{quads, text};
+    paint.scale = std::min(width / kDesignWidth, height / kDesignHeight);
+    paint.origin_x = (width - kDesignWidth * paint.scale) * 0.5f;
+    paint.origin_y = (height - kDesignHeight * paint.scale) * 0.5f;
+
+    const auto& registry = features::Registry::instance();
+    // Readable over a bright sky is the whole job here, so the glass is dark
+    // and the labels are not whispered.
+    constexpr uint32_t kGlass = 0x08080AEEu;
+    constexpr uint32_t kGlassEdge = 0x3C3C45CCu;
+
+    float stack = 24.0f;
+    bool first = true;
+    const auto readout = [&](std::string_view value, std::string_view unit) {
+        paint.rect(24.0f, stack, 152.0f, 38.0f, 10.0f, kGlass, kGlassEdge, 1.0f);
+        if (first) {
+            paint.icon(Icon::MarkBody, 36.0f, stack + 19.0f, 18.0f, kAccent);
+            paint.icon(Icon::MarkCore, 36.0f, stack + 19.0f, 18.0f, kAccentCore);
+            first = false;
+        }
+        paint.middle(value, 60.0f, stack + 19.0f, 20.0f, kText, Style::Mono);
+        paint.right(unit, 164.0f, stack + 20.0f, 9.5f, kDim, Style::Mono);
+        stack += 44.0f;
+    };
+
+    if (registry.enabled(features::Id::FpsCounter)) {
+        readout(std::format("{}", state.fps), "FPS");
+    }
+    if (registry.enabled(features::Id::PingDisplay)) {
+        readout(state.ping_ms > 0 ? std::format("{}", state.ping_ms) : "--", "MS");
+    }
+    if (registry.enabled(features::Id::CpsCounter)) {
+        readout(std::format("{} | {}", state.cps_left, state.cps_right), "CPS");
+    }
+
+    // The frame cost, which is the claim this client is making, said in the
+    // two halves that actually make it up.
+    paint.rect(24.0f, stack, 152.0f, 28.0f, 9.0f, kGlass, kGlassEdge, 1.0f);
+    paint.middle(std::format("{:.2f}", state.gpu_ms), 38.0f, stack + 14.0f, 11.0f, kDim,
+                 Style::Mono);
+    paint.middle("gpu", 38.0f + paint.measure("0.00 ", 11.0f, Style::Mono), stack + 14.5f, 9.0f,
+                 kMute, Style::Mono);
+    paint.right("cpu", 164.0f, stack + 14.5f, 9.0f, kMute, Style::Mono);
+    paint.right(std::format("{:.2f}", state.cpu_ms),
+                164.0f - paint.measure("cpu ", 9.0f, Style::Mono), stack + 14.0f, 11.0f, kDim,
+                Style::Mono);
+
+    if (registry.enabled(features::Id::Coordinates)) {
+        const std::string line = std::format("{:.1f}  {:.1f}  {:.1f}", state.x, state.y, state.z);
+        const float w = paint.measure(line, 13.0f, Style::Mono) + 30.0f;
+        paint.rect(kDesignWidth - 24.0f - w, 24.0f, w, 34.0f, 10.0f, kGlass, kGlassEdge, 1.0f);
+        paint.middle(line, kDesignWidth - 24.0f - w + 15.0f, 41.0f, 13.0f, kText, Style::Mono);
+    }
+
+    if (registry.enabled(features::Id::Keystrokes)) {
+        const float base_x = 28.0f;
+        const float base_y = kDesignHeight - 142.0f;
+        const auto cap = [&](std::string_view name, float x, float y, float w, float h,
+                             bool down) {
+            paint.rect(x, y, w, h, 6.0f, down ? kAccent : kGlass, down ? kAccentLit : kGlassEdge,
+                       1.0f);
+            paint.centred(name, x + w * 0.5f, y + h * 0.5f, 11.0f, down ? 0xFFFFFFFFu : kDim,
+                          Style::Mono);
+        };
+        cap("W", base_x + 34.0f, base_y, 32.0f, 28.0f, state.forward);
+        cap("A", base_x, base_y + 31.0f, 32.0f, 28.0f, state.left);
+        cap("S", base_x + 34.0f, base_y + 31.0f, 32.0f, 28.0f, state.back);
+        cap("D", base_x + 68.0f, base_y + 31.0f, 32.0f, 28.0f, state.right);
+        cap("SPACE", base_x, base_y + 62.0f, 100.0f, 20.0f, state.jump);
+    }
+
+    const std::string trace = std::format("{} sections   {} entities", state.sections,
+                                          state.entities);
+    paint.right(trace, kDesignWidth - 24.0f, kDesignHeight - 28.0f, 10.0f, 0xC8CCD2CCu,
+                Style::Mono);
+}
+
 void draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,
                const MenuState& state) {
     Painter paint{quads, text};
@@ -293,13 +373,15 @@ void draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, flo
     paint.rect(0.0f, 0.0f, kDesignWidth, kDesignHeight, 0.0f, kPage);
 
     // Top bar.
-    paint.icon(Icon::Bolt, kLeft + 4.0f, 44.0f, 34.0f, kAccentLit);
-    paint.rect(kLeft + 62.0f, 26.0f, 36.0f, 36.0f, 10.0f, 0x121018FFu, kAccentLit, 2.0f);
-    paint.centred("P", kLeft + 80.0f, 44.0f, 20.0f, kAccentLit, Style::Bold);
-    paint.middle("PLASMA", kLeft + 128.0f, 44.0f, 29.0f, kText, Style::Bold);
-    paint.rect(kLeft + 278.0f, 28.0f, 1.0f, 32.0f, 0.0f, 0x2A2A30FFu);
-    paint.tracked("JAVA EDITION", kLeft + 294.0f, 37.0f, 9.0f, kMute, 1.2f);
-    paint.tracked("CLIENT MENU", kLeft + 294.0f, 51.0f, 9.0f, kMute, 1.2f);
+    constexpr float mark = 44.0f;
+    paint.icon(Icon::MarkBody, kLeft, 44.0f, mark, kAccent);
+    paint.icon(Icon::MarkCore, kLeft, 44.0f, mark, kAccentCore);
+    const float wordmark_x = kLeft + paint.icon_width(Icon::MarkBody, mark) + 18.0f;
+    paint.icon(Icon::Wordmark, wordmark_x, 44.0f, 26.0f, kText);
+    const float after = wordmark_x + paint.icon_width(Icon::Wordmark, 26.0f) + 24.0f;
+    paint.rect(after, 28.0f, 1.0f, 32.0f, 0.0f, 0x2A2A30FFu);
+    paint.tracked("JAVA EDITION", after + 16.0f, 37.0f, 9.0f, kMute, 1.2f);
+    paint.tracked("CLIENT MENU", after + 16.0f, 51.0f, 9.0f, kMute, 1.2f);
 
     const float esc_w = 36.0f;
     paint.rect(kRight - esc_w, 33.0f, esc_w, 22.0f, 6.0f, kChip, kChipEdge, 1.0f);
