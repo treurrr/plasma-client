@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lift the grass and foliage colour maps out of a Minecraft jar.
+"""Lift the grass, foliage and dry foliage colour maps out of a Minecraft jar.
 
 Usage: bake_colormaps.py <client.jar> <out.plcm>
 
@@ -33,10 +33,12 @@ def main(args):
     with zipfile.ZipFile(jar_path) as jar:
         grass = read(jar, "grass")
         foliage = read(jar, "foliage")
+        dry = read(jar, "dry_foliage")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(MAGIC + grass + foliage)
-    print(f"{out_path}: two {SIDE}x{SIDE} maps, {(len(grass) + len(foliage)) / 1024:.0f} KB")
+    out_path.write_bytes(MAGIC + grass + foliage + dry)
+    print(f"{out_path}: three {SIDE}x{SIDE} maps, "
+          f"{(len(grass) + len(foliage) + len(dry)) / 1024:.0f} KB")
 
 
 if __name__ == "__main__":

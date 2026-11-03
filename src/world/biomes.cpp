@@ -58,8 +58,10 @@ bool Colormaps::open(const std::filesystem::path& path) {
     if (std::memcmp(magic, "PLCM", 4) != 0) return false;
     grass_.resize(kMapBytes);
     foliage_.resize(kMapBytes);
+    dry_.resize(kMapBytes);
     input.read(reinterpret_cast<char*>(grass_.data()), static_cast<std::streamsize>(kMapBytes));
     input.read(reinterpret_cast<char*>(foliage_.data()), static_cast<std::streamsize>(kMapBytes));
+    input.read(reinterpret_cast<char*>(dry_.data()), static_cast<std::streamsize>(kMapBytes));
     if (!input) {
         grass_.clear();
         foliage_.clear();
@@ -87,6 +89,10 @@ uint32_t Colormaps::grass(float temperature, float downfall) const {
 
 uint32_t Colormaps::foliage(float temperature, float downfall) const {
     return foliage_.empty() ? kDefaultFoliage : sample(foliage_, temperature, downfall);
+}
+
+uint32_t Colormaps::dry_foliage(float temperature, float downfall) const {
+    return dry_.empty() ? kDefaultFoliage : sample(dry_, temperature, downfall);
 }
 
 } // namespace mcpp::world

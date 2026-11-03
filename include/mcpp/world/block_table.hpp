@@ -10,6 +10,12 @@ namespace mcpp::world {
 constexpr int32_t kUnitsPerModelUnit = 256;
 constexpr int32_t kUnitsPerBlock = kUnitsPerModelUnit * 16;
 
+// Which colour a tinted face takes. The model says a face is tinted; the block
+// says which tint, and three of them ignore the colour maps entirely.
+enum class TintKind : int8_t {
+    None = -1, Grass, Foliage, Water, Evergreen, Birch, LilyPad, DryFoliage
+};
+
 #pragma pack(push, 1)
 struct BakedQuad {
     int16_t from[3];
@@ -18,7 +24,7 @@ struct BakedQuad {
     uint16_t texture;
     uint8_t face;
     int8_t cullface;    // -1 when the face is never culled
-    int8_t tintindex;   // -1 when untinted
+    int8_t tint;        // -1 when untinted, otherwise a TintKind
     uint8_t uvlock;
     uint8_t rotation_x; // quarter turns
     uint8_t rotation_y;

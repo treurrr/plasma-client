@@ -341,9 +341,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 
                             vertex.texture = static_cast<uint16_t>(quad.texture);
                             vertex.packed = static_cast<uint16_t>(face);
-                            if (quad.tintindex == 0) vertex.packed |= 0x0008u;   // grass, foliage
-                            if (quad.tintindex == 1) vertex.packed |= 0x0010u;   // water
-                            vertex.packed |= static_cast<uint16_t>(shadow << 5);
+                            if (quad.tint >= 0) {
+                                vertex.packed |= static_cast<uint16_t>((quad.tint + 1) << 3);
+                            }
+                            vertex.packed |= static_cast<uint16_t>(shadow << 6);
                             vertex.light = static_cast<uint16_t>(sky | (block << 4));
                             mesh.vertices.push_back(vertex);
                         }

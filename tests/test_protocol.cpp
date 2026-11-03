@@ -292,7 +292,7 @@ void test_block_table() {
     quad.texture = 0;
     quad.face = 1;
     quad.cullface = 1;
-    quad.tintindex = -1;
+    quad.tint = -1;
     append(&quad, sizeof(quad));
 
     append_u32s({texture_offset});
@@ -354,7 +354,7 @@ void test_mesher_culls_interiors() {
         quad.to[0] = quad.to[1] = quad.to[2] = 16 * mcpp::world::kUnitsPerModelUnit;
         quad.face = static_cast<uint8_t>(face);
         quad.cullface = static_cast<int8_t>(face);
-        quad.tintindex = -1;
+        quad.tint = -1;
     }
     append(quads.data(), quads.size() * sizeof(mcpp::world::BakedQuad));
 

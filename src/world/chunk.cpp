@@ -100,6 +100,9 @@ uint8_t LightLayer::at(size_t slot, int32_t local_x, int32_t y, int32_t local_z)
 }
 
 uint8_t Chunk::sky_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const {
+    // A chunk we built ourselves, or one whose light has not arrived, is lit
+    // rather than pitch black.
+    if (sky_light.sections.empty()) return 15;
     if (local_x < 0 || local_x > 15 || local_z < 0 || local_z > 15) return 15;
     if (y_index < 0 || y_index >= static_cast<int32_t>(sections.size()) * 16) return 15;
     return sky_light.at(static_cast<size_t>(y_index / 16) + 1, local_x, y_index % 16, local_z);

@@ -56,14 +56,19 @@ void main() {
 
     // Smooth lighting: 0 is a fully enclosed corner, 3 is open.
     const float kCornerLight[4] = float[](0.52, 0.68, 0.84, 1.0);
-    out_shade = kFaceShade[min(face, 5u)] * kCornerLight[(flags >> 5) & 3u];
+    out_shade = kFaceShade[min(face, 5u)] * kCornerLight[(flags >> 6) & 3u];
     out_light = lightmap(float(in_texture_light.y & 0x0Fu),
                          float((in_texture_light.y >> 4) & 0x0Fu));
 
-    // Grass, foliage and water ship as greyscale and are multiplied by a biome
-    // colour. Biomes are parsed but not yet resolved, so these are the plains
-    // values.
-    out_tint = vec3(1.0);
-    if ((flags & 0x08u) != 0u) out_tint = vec3(0.569, 0.741, 0.349);
-    if ((flags & 0x10u) != 0u) out_tint = vec3(0.247, 0.463, 0.894);
+    // Tinted faces ship as greyscale and are multiplied by a colour the block
+    // decides. Three of them never vary; the rest come from the biome.
+    const vec3 kTint[8] = vec3[](vec3(1.0),
+                                 vec3(0.5686, 0.7412, 0.3490),   // grass, plains
+                                 vec3(0.4667, 0.6706, 0.1843),   // foliage, plains
+                                 vec3(0.2471, 0.4627, 0.8941),   // water
+                                 vec3(0.3804, 0.6000, 0.3804),   // spruce
+                                 vec3(0.5020, 0.6549, 0.3333),   // birch
+                                 vec3(0.1255, 0.5020, 0.1882),   // lily pad
+                                 vec3(0.5608, 0.4784, 0.2118));  // dry foliage
+    out_tint = kTint[(flags >> 3) & 7u];
 }

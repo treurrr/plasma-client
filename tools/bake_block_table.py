@@ -30,6 +30,41 @@ FLAG_FULL_CUBE = 1 << 2
 FLAG_OCCLUDES = 1 << 3
 FLAG_FLUID = 1 << 4
 
+# A model only says a face is tinted, never which tint. Which one is a property
+# of the block, the way the game decides it: grass and foliage read different
+# colour maps, and three blocks ignore the maps entirely.
+TINT_GRASS, TINT_FOLIAGE, TINT_WATER = 0, 1, 2
+TINT_EVERGREEN, TINT_BIRCH, TINT_LILY, TINT_DRY = 3, 4, 5, 6
+
+FIXED_TINT = {
+    "minecraft:spruce_leaves": TINT_EVERGREEN,
+    "minecraft:birch_leaves": TINT_BIRCH,
+    "minecraft:lily_pad": TINT_LILY,
+}
+GRASS_TINTED = {
+    "minecraft:grass_block", "minecraft:short_grass", "minecraft:fern",
+    "minecraft:tall_grass", "minecraft:large_fern", "minecraft:potted_fern",
+    "minecraft:sugar_cane",
+}
+DRY_TINTED = {"minecraft:pale_oak_leaves", "minecraft:leaf_litter"}
+
+
+def tint_kind(name, tint):
+    if tint is None:
+        return -1
+    if name in FLUIDS:
+        return TINT_WATER
+    if name in FIXED_TINT:
+        return FIXED_TINT[name]
+    if name in DRY_TINTED:
+        return TINT_DRY
+    if name in GRASS_TINTED:
+        return TINT_GRASS
+    if name.endswith("_leaves") or name == "minecraft:vine":
+        return TINT_FOLIAGE
+    return TINT_GRASS
+
+
 QUAD = struct.Struct("<3h3h4hHBbbBBB")
 assert QUAD.size == 28, QUAD.size
 
@@ -155,7 +190,7 @@ def main(args):
                 texture_id(q["texture"]),
                 FACE_INDEX[q["face"]],
                 FACE_INDEX[q["cullface"]] if q["cullface"] in FACE_INDEX else -1,
-                -1 if tint is None else min(127, int(tint)),
+                tint_kind(name, tint),
                 1 if q["uvlock"] else 0,
                 (q["rotation"][0] // 90) % 4,
                 (q["rotation"][1] // 90) % 4,

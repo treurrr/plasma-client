@@ -20,7 +20,7 @@ struct Biome {
     uint32_t water = 0x3F76E4;
 };
 
-// The two 256x256 maps the game looks grass and foliage colour up in. They are
+// The 256x256 maps the game looks grass and foliage colour up in. They are
 // Mojang's, so they are read from the player's own installation and never ship
 // with the client.
 class Colormaps {
@@ -29,6 +29,7 @@ public:
     bool loaded() const { return !grass_.empty(); }
     uint32_t grass(float temperature, float downfall) const;
     uint32_t foliage(float temperature, float downfall) const;
+    uint32_t dry_foliage(float temperature, float downfall) const;
 
     static std::filesystem::path default_path(int32_t protocol);
 
@@ -37,6 +38,7 @@ private:
 
     std::vector<uint8_t> grass_;     // 256*256*3
     std::vector<uint8_t> foliage_;
+    std::vector<uint8_t> dry_;
 };
 
 // Biomes in the order the server sent them, which is the order chunk palettes
