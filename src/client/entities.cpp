@@ -11,7 +11,7 @@ namespace client {
 void entities_bind(Game& game, mcpp::SessionEvents& events) {
     auto& area = game.entities;
     if (!area.assets.open(mcpp::entity::Assets::default_path(mcpp::protocol::kTargetProtocol))) {
-        std::cout << "- no entity data; bake it with tools/bake_entities.py. Nothing alive "
+        std::cout << "- no entity data; bake it with tools/bake_all.py. Nothing alive "
                      "will be drawn\n";
     }
     area.skins.emplace();
@@ -23,6 +23,12 @@ void entities_bind(Game& game, mcpp::SessionEvents& events) {
     events.entities.on_moved = [&scene](const mcpp::EntityMove& move) { scene.moved(move); };
     events.entities.on_head = [&scene](int32_t id, float yaw) { scene.head(id, yaw); };
     events.entities.on_remove = [&scene](int32_t id) { scene.remove(id); };
+    events.data.on_entity_data = [&game, &scene](int32_t id) {
+        const auto& entities = game.session->entities();
+        if (const auto found = entities.find(id); found != entities.end()) {
+            scene.set_crouching(id, found->second.metadata.pose() == mcpp::proto::Pose::Crouching);
+        }
+    };
     events.entities.on_animate = [&scene](int32_t id, uint8_t action) { scene.animate(id, action); };
     events.entities.on_hurt = [&scene](int32_t id, float) { scene.hurt(id); };
     events.entities.on_damage = [&scene](int32_t id) { scene.damaged(id); };
