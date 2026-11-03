@@ -115,6 +115,7 @@ add_library(mcpp_net STATIC
     src/options.cpp
     src/keybinds.cpp
     src/ui/text_component.cpp
+    src/ui/gui_graphics.cpp
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp

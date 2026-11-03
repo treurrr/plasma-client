@@ -1,7 +1,5 @@
 #pragma once
-#include "mcpp/gpu/ui.hpp"
-#include "mcpp/translations.hpp"
-#include "mcpp/ui/text_component.hpp"
+#include "mcpp/ui/gui_graphics.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -13,7 +11,7 @@
 // The screen spine: a stack of screens drawn in the game's own gui units, each
 // owning its widgets, every widget hoverable, focusable and driven by the
 // keyboard as well as the mouse. Coordinates are in gui units throughout; the
-// one conversion to screen pixels happens in Gfx.
+// one conversion to screen pixels happens in GuiGraphics.
 namespace mcpp {
 class Options;
 class Keybinds;
@@ -30,10 +28,6 @@ constexpr int Space = 32, Escape = 256, Enter = 257, Tab = 258, Backspace = 259,
 constexpr int ModShift = 1, ModControl = 2, ModAlt = 4, ModSuper = 8;
 } // namespace key
 
-// The game writes its colours as ARGB; the renderer takes RGBA. Screens speak
-// ARGB, so the game's own constants can be read straight across.
-constexpr uint32_t rgba_of(uint32_t argb) { return (argb << 8) | (argb >> 24); }
-
 // Click sounds and the like: block F hangs the mixer here. Each call names the
 // sound event, "minecraft:ui.button.click".
 void set_sound_hook(std::function<void(std::string_view)> hook);
@@ -43,64 +37,6 @@ void play_sound(std::string_view event);
 struct Platform {
     std::function<std::string()> get_clipboard;
     std::function<void(const std::string&)> set_clipboard;
-};
-
-class Gfx {
-public:
-    Gfx(gpu::UiRenderer& quads, int scale, int width, int height, const Translations* lang);
-
-    gpu::UiRenderer& quads;
-    const int scale;
-    const int width;    // gui units
-    const int height;
-    const Translations* lang;
-    std::function<std::string(std::string_view)> key_name;
-    // Ticks since the screen opened and how far into the next one this frame is.
-    uint32_t ticks = 0;
-    float partial = 0.0f;
-
-    // The game's fill: corners, not a size, and ARGB.
-    void fill(int x0, int y0, int x1, int y1, uint32_t argb);
-    void fill_gradient(int x0, int y0, int x1, int y1, uint32_t top, uint32_t bottom);
-    void outline(int x, int y, int w, int h, uint32_t argb);
-    void sprite(std::string_view name, int x, int y, int w, int h, uint32_t argb = 0xFFFFFFFFu);
-    // Sprites with nine-slice metadata grow by it; the rest stretch.
-    void nine(std::string_view name, int x, int y, int w, int h, uint32_t argb = 0xFFFFFFFFu);
-    // A window cut out of a sheet, in the sheet's own texels, drawn 1:1.
-    void blit(std::string_view sheet, int x, int y, float u, float v, int w, int h,
-              uint32_t argb = 0xFFFFFFFFu);
-    // A texture repeated across the rectangle at `tile` gui units per copy,
-    // starting at texel offset (u, v), the way menu backgrounds are drawn.
-    void tiled(std::string_view name, int x, int y, int w, int h, float tile, float u = 0.0f,
-               float v = 0.0f, uint32_t argb = 0xFFFFFFFFu);
-    void item(int32_t id, int x, int y);
-    void item_count(int x, int y, int32_t count);
-
-    int text(std::string_view legacy, int x, int y, uint32_t argb, bool shadow = true);
-    int text(const std::vector<Run>& runs, int x, int y, uint32_t argb, bool shadow = true);
-    int text(const Component& component, int x, int y, uint32_t argb, bool shadow = true);
-    void centred(std::string_view legacy, int cx, int y, uint32_t argb, bool shadow = true);
-    void centred(const Component& component, int cx, int y, uint32_t argb, bool shadow = true);
-    // Text wider than its box slides back and forth inside it, the way a
-    // button's label does in the game.
-    void scrolling(const std::vector<Run>& runs, int x0, int y0, int x1, int y1, uint32_t argb);
-
-    int width_of(std::string_view legacy) const;
-    int width_of(const std::vector<Run>& runs) const;
-    int width_of(const Component& component) const;
-    std::vector<std::vector<Run>> wrap(const Component& component, int max_width) const;
-    std::vector<Run> runs(const Component& component) const;
-
-    std::string tr(std::string_view key) const;
-    Resolve resolver() const;
-
-    void scissor(int x0, int y0, int x1, int y1);
-    void end_scissor();
-
-    // The vanilla tooltip, placed beside the pointer and kept on screen.
-    void tooltip(const std::vector<std::vector<Run>>& lines, int mouse_x, int mouse_y);
-
-    double seconds = 0.0;   // wall clock, for things the game animates by time
 };
 
 struct KeyEvent {
@@ -139,7 +75,7 @@ public:
     // the focus there.
     bool highlighted() const;
 
-    virtual void render(Gfx& gfx, double mx, double my) = 0;
+    virtual void render(GuiGraphics& gfx, double mx, double my) = 0;
     virtual void tick() {}
     virtual bool mouse_clicked(double, double, int) { return false; }
     virtual bool mouse_released(double, double, int) { return false; }
@@ -149,7 +85,7 @@ public:
     virtual bool char_typed(uint32_t, int) { return false; }
     virtual void set_focused(bool on) { focused = on; }
     // What the narrator would say; recorded now so it is not retrofitted later.
-    virtual std::string narration(const Gfx& gfx) const;
+    virtual std::string narration(const GuiGraphics& gfx) const;
 
     static bool keyboard_focus;   // the last focus change came from the keyboard
 };
@@ -180,8 +116,8 @@ public:
     virtual void init() {}
     virtual void removed() {}
     virtual void tick();
-    virtual void render(Gfx& gfx, double mx, double my);
-    virtual void render_background(Gfx& gfx);
+    virtual void render(GuiGraphics& gfx, double mx, double my);
+    virtual void render_background(GuiGraphics& gfx);
     virtual bool mouse_clicked(double mx, double my, int button);
     virtual bool mouse_released(double mx, double my, int button);
     virtual bool mouse_dragged(double mx, double my, int button, double dx, double dy);
@@ -248,7 +184,7 @@ public:
     std::function<std::string(std::string_view)> key_name;
     // The panorama behind every screen of the title flow; blurred everywhere
     // but on the title screen itself.
-    std::function<void(Gfx&, bool blurred)> panorama;
+    std::function<void(GuiGraphics&, bool blurred)> panorama;
     // What a world screen needs to know about the world: set while playing.
     World* world = nullptr;
 

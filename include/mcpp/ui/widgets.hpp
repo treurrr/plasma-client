@@ -11,16 +11,16 @@ namespace mcpp::ui {
 class Button : public Widget {
 public:
     Button(int x_, int y_, int w_, int h_, Component label, std::function<void(Button&)> press);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
     bool mouse_clicked(double mx, double my, int button) override;
     bool key_pressed(const KeyEvent& event) override;
-    std::string narration(const Gfx& gfx) const override;
+    std::string narration(const GuiGraphics& gfx) const override;
     virtual void press();
 
     std::function<void(Button&)> on_press;
 
 protected:
-    void render_label(Gfx& gfx);
+    void render_label(GuiGraphics& gfx);
 };
 
 // A button that is only a picture, with a highlighted twin: the server list's
@@ -29,7 +29,7 @@ class SpriteButton : public Button {
 public:
     SpriteButton(int x_, int y_, int w_, int h_, std::string sprite, std::string highlighted,
                  Component narration_label, std::function<void(Button&)> press);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
 
     std::string sprite;
     std::string sprite_highlighted;
@@ -42,7 +42,7 @@ class IconButton : public Button {
 public:
     IconButton(int x_, int y_, int w_, int h_, Component label, std::string icon, int icon_w,
                int icon_h, std::function<void(Button&)> press);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
 
     std::string icon;
     int icon_w;
@@ -75,7 +75,7 @@ public:
     // `label` turns the value, 0 to 1, into what the slider says.
     Slider(int x_, int y_, int w_, int h_, double value, std::function<Component(double)> label,
            std::function<void(double)> changed);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
     bool mouse_clicked(double mx, double my, int button) override;
     bool mouse_dragged(double mx, double my, int button, double dx, double dy) override;
     bool mouse_released(double mx, double my, int button) override;
@@ -95,7 +95,7 @@ private:
 class EditBox : public Widget {
 public:
     EditBox(int x_, int y_, int w_, int h_, Component narration_label);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
     void tick() override;
     bool mouse_clicked(double mx, double my, int button) override;
     bool key_pressed(const KeyEvent& event) override;
@@ -129,13 +129,13 @@ private:
     int selection_ = 0;
     int display_ = 0;
     int frame_ = 0;
-    Gfx* last_gfx_ = nullptr;
+    GuiGraphics* last_gfx_ = nullptr;
 };
 
 class Checkbox : public Widget {
 public:
     Checkbox(int x_, int y_, Component label, bool selected, std::function<void(bool)> changed);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
     bool mouse_clicked(double mx, double my, int button) override;
     bool key_pressed(const KeyEvent& event) override;
     void toggle();
@@ -150,7 +150,7 @@ class Label : public Widget {
 public:
     Label(int x_, int y_, int w_, Component text, uint32_t colour = 0xFFFFFFFFu,
           bool centred_ = true);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
     bool focusable() const override { return false; }
 
     uint32_t colour;
@@ -164,7 +164,7 @@ public:
 class SelectionList : public Widget {
 public:
     SelectionList(int x_, int y_, int w_, int h_, int row_height);
-    void render(Gfx& gfx, double mx, double my) override;
+    void render(GuiGraphics& gfx, double mx, double my) override;
     bool mouse_clicked(double mx, double my, int button) override;
     bool mouse_dragged(double mx, double my, int button, double dx, double dy) override;
     bool mouse_released(double mx, double my, int button) override;
@@ -172,7 +172,7 @@ public:
     bool key_pressed(const KeyEvent& event) override;
 
     virtual size_t rows() const = 0;
-    virtual void render_row(Gfx& gfx, size_t index, int left, int top, int width, int height,
+    virtual void render_row(GuiGraphics& gfx, size_t index, int left, int top, int width, int height,
                             double mx, double my, bool hovered) = 0;
     virtual bool row_clicked(size_t, double, double, int, int, int) { return false; }
     virtual void row_activated(size_t) {}

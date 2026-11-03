@@ -62,16 +62,16 @@ Button::Button(int x_, int y_, int w_, int h_, Component label, std::function<vo
     message = std::move(label);
 }
 
-void Button::render_label(Gfx& gfx) {
+void Button::render_label(GuiGraphics& gfx) {
     const uint32_t colour = with_alpha(active ? 0xFFFFFFu : 0xA0A0A0u, alpha);
-    gfx.scrolling(gfx.runs(message), x + 2, y, x + w - 2, y + h, colour);
+    gfx.draw_scrolling_string(gfx.runs(message), x + 2, y, x + w - 2, y + h, colour);
 }
 
-void Button::render(Gfx& gfx, double, double) {
+void Button::render(GuiGraphics& gfx, double, double) {
     const char* sprite = !active ? "widget/button_disabled"
                          : highlighted() ? "widget/button_highlighted"
                                          : "widget/button";
-    gfx.nine(sprite, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
+    gfx.blit_sprite(sprite, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
     render_label(gfx);
 }
 
@@ -93,7 +93,7 @@ void Button::press() {
     if (on_press) on_press(*this);
 }
 
-std::string Button::narration(const Gfx& gfx) const {
+std::string Button::narration(const GuiGraphics& gfx) const {
     // narration.button: "Button: %s"
     return plain(translatable("narration.button", {message}), gfx.resolver());
 }
@@ -104,11 +104,11 @@ SpriteButton::SpriteButton(int x_, int y_, int w_, int h_, std::string sprite_,
     : Button(x_, y_, w_, h_, std::move(narration_label), std::move(press)),
       sprite(std::move(sprite_)), sprite_highlighted(std::move(highlighted_)) {}
 
-void SpriteButton::render(Gfx& gfx, double, double) {
+void SpriteButton::render(GuiGraphics& gfx, double, double) {
     const std::string& name = !active && !sprite_disabled.empty() ? sprite_disabled
                               : highlighted() && !sprite_highlighted.empty() ? sprite_highlighted
                                                                               : sprite;
-    gfx.sprite(name, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
+    gfx.blit_sprite(name, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
 }
 
 IconButton::IconButton(int x_, int y_, int w_, int h_, Component label, std::string icon_,
@@ -116,12 +116,12 @@ IconButton::IconButton(int x_, int y_, int w_, int h_, Component label, std::str
     : Button(x_, y_, w_, h_, std::move(label), std::move(press)), icon(std::move(icon_)),
       icon_w(icon_w_), icon_h(icon_h_) {}
 
-void IconButton::render(Gfx& gfx, double, double) {
+void IconButton::render(GuiGraphics& gfx, double, double) {
     const char* sprite = !active ? "widget/button_disabled"
                          : highlighted() ? "widget/button_highlighted"
                                          : "widget/button";
-    gfx.nine(sprite, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
-    gfx.sprite(icon, x + (w - icon_w) / 2, y + (h - icon_h) / 2, icon_w, icon_h,
+    gfx.blit_sprite(sprite, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
+    gfx.blit_sprite(icon, x + (w - icon_w) / 2, y + (h - icon_h) / 2, icon_w, icon_h,
                with_alpha(0xFFFFFFu, alpha));
 }
 
@@ -161,14 +161,14 @@ Slider::Slider(int x_, int y_, int w_, int h_, double value_,
     if (label) message = label(value);
 }
 
-void Slider::render(Gfx& gfx, double, double) {
+void Slider::render(GuiGraphics& gfx, double, double) {
     const uint32_t tint = with_alpha(0xFFFFFFu, alpha);
-    gfx.nine(focused && keyboard_focus && !can_change_ ? "widget/slider_highlighted"
+    gfx.blit_sprite(focused && keyboard_focus && !can_change_ ? "widget/slider_highlighted"
                                                        : "widget/slider",
              x, y, w, h, tint);
-    gfx.nine(hovered || can_change_ ? "widget/slider_handle_highlighted" : "widget/slider_handle",
+    gfx.blit_sprite(hovered || can_change_ ? "widget/slider_handle_highlighted" : "widget/slider_handle",
              x + static_cast<int>(value * static_cast<double>(w - 8)), y, 8, h, tint);
-    gfx.scrolling(gfx.runs(message), x + 2, y, x + w - 2, y + h,
+    gfx.draw_scrolling_string(gfx.runs(message), x + 2, y, x + w - 2, y + h,
                   with_alpha(active ? 0xFFFFFFu : 0xA0A0A0u, alpha));
 }
 
@@ -427,10 +427,10 @@ void EditBox::set_focused(bool on) {
 
 void EditBox::tick() { ++frame_; }
 
-void EditBox::render(Gfx& gfx, double, double) {
+void EditBox::render(GuiGraphics& gfx, double, double) {
     last_gfx_ = &gfx;
     if (bordered) {
-        gfx.nine(focused ? "widget/text_field_highlighted" : "widget/text_field", x, y, w, h);
+        gfx.blit_sprite(focused ? "widget/text_field_highlighted" : "widget/text_field", x, y, w, h);
     }
     const uint32_t colour = editable ? text_colour : text_colour_uneditable;
     const int text_x = bordered ? x + 4 : x;
@@ -460,19 +460,19 @@ void EditBox::render(Gfx& gfx, double, double) {
     const bool blink_on = focused && static_cast<int>(std::floor(gfx.seconds / 0.3)) % 2 == 0;
     int end_x = text_x;
     if (!shown.empty()) {
-        end_x = text_x + gfx.text(literal_runs(shown), text_x, text_y, colour, true);
+        end_x = gfx.draw_string(literal_runs(shown), text_x, text_y, colour, true);
     }
     const int caret_x = text_x + gfx.width_of(literal_runs(shown.substr(0, static_cast<size_t>(caret))));
     const bool at_end = cursor_ >= static_cast<int>(text_.size());
     if (text_.empty() && !focused && !plain(hint).empty()) {
-        gfx.text(hint, text_x, text_y, 0xFF808080u, true);
+        gfx.draw_string(hint, text_x, text_y, 0xFF808080u, true);
     }
     if (!suggestion.empty() && at_end) {
-        gfx.text(literal_runs(suggestion), end_x - 1, text_y, 0xFF808080u, true);
+        gfx.draw_string(literal_runs(suggestion), end_x - 1, text_y, 0xFF808080u, true);
     }
     if (blink_on) {
         if (at_end && text_.size() < max_length) {
-            gfx.text(literal_runs("_"), caret_x, text_y, colour, true);
+            gfx.draw_string(literal_runs("_"), caret_x, text_y, colour, true);
         } else {
             gfx.fill(caret_x, text_y - 1, caret_x + 1, text_y + 1 + 9, 0xFFD0D0D0u);
         }
@@ -496,13 +496,13 @@ Checkbox::Checkbox(int x_, int y_, Component label, bool selected_,
     message = std::move(label);
 }
 
-void Checkbox::render(Gfx& gfx, double, double) {
+void Checkbox::render(GuiGraphics& gfx, double, double) {
     const bool lit = highlighted() || focused;
     const char* sprite = selected ? (lit ? "widget/checkbox_selected_highlighted"
                                          : "widget/checkbox_selected")
                                   : (lit ? "widget/checkbox_highlighted" : "widget/checkbox");
-    gfx.sprite(sprite, x, y, kBox, kBox, with_alpha(0xFFFFFFu, alpha));
-    gfx.text(message, x + kBox + 4, y + kBox / 2 - 9 / 2, with_alpha(0xE0E0E0u, alpha), true);
+    gfx.blit_sprite(sprite, x, y, kBox, kBox, with_alpha(0xFFFFFFu, alpha));
+    gfx.draw_string(message, x + kBox + 4, y + kBox / 2 - 9 / 2, with_alpha(0xE0E0E0u, alpha), true);
     w = kBox + 4 + gfx.width_of(message);
 }
 
@@ -534,11 +534,11 @@ Label::Label(int x_, int y_, int w_, Component text, uint32_t colour_, bool cent
     message = std::move(text);
 }
 
-void Label::render(Gfx& gfx, double, double) {
+void Label::render(GuiGraphics& gfx, double, double) {
     if (centred) {
-        gfx.centred(message, x + w / 2, y, colour, shadow);
+        gfx.draw_string(message, x + w / 2 - gfx.width_of(message) / 2, y, colour, shadow);
     } else {
-        gfx.text(message, x, y, colour, shadow);
+        gfx.draw_string(message, x, y, colour, shadow);
     }
 }
 
@@ -583,11 +583,11 @@ std::optional<size_t> SelectionList::row_at(double mx, double my) const {
     return index;
 }
 
-void SelectionList::render(Gfx& gfx, double mx, double my) {
+void SelectionList::render(GuiGraphics& gfx, double mx, double my) {
     const bool world = false;
     (void)world;
-    gfx.tiled("gui/menu_list_background", x, y, w, h, 32.0f, 0.0f, static_cast<float>(scroll));
-    gfx.scissor(x, y, x + w, y + h);
+    gfx.blit_tiled("gui/menu_list_background", x, y, w, h, 32.0f, 32.0f, 0.0f, static_cast<float>(scroll));
+    gfx.enable_scissor(x, y, x + w, y + h);
     const auto hovered_row = over(mx, my) ? row_at(mx, my) : std::nullopt;
     for (size_t i = 0; i < rows(); ++i) {
         const int top = row_top(i);
@@ -603,16 +603,16 @@ void SelectionList::render(Gfx& gfx, double mx, double my) {
         render_row(gfx, i, row_left(), top, row_width(), row_height - 4, mx, my,
                    hovered_row && *hovered_row == i);
     }
-    gfx.end_scissor();
-    gfx.tiled("gui/header_separator", x, y - 2, w, 2, 32.0f);
-    gfx.tiled("gui/footer_separator", x, y + h, w, 2, 32.0f);
+    gfx.disable_scissor();
+    gfx.blit_tiled("gui/header_separator", x, y - 2, w, 2, 32.0f, 2.0f);
+    gfx.blit_tiled("gui/footer_separator", x, y + h, w, 2, 32.0f, 2.0f);
     if (max_scroll() > 0) {
         const int bar_x = scrollbar_x();
         const int content = static_cast<int>(rows()) * row_height + header_height + 4;
         const int thumb = std::clamp(h * h / std::max(content, 1), 32, h - 8);
         const int thumb_y = static_cast<int>(scroll) * (h - thumb) / max_scroll() + y;
-        gfx.nine("widget/scroller_background", bar_x, y, 6, h);
-        gfx.nine("widget/scroller", bar_x, thumb_y, 6, thumb);
+        gfx.blit_sprite("widget/scroller_background", bar_x, y, 6, h);
+        gfx.blit_sprite("widget/scroller", bar_x, thumb_y, 6, thumb);
     }
 }
 
