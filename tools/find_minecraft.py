@@ -19,6 +19,7 @@ HOME = Path.home()
 # jar's own version.json decides.
 SEARCH = [
     HOME / ".minecraft/versions",
+    HOME / ".var/app/com.mojang.Minecraft/.minecraft/versions",
     HOME / ".var/app/com.modrinth.ModrinthApp/data/ModrinthApp/meta/versions",
     HOME / ".local/share/ModrinthApp/meta/versions",
     HOME / ".local/share/PrismLauncher/libraries/com/mojang/minecraft",

@@ -83,9 +83,11 @@ than from a directory name.
 
 ```sh
 jar=$(python3 tools/find_minecraft.py 1.21.11)
-python3 tools/bake_block_table.py "$jar" reports/blocks.json 774 blocks-774.plbk
-python3 tools/bake_atlas.py "$jar" blocks-774.plbk atlas-774.plat
+python3 tools/bake_all.py "$jar" reports/blocks.json 774
 ```
+
+That writes four files: block geometry, the texture array, the colour maps the
+biome tints are looked up in, and the sky.
 
 ## Running
 
