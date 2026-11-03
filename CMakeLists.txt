@@ -131,6 +131,9 @@ add_library(mcpp_net STATIC
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp
+    src/ui/hud/gui.cpp
+    src/ui/hud/chat.cpp
+    src/ui/hud/tab_list.cpp
     src/proto/packet_ids_gen.cpp
     src/proto/components.cpp
     src/proto/components_gen.cpp
@@ -158,10 +161,11 @@ if(glfw3_FOUND)
         src/client/entities.cpp
         src/client/player.cpp
         src/client/screens.cpp
-        src/client/sound.cpp)
+        src/client/sound.cpp
+        src/client/hud.cpp)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
-    src/client/common.cpp src/client/screenshot.cpp
+    src/client/common.cpp src/client/screenshot.cpp src/client/hud_shot.cpp
     src/client/clicktest.cpp src/client/inspect.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
@@ -187,6 +191,7 @@ mcpp_test(ui)
 mcpp_test(jmath)
 mcpp_test(data)
 mcpp_test(world)
+mcpp_test(hud)
 mcpp_test(sound)
 add_subdirectory(src/audio)
 

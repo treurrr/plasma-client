@@ -41,6 +41,7 @@ int play(const std::string& target, size_t chunk_limit) {
     player_bind(game, events);
     screens_bind(game, events);
     sound_bind(game, events);
+    hud_bind(game, events);
 
     auto& session = game.session.emplace(game.options, events);
     session.connect();
@@ -83,6 +84,7 @@ int play(const std::string& target, size_t chunk_limit) {
     player_start(game);
     screens_start(game);
     sound_start(game);
+    hud_start(game);
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
                  "  left control to sprint, f to fly, t to chat, m for the feature menu,\n"
@@ -138,6 +140,7 @@ int play(const std::string& target, size_t chunk_limit) {
         world_tick(game);
         entities_tick(game);
         sound_tick(game);
+        hud_tick(game);
         if (game.tick_due && !player_send(game)) break;
 
         // The numbers are measured here, not estimated: fps from the wall clock,
@@ -164,6 +167,7 @@ int play(const std::string& target, size_t chunk_limit) {
     player_stop(game);
     screens_stop(game);
     sound_stop(game);
+    hud_stop(game);
     session.close();
     if (frames > 0) {
         std::cout << std::format("- {} frames, {:.3f} ms gpu on average, {} positions sent, "

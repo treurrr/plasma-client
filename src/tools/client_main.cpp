@@ -1,6 +1,7 @@
 #include "client/common.hpp"
 #include "client/inspect.hpp"
 #include "client/screenshot.hpp"
+#include "client/hud_shot.hpp"
 #ifdef MCPP_HAVE_WINDOW
 #include "client/game.hpp"
 #endif
@@ -1785,6 +1786,9 @@ int main(int argc, char** argv) {
         }
         if (command == "screenshot") {
             return client::screenshot(std::vector<std::string>(argv + 2, argv + argc));
+        }
+        if (command == "hudshot-scenes") {
+            return client::hud_shot(std::vector<std::string>(argv + 2, argv + argc));
         }
         if (command == "uishot") {
             return do_uishot(argc > 2 ? argv[2] : "ui.png");

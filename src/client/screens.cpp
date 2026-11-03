@@ -293,6 +293,7 @@ void screens_draw(Game& game) {
     quads.begin();
     mcpp::ui::draw_hud(quads, hud, static_cast<float>(window.width()),
                        static_cast<float>(window.height()), state);
+    hud_render(game);
 
     if (auto* screen = screens.manager.current()) {
         const int scale = gui_scale_of(game);

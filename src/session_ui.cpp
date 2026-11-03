@@ -99,9 +99,35 @@ int64_t now_millis() {
 
 } // namespace
 
+namespace {
+
+Scoreboard::NumberFormat read_number_format(ByteBuffer& in) {
+    Scoreboard::NumberFormat format;
+    if (!in.read_bool()) return format;
+    switch (in.read_varint()) {
+    case 0:
+        format.kind = Scoreboard::NumberFormat::Kind::Blank;
+        break;
+    case 1:
+        format.kind = Scoreboard::NumberFormat::Kind::Styled;
+        format.value = nbt::read_network_tag(in);
+        break;
+    case 2:
+        format.kind = Scoreboard::NumberFormat::Kind::Fixed;
+        format.value = nbt::read_network_tag(in);
+        break;
+    default:
+        break;
+    }
+    return format;
+}
+
+} // namespace
+
 bool Session::handle_ui(PacketConnection::Packet& packet) {
     const auto& cb = ids_->play_cb;
     auto& in = packet.data;
+    peek_chat_components(packet);
 
     if (packet.id == cb.player_chat) {
         const auto text = json::strip_formatting(read_player_chat(in, lookup_, data_.registries));
@@ -168,6 +194,157 @@ bool Session::handle_ui(PacketConnection::Packet& packet) {
             links.emplace_back(std::move(label), in.read_string());
         }
         if (events_.ui.on_server_links) events_.ui.on_server_links(links);
+        return true;
+    }
+    if (packet.id == cb.set_action_bar_text) {
+        const nbt::Value text = nbt::read_network_tag(in);
+        if (events_.ui.on_overlay_message) events_.ui.on_overlay_message(text);
+        return true;
+    }
+    if (packet.id == cb.set_title_text) {
+        const nbt::Value text = nbt::read_network_tag(in);
+        if (events_.ui.on_title) events_.ui.on_title(text);
+        return true;
+    }
+    if (packet.id == cb.set_subtitle_text) {
+        const nbt::Value text = nbt::read_network_tag(in);
+        if (events_.ui.on_subtitle) events_.ui.on_subtitle(text);
+        return true;
+    }
+    if (packet.id == cb.set_titles_animation) {
+        const int32_t fade_in = in.read_i32();
+        const int32_t stay = in.read_i32();
+        const int32_t fade_out = in.read_i32();
+        if (events_.ui.on_title_times) events_.ui.on_title_times(fade_in, stay, fade_out);
+        return true;
+    }
+    if (packet.id == cb.clear_titles) {
+        const bool reset = in.read_bool();
+        if (events_.ui.on_clear_titles) events_.ui.on_clear_titles(reset);
+        return true;
+    }
+    if (packet.id == cb.tab_list) {
+        const nbt::Value header = nbt::read_network_tag(in);
+        const nbt::Value footer = nbt::read_network_tag(in);
+        if (events_.ui.on_tab_list) events_.ui.on_tab_list(header, footer);
+        return true;
+    }
+    if (packet.id == cb.boss_event) {
+        BossEvent event;
+        event.uuid = detail::read_uuid(in);
+        event.op = static_cast<BossEvent::Op>(in.read_varint());
+        switch (event.op) {
+        case BossEvent::Op::Add:
+            event.name = nbt::read_network_tag(in);
+            event.progress = in.read_f32();
+            event.colour = in.read_varint();
+            event.overlay = in.read_varint();
+            event.flags = in.read_u8();
+            break;
+        case BossEvent::Op::Remove:
+            break;
+        case BossEvent::Op::Progress:
+            event.progress = in.read_f32();
+            break;
+        case BossEvent::Op::Name:
+            event.name = nbt::read_network_tag(in);
+            break;
+        case BossEvent::Op::Style:
+            event.colour = in.read_varint();
+            event.overlay = in.read_varint();
+            break;
+        case BossEvent::Op::Flags:
+            event.flags = in.read_u8();
+            break;
+        default:
+            return true;
+        }
+        if (events_.ui.on_boss_event) events_.ui.on_boss_event(event);
+        return true;
+    }
+    if (packet.id == cb.set_objective) {
+        auto& board = ui_.scoreboard;
+        std::string name = in.read_string();
+        const uint8_t method = in.read_u8();
+        if (method == 1) {
+            board.objectives.erase(name);
+            for (auto& slot : board.display) {
+                if (slot == name) slot.clear();
+            }
+            for (auto& [owner, scores] : board.scores) scores.erase(name);
+            return true;
+        }
+        auto& objective = board.objectives[name];
+        objective.display_name = nbt::read_network_tag(in);
+        objective.hearts = in.read_varint() == 1;
+        objective.format = read_number_format(in);
+        return true;
+    }
+    if (packet.id == cb.set_display_objective) {
+        const int32_t slot = in.read_varint();
+        std::string name = in.read_string();
+        if (slot >= 0 && static_cast<size_t>(slot) < Scoreboard::kSlots) {
+            ui_.scoreboard.display[static_cast<size_t>(slot)] = std::move(name);
+        }
+        return true;
+    }
+    if (packet.id == cb.set_score) {
+        std::string owner = in.read_string();
+        std::string objective = in.read_string();
+        Scoreboard::Score score;
+        score.value = in.read_varint();
+        if (in.read_bool()) score.display_name = nbt::read_network_tag(in);
+        score.format = read_number_format(in);
+        ui_.scoreboard.scores[std::move(owner)][std::move(objective)] = std::move(score);
+        return true;
+    }
+    if (packet.id == cb.reset_score) {
+        auto& board = ui_.scoreboard;
+        const std::string owner = in.read_string();
+        if (in.read_bool()) {
+            const std::string objective = in.read_string();
+            if (const auto found = board.scores.find(owner); found != board.scores.end()) {
+                found->second.erase(objective);
+                if (found->second.empty()) board.scores.erase(found);
+            }
+        } else {
+            board.scores.erase(owner);
+        }
+        return true;
+    }
+    if (packet.id == cb.set_player_team) {
+        auto& board = ui_.scoreboard;
+        const std::string name = in.read_string();
+        const uint8_t method = in.read_u8();
+        if (method == 1) {
+            board.teams.erase(name);
+            std::erase_if(board.team_of, [&](const auto& entry) { return entry.second == name; });
+            return true;
+        }
+        if (method == 0 || method == 2) {
+            auto& team = board.teams[name];
+            team.display_name = nbt::read_network_tag(in);
+            team.options = in.read_u8();
+            team.nametag_visibility = in.read_varint();
+            team.collision_rule = in.read_varint();
+            team.colour = in.read_varint();
+            team.prefix = nbt::read_network_tag(in);
+            team.suffix = nbt::read_network_tag(in);
+        }
+        if (method == 0 || method == 3 || method == 4) {
+            const int32_t count = in.read_varint();
+            for (int32_t i = 0; i < count; ++i) {
+                std::string member = in.read_string();
+                if (method == 4) {
+                    if (const auto found = board.team_of.find(member);
+                        found != board.team_of.end() && found->second == name) {
+                        board.team_of.erase(found);
+                    }
+                } else {
+                    board.team_of[std::move(member)] = name;
+                }
+            }
+        }
         return true;
     }
     return false;
@@ -267,6 +444,115 @@ void Session::send_command(std::string_view command) {
     ByteBuffer out;
     out.write_string(command);
     send(ids_->play_sb.chat_command, out);
+}
+
+namespace {
+
+nbt::Value text_value(std::string text) {
+    return nbt::Value(nbt::Value::Storage(std::move(text)));
+}
+
+// A chat type bound to its sender and target, decorating a message the way
+// the game's own decoration does: the type's translation with the parameters
+// it names, in its style.
+nbt::Value decorate_chat(ByteBuffer& in, nbt::Value content, const Registries& registries) {
+    std::string key = "chat.type.text";
+    std::vector<int32_t> order = {0, 2};
+    nbt::Value style;
+    const int32_t holder = in.read_varint();
+    if (holder == 0) {
+        key = in.read_string();
+        order.clear();
+        const int32_t count = in.read_varint();
+        for (int32_t i = 0; i < count; ++i) order.push_back(in.read_varint());
+        style = nbt::read_network_tag(in);
+        in.read_string();
+        const int32_t narrated = in.read_varint();
+        for (int32_t i = 0; i < narrated; ++i) in.read_varint();
+        nbt::read_network_tag(in);
+    } else if (const auto* entry = registries.at("minecraft:chat_type",
+                                                 static_cast<size_t>(holder - 1));
+               entry != nullptr && entry->data.has_value()) {
+        if (const auto* chat = entry->data->find("chat")) {
+            if (const auto* text = chat->find("translation_key"); text && text->as_string()) {
+                key = *text->as_string();
+            }
+            if (const auto* list = chat->find("parameters"); list && list->as_list()) {
+                order.clear();
+                for (const auto& item : *list->as_list()) {
+                    const std::string* name = item.as_string();
+                    if (name == nullptr) continue;
+                    order.push_back(*name == "sender" ? 0 : *name == "target" ? 1 : 2);
+                }
+            }
+            if (const auto* found = chat->find("style")) style = *found;
+        }
+    }
+    nbt::Value sender = nbt::read_network_tag(in);
+    nbt::Value target = text_value("");
+    if (in.read_bool()) target = nbt::read_network_tag(in);
+
+    nbt::List with;
+    for (const int32_t part : order) {
+        with.push_back(part == 0 ? sender : part == 1 ? target : content);
+    }
+    nbt::Compound out;
+    if (const auto* fields = style.as_compound()) out = *fields;
+    out["translate"] = text_value(key);
+    out["with"] = nbt::Value(nbt::Value::Storage(std::move(with)));
+    return nbt::Value(nbt::Value::Storage(std::move(out)));
+}
+
+} // namespace
+
+void Session::peek_chat_components(PacketConnection::Packet& packet) {
+    const auto& cb = ids_->play_cb;
+    if (packet.id != cb.player_chat && packet.id != cb.disguised_chat &&
+        packet.id != cb.system_chat) {
+        return;
+    }
+    if (!events_.ui.on_chat_component && !events_.ui.on_overlay_message) return;
+    auto& in = packet.data;
+    const size_t start = in.position();
+    try {
+        if (packet.id == cb.system_chat) {
+            const nbt::Value text = nbt::read_network_tag(in);
+            if (in.read_bool()) {
+                if (events_.ui.on_overlay_message) events_.ui.on_overlay_message(text);
+            } else if (events_.ui.on_chat_component) {
+                events_.ui.on_chat_component(text, 1);
+            }
+        } else if (packet.id == cb.disguised_chat) {
+            nbt::Value body = nbt::read_network_tag(in);
+            const nbt::Value line = decorate_chat(in, std::move(body), data_.registries);
+            if (events_.ui.on_chat_component) events_.ui.on_chat_component(line, 1);
+        } else {
+            in.read_varint();
+            in.read_bytes(detail::kUuidBytes);
+            in.read_varint();
+            const bool signed_message = in.read_bool();
+            if (signed_message) in.read_bytes(kSignatureBytes);
+            nbt::Value content = text_value(in.read_string(256));
+            in.read_i64();
+            in.read_i64();
+            const int32_t previous = in.read_varint();
+            for (int32_t i = 0; i < previous; ++i) {
+                if (in.read_varint() == 0) in.read_bytes(kSignatureBytes);
+            }
+            if (in.read_bool()) content = nbt::read_network_tag(in);
+            const int32_t filter = in.read_varint();
+            if (filter == 2) {
+                const int32_t longs = in.read_varint();
+                for (int32_t i = 0; i < longs; ++i) in.read_i64();
+            }
+            const nbt::Value line = decorate_chat(in, std::move(content), data_.registries);
+            if (filter != 1 && events_.ui.on_chat_component) {
+                events_.ui.on_chat_component(line, signed_message ? 0 : 2);
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    in.set_position(start);
 }
 
 } // namespace mcpp

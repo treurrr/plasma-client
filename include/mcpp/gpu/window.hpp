@@ -129,6 +129,9 @@ public:
     uint32_t width() const { return extent_.width; }
     uint32_t height() const { return extent_.height; }
     double last_frame_ms() const { return last_frame_ms_; }
+    // H: whether a key is held right now, for a binding the game reads as
+    // held rather than pressed (the player list).
+    bool key_down(int glfw_key) const;
 
 private:
     struct Frame {

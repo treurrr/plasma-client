@@ -171,6 +171,81 @@ struct Attribute {
     }
 };
 
+// What the hud is told, kept as the components the server sent so colours and
+// translations survive to the screen.
+//
+// One boss_event: which bar, what happened to it, and the fields that
+// operation carries.
+struct BossEvent {
+    enum class Op : uint8_t { Add, Remove, Progress, Name, Style, Flags };
+    std::string uuid;
+    Op op = Op::Add;
+    nbt::Value name;
+    float progress = 0.0f;
+    // Pink, blue, red, green, yellow, purple, white; and progress, notched 6,
+    // 10, 12, 20: the game's own orders.
+    int32_t colour = 0;
+    int32_t overlay = 0;
+    // Darken the sky, play the boss music, thicken the fog.
+    uint8_t flags = 0;
+};
+
+// The scoreboard as set_objective, set_score, reset_score,
+// set_display_objective and set_player_team leave it.
+struct Scoreboard {
+    // How a score is written: the place's default, nothing, in a style, or a
+    // fixed text in place of the number.
+    struct NumberFormat {
+        enum class Kind : uint8_t { Default, Blank, Styled, Fixed };
+        Kind kind = Kind::Default;
+        nbt::Value value;
+    };
+    struct Objective {
+        nbt::Value display_name;
+        bool hearts = false;
+        NumberFormat format;
+    };
+    struct Score {
+        int32_t value = 0;
+        nbt::Value display_name;   // null: the owner's own name
+        NumberFormat format;
+    };
+    struct Team {
+        nbt::Value display_name;
+        nbt::Value prefix;
+        nbt::Value suffix;
+        uint8_t options = 0;   // friendly fire, see invisible team mates
+        int32_t nametag_visibility = 0;
+        int32_t collision_rule = 0;
+        int32_t colour = 21;   // the game's formatting codes in order; 21 is none
+    };
+    // The list, the sidebar, below names, then the sidebar a team of each of
+    // the sixteen colours sees instead.
+    static constexpr size_t kSlots = 19;
+    static constexpr size_t kList = 0;
+    static constexpr size_t kSidebar = 1;
+    static constexpr size_t kBelowName = 2;
+
+    std::map<std::string, Objective, std::less<>> objectives;
+    // By owner, then by objective.
+    std::map<std::string, std::map<std::string, Score, std::less<>>, std::less<>> scores;
+    std::array<std::string, kSlots> display;
+    std::map<std::string, Team, std::less<>> teams;
+    std::map<std::string, std::string, std::less<>> team_of;
+
+    const Team* team_for(std::string_view owner) const {
+        const auto found = team_of.find(owner);
+        if (found == team_of.end()) return nullptr;
+        const auto team = teams.find(found->second);
+        return team == teams.end() ? nullptr : &team->second;
+    }
+    const Objective* displayed(size_t slot) const {
+        if (slot >= kSlots || display[slot].empty()) return nullptr;
+        const auto found = objectives.find(display[slot]);
+        return found == objectives.end() ? nullptr : &found->second;
+    }
+};
+
 // What the session tells the client, one struct per area of the game. An area
 // adds its events to its own struct, so two of them never edit the same lines.
 struct SessionEvents {
@@ -237,6 +312,20 @@ struct SessionEvents {
         // The links the pause screen offers: a label (a component, or one of
         // the game's built-in kinds by number) and an address.
         std::function<void(const std::vector<std::pair<nbt::Value, std::string>>&)> on_server_links;
+        // H: a chat line as its component, with the tag the game draws beside
+        // it: 0 none, 1 from the server itself, 2 an unsigned player message.
+        std::function<void(const nbt::Value&, int32_t)> on_chat_component;
+        // H: the line over the hotbar, from set_action_bar_text or system_chat.
+        std::function<void(const nbt::Value&)> on_overlay_message;
+        std::function<void(const nbt::Value&)> on_title;
+        std::function<void(const nbt::Value&)> on_subtitle;
+        // Fade in, stay, fade out, in ticks.
+        std::function<void(int32_t, int32_t, int32_t)> on_title_times;
+        // True also puts the times back to the game's defaults.
+        std::function<void(bool)> on_clear_titles;
+        std::function<void(const BossEvent&)> on_boss_event;
+        // The player list's header and footer.
+        std::function<void(const nbt::Value&, const nbt::Value&)> on_tab_list;
     } ui;
 
     struct Sound {
@@ -421,6 +510,8 @@ public:
     // The state id the server last gave the open container.
     int32_t container_state() const { return player_.container_state; }
     void send_respawn();
+    // H: the scoreboard as the server last described it.
+    const Scoreboard& scoreboard() const { return ui_.scoreboard; }
 
     // Data: session_data.cpp.
     // Every registry the server sent in configuration.
@@ -468,6 +559,8 @@ private:
     bool handle_ui(PacketConnection::Packet& packet);
     bool handle_sound(PacketConnection::Packet& packet);
     bool handle_data(PacketConnection::Packet& packet);
+    // H: the chat packets once more, as components, before handle_ui reads them.
+    void peek_chat_components(PacketConnection::Packet& packet);
 
     struct WorldState {
         Dimension dimension;
@@ -517,6 +610,7 @@ private:
     PlayerState player_;
 
     struct UiState {
+        Scoreboard scoreboard;
     };
     [[maybe_unused]] UiState ui_;
 

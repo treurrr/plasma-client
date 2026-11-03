@@ -164,6 +164,9 @@ struct SoundArea {
     std::shared_ptr<SoundRuntime> runtime;
 };
 
+// H: the hud's own state, kept in src/client/hud.cpp.
+struct HudArea;
+
 struct Game {
     explicit Game(size_t limit) : chunk_limit(limit), world(table) {}
 
@@ -192,6 +195,7 @@ struct Game {
     PlayerArea player;
     ScreensArea screens;
     SoundArea sound;
+    std::shared_ptr<HudArea> hud;
 };
 
 // Opens a window on a server and plays until it is closed.
@@ -260,5 +264,13 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
                 const std::vector<int32_t>& distances);
 // World: a block the player changed, drawn before the server confirms it.
 void world_predict_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t state);
+
+// H: the hud. Bound and started with the other areas, ticked after them; it
+// records into the interface buffer from screens_draw, under any screen.
+void hud_bind(Game& game, mcpp::SessionEvents& events);
+void hud_start(Game& game);
+void hud_tick(Game& game);
+void hud_render(Game& game);
+void hud_stop(Game& game);
 
 } // namespace client
