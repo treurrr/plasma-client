@@ -1,7 +1,6 @@
 #include "mcpp/json.hpp"
-#include "mcpp/packet_io.hpp"
+#include "mcpp/status.hpp"
 
-#include <chrono>
 #include <cstdlib>
 #include <format>
 #include <iostream>
@@ -10,8 +9,6 @@
 namespace {
 
 constexpr int32_t kProtocolUnknown = -1;
-
-constexpr int32_t kIntentStatus = 1;
 
 struct Options {
     std::string host = "127.0.0.1";
@@ -70,35 +67,18 @@ Options parse_args(int argc, char** argv) {
     return options;
 }
 
-void print_status(const mcpp::json::Value& root, bool raw, const std::string& raw_text,
-                  double latency_ms) {
-    std::string version = "?";
-    int protocol = -1;
-    if (const auto* v = root.find("version")) {
-        if (const auto* name = v->find("name")) version = name->string_or("?");
-        if (const auto* proto = v->find("protocol")) protocol = static_cast<int>(proto->number_or(-1));
-    }
-
-    int online = -1;
-    int max = -1;
-    if (const auto* players = root.find("players")) {
-        if (const auto* o = players->find("online")) online = static_cast<int>(o->number_or(-1));
-        if (const auto* m = players->find("max")) max = static_cast<int>(m->number_or(-1));
-    }
-
-    std::string motd;
-    if (const auto* description = root.find("description")) {
-        motd = mcpp::json::strip_formatting(mcpp::json::flatten_component(*description));
-    }
+void print_status(const mcpp::status::Reply& reply, bool raw) {
+    const auto& root = reply.root;
+    std::string motd = reply.motd;
     // MOTDs are often two lines.
     for (char& c : motd) {
         if (c == '\n') c = ' ';
     }
 
-    std::cout << std::format("version   : {} (protocol {})\n", version, protocol);
-    std::cout << std::format("players   : {}/{}\n", online, max);
+    std::cout << std::format("version   : {} (protocol {})\n", reply.version, reply.protocol);
+    std::cout << std::format("players   : {}/{}\n", reply.online, reply.max);
     std::cout << std::format("motd      : {}\n", motd);
-    std::cout << std::format("latency   : {:.1f} ms\n", latency_ms);
+    std::cout << std::format("latency   : {:.1f} ms\n", reply.latency_ms);
     if (const auto* icon = root.find("favicon")) {
         const auto* data = icon->as_string();
         std::cout << std::format("favicon   : {} bytes of base64\n", data ? data->size() : 0);
@@ -116,7 +96,7 @@ void print_status(const mcpp::json::Value& root, bool raw, const std::string& ra
             }
         }
     }
-    if (raw) std::cout << "\nraw       : " << raw_text << '\n';
+    if (raw) std::cout << "\nraw       : " << reply.raw << '\n';
 }
 
 } // namespace
@@ -125,41 +105,12 @@ int main(int argc, char** argv) {
     const Options options = parse_args(argc, argv);
 
     try {
-        mcpp::TcpSocket socket;
-        socket.connect(options.host, options.port, options.timeout_ms);
-        mcpp::PacketConnection connection(std::move(socket));
-
-        mcpp::ByteBuffer handshake;
-        handshake.write_varint(options.protocol);
-        handshake.write_string(options.host);
-        handshake.write_u16(options.port);
-        handshake.write_varint(kIntentStatus);
-        connection.send(0x00, handshake);
-
-        connection.send(0x00, mcpp::ByteBuffer{});
-
-        auto packet = connection.receive();
-        if (packet.id != 0x00) {
-            throw mcpp::ProtocolError(std::format("expected status response, got id 0x{:02x}",
-                                                  packet.id));
-        }
-        const std::string raw_text = packet.data.read_string(32767);
-
-        const auto sent_at = std::chrono::steady_clock::now();
-        mcpp::ByteBuffer ping;
-        ping.write_i64(std::chrono::duration_cast<std::chrono::milliseconds>(
-                           sent_at.time_since_epoch())
-                           .count());
-        connection.send(0x01, ping);
-
-        double latency_ms = -1.0;
-        auto pong = connection.receive();
-        if (pong.id == 0x01) {
-            const auto elapsed = std::chrono::steady_clock::now() - sent_at;
-            latency_ms = std::chrono::duration<double, std::milli>(elapsed).count();
-        }
-
-        print_status(mcpp::json::parse(raw_text), options.raw_json, raw_text, latency_ms);
+        mcpp::status::Request request;
+        request.host = options.host;
+        request.port = options.port;
+        request.protocol = options.protocol;
+        request.timeout_ms = options.timeout_ms;
+        print_status(mcpp::status::query(request), options.raw_json);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << std::format("ping failed: {}\n", error.what());

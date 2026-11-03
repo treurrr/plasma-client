@@ -6,6 +6,7 @@
 #include "mcpp/packet_io.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/session.hpp"
+#include "mcpp/status.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/offscreen.hpp"
 #include "mcpp/gpu/outline.hpp"
@@ -2722,44 +2723,16 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
 
 int do_ping(const std::string& target) {
     const auto address = parse_address(target);
-    const std::string& host = address.host;
-    const uint16_t port = address.port;
+    mcpp::status::Request request;
+    request.host = address.host;
+    request.port = address.port;
+    request.measure_latency = false;
+    const auto reply = mcpp::status::query(request);
 
-    mcpp::TcpSocket socket;
-    socket.connect(host, port);
-    mcpp::PacketConnection connection(std::move(socket));
+    std::cout << std::format("{}:{}  {} (protocol {})  {}/{} players\n", request.host,
+                             request.port, reply.version, reply.protocol, reply.online, reply.max);
 
-    mcpp::ByteBuffer handshake;
-    // -1 = unknown: ViaVersion mirrors back whatever we claim, which would
-    // hide the server's real version.
-    handshake.write_varint(-1);
-    handshake.write_string(host);
-    handshake.write_u16(port);
-    handshake.write_varint(1);
-    connection.send(0x00, handshake);
-    connection.send(0x00, mcpp::ByteBuffer{});
-
-    auto packet = connection.receive();
-    auto root = mcpp::json::parse(packet.data.read_string(32767));
-
-    std::string version = "?";
-    int protocol = -1;
-    if (const auto* v = root.find("version")) {
-        if (const auto* name = v->find("name")) version = name->string_or("?");
-        if (const auto* proto = v->find("protocol")) protocol = static_cast<int>(proto->number_or(-1));
-    }
-
-    int online = -1;
-    int max = -1;
-    if (const auto* players = root.find("players")) {
-        if (const auto* o = players->find("online")) online = static_cast<int>(o->number_or(-1));
-        if (const auto* m = players->find("max")) max = static_cast<int>(m->number_or(-1));
-    }
-
-    std::cout << std::format("{}:{}  {} (protocol {})  {}/{} players\n", host, port, version,
-                             protocol, online, max);
-
-    if (protocol == mcpp::protocol::kTargetProtocol) {
+    if (reply.protocol == mcpp::protocol::kTargetProtocol) {
         std::cout << "match: we speak the same version.\n";
     } else {
         std::cout << std::format("we speak {} ({}); only works if the server has ViaVersion.\n",

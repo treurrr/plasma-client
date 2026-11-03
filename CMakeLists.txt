@@ -90,6 +90,7 @@ add_library(mcpp_net STATIC
     src/session_ui.cpp
     src/session_sound.cpp
     src/session_data.cpp
+    src/status.cpp
     src/registries.cpp
     src/translations.cpp
     src/auth.cpp
