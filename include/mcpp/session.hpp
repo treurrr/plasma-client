@@ -67,6 +67,8 @@ public:
     // Lets a render loop drain whatever arrived without blocking on an idle socket.
     bool has_data() const;
     size_t entity_count() const { return entities_.size(); }
+    // What the server says our latency is, or -1 before it has said.
+    int32_t ping_ms() const { return ping_ms_; }
     void close();
     // Biomes in the order the server sent them, which is the order a chunk's
     // palette indexes into.
@@ -85,6 +87,10 @@ public:
 
 private:
     bool light_format_warned_ = false;
+    bool player_list_broken_ = false;
+    int32_t ping_ms_ = -1;
+
+    void read_player_list(ByteBuffer& in);
     void handshake();
     void run_login();
     void begin_configuration();

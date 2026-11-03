@@ -464,10 +464,92 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         }
         return true;
     }
+    if (packet.id == cb.player_info_update) {
+        read_player_list(in);
+        return true;
+    }
     if (packet.id == cb.disconnect) {
         fail(std::format("server closed the connection: {}", read_component(in, lookup_)));
     }
     return true;
+}
+
+// The game measures latency itself and publishes it in the player list, so the
+// number the hud shows is the server's own, not something we estimate.
+void Session::read_player_list(ByteBuffer& in) {
+    if (player_list_broken_) return;
+
+    enum Action : uint8_t {
+        kAddPlayer, kInitialiseChat, kGameMode, kListed, kLatency, kDisplayName,
+        kListPriority, kHat, kActionCount
+    };
+
+    try {
+        const auto actions = in.read_u8();
+        const int32_t count = in.read_varint();
+        if (count < 0 || count > 4096) throw ProtocolError("implausible player list size");
+
+        const auto selected = [&](Action action) {
+            return (actions & (1u << static_cast<uint8_t>(action))) != 0;
+        };
+
+        for (int32_t i = 0; i < count; ++i) {
+            const auto uuid = read_uuid(in);
+            int32_t latency = -1;
+            for (uint8_t action = 0; action < kActionCount; ++action) {
+                if (!selected(static_cast<Action>(action))) continue;
+                switch (action) {
+                case kAddPlayer: {
+                    in.read_string();
+                    const int32_t properties = in.read_varint();
+                    if (properties < 0 || properties > 64) {
+                        throw ProtocolError("implausible property count");
+                    }
+                    for (int32_t p = 0; p < properties; ++p) {
+                        in.read_string();
+                        in.read_string(32767);
+                        if (in.read_bool()) in.read_string(32767);
+                    }
+                    break;
+                }
+                case kInitialiseChat:
+                    if (in.read_bool()) {
+                        in.read_bytes(kUuidBytes);
+                        in.read_i64();
+                        in.read_bytes(static_cast<size_t>(in.read_varint()));
+                        in.read_bytes(static_cast<size_t>(in.read_varint()));
+                    }
+                    break;
+                case kGameMode:
+                case kListPriority:
+                    in.read_varint();
+                    break;
+                case kListed:
+                case kHat:
+                    in.read_bool();
+                    break;
+                case kLatency:
+                    latency = in.read_varint();
+                    break;
+                case kDisplayName:
+                    if (in.read_bool()) nbt::read_network_tag(in);
+                    break;
+                default:
+                    break;
+                }
+            }
+            if (latency >= 0 && uuid == profile_uuid_) ping_ms_ = latency;
+        }
+
+        // The packet has to end here. Anything left means the action list grew
+        // and everything after this point was read as the wrong field.
+        if (in.remaining() != 0) throw ProtocolError("trailing bytes");
+    } catch (const std::exception& error) {
+        player_list_broken_ = true;
+        ping_ms_ = -1;
+        status(std::format("player list not understood ({}); no ping from the server",
+                           error.what()));
+    }
 }
 
 void Session::connect() {

@@ -649,6 +649,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
         state.fps = static_cast<int>(fps + 0.5);
         state.gpu_ms = renderer.last_gpu_ms();
         state.cpu_ms = window.last_frame_ms();
+        state.ping_ms = session.ping_ms();
         state.x = eye[0];
         state.y = eye[1] - 1.62;
         state.z = eye[2];
@@ -756,6 +757,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             break;
         }
     }
+    std::cout << std::format("- the server puts our latency at {} ms\n", session.ping_ms());
     session.close();
     std::cout << std::format("- {} chunks fetched\n", chunks.size());
     if (chunks.empty()) return 1;
