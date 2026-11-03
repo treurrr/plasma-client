@@ -169,3 +169,5 @@ function(mcpp_probe name)
 endfunction()
 
 mcpp_probe(jmath_probe)
+mcpp_probe(sound_probe)
+target_link_libraries(sound_probe PRIVATE mcpp_audio)
