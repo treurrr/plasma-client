@@ -252,7 +252,7 @@ void GuiGraphics::draw_scrolling_string(const std::vector<Run>& r, int x0, int y
     const double phase =
         std::sin(1.5707963267948966 * std::cos(6.283185307179586 * seconds / period)) / 2.0 +
         0.5;
-    const double offset = std::lerp(0.0, static_cast<double>(overflow), phase);
+    const double offset = phase * static_cast<double>(overflow);
     enable_scissor(x0, y0, x1, y1);
     draw_string(r, x0 - static_cast<int>(offset), y, argb);
     disable_scissor();

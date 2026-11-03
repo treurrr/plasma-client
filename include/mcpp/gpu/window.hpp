@@ -62,6 +62,22 @@ struct FrameInput {
     bool screen_open = false;
 };
 
+// One raw event, in the order GLFW delivered it: what a screen needs, since
+// two keys or two clicks inside one frame are two events, not a state.
+struct InputEvent {
+    enum class Type : uint8_t { Key, Char, Button, Scroll, Move };
+    Type type = Type::Key;
+    // Key: GLFW key, scancode, action (0 release, 1 press, 2 repeat), mods.
+    // Button: button in `key`, action and mods. Char: codepoint in `key`.
+    int key = 0;
+    int scancode = 0;
+    int action = 0;
+    int mods = 0;
+    // Pointer position in window pixels, or the scroll offsets.
+    double x = 0.0;
+    double y = 0.0;
+};
+
 // GLFW only for the surface and the key state; everything after the surface is
 // ours. The swapchain owns no pipeline: a frame is drawn by WorldRenderer into
 // its own image and blitted here, so the offscreen and window paths cannot
@@ -97,6 +113,11 @@ public:
     using Overlay = std::function<void(VkCommandBuffer, uint32_t, uint32_t)>;
     void present(WorldRenderer& renderer, const Camera& camera, const Overlay& overlay = {});
     VkFormat colour_format() const { return format_; }
+    // Everything that happened since the last call, oldest first.
+    std::vector<InputEvent> take_events();
+    // The framebuffer over the window's own size, for a pointer in window
+    // coordinates on a high density screen.
+    double content_scale() const;
 
     uint32_t width() const { return extent_.width; }
     uint32_t height() const { return extent_.height; }
@@ -153,6 +174,7 @@ private:
     std::string typed_;
     bool cursor_captured_ = false;
     double last_frame_ms_ = 0.0;
+    std::vector<InputEvent> events_;
 };
 
 } // namespace mcpp::gpu

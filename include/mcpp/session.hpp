@@ -167,6 +167,13 @@ struct SessionEvents {
     struct Ui {
         std::function<void(std::string_view)> on_chat;
         std::function<void(std::string_view)> on_action_bar;
+        // The server shut a container, ours included.
+        std::function<void(int32_t)> on_container_close;
+        // We died, and this is what killed us, as the component the server sent.
+        std::function<void(const nbt::Value&)> on_combat_kill;
+        // The links the pause screen offers: a label (a component, or one of
+        // the game's built-in kinds by number) and an address.
+        std::function<void(const std::vector<std::pair<nbt::Value, std::string>>&)> on_server_links;
     } ui;
 
     struct Sound {
@@ -295,6 +302,22 @@ public:
     // Ui: session_ui.cpp.
     void send_chat(std::string_view message);
     void send_command(std::string_view command);
+    // A click in a container: what the client already did to its own copy,
+    // the slots that changed and what the cursor now holds, so the server can
+    // check it rather than replay it.
+    void send_container_click(int32_t container, int16_t slot, int8_t button, int32_t mode,
+                              const std::vector<std::pair<int16_t, ItemStack>>& changed,
+                              const ItemStack& carried);
+    void send_container_close(int32_t container);
+    // Creative mode: the client says what a slot of its own inventory holds.
+    void send_creative_slot(int16_t slot, const ItemStack& stack);
+    // The client's own idea of the inventory after a click, until the server
+    // confirms or corrects it.
+    void predict_inventory(const std::array<ItemStack, Inventory::kSlots>& slots,
+                           const ItemStack& carried);
+    // The state id the server last gave the open container.
+    int32_t container_state() const { return player_.container_state; }
+    void send_respawn();
 
     // Data: session_data.cpp.
     // Every registry the server sent in configuration.
@@ -351,6 +374,7 @@ private:
         double last_z = 0.0;
         float last_yaw = 0.0f;
         float last_pitch = 0.0f;
+        int32_t container_state = 0;
     };
     PlayerState player_;
 

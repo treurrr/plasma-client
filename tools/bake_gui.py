@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bake the game's own interface sprites and its font into one atlas.
 
-Usage: bake_gui.py <client.jar> <protocol> <out.plgu>
+Usage: bake_gui.py <client.jar> <protocol> <out.plgu> [registries.json items.json]
 
 The hotbar, the hearts, the crosshair and everything else the hud is made of
 ship as separate images. They are packed into one texture here, with the names
@@ -93,10 +93,33 @@ def read_font(jar):
             if image is None]
 
 
+def write_item_table(registries_path, items_path, out_path):
+    """What the screens need of every item, in id order, one tab-separated
+    line each: name, the translation key of its name, how many stack, its
+    durability, the slot it is worn in, and its rarity, which colours the name.
+    """
+    entries = json.loads(Path(registries_path).read_text())["minecraft:item"]["entries"]
+    report = json.loads(Path(items_path).read_text())
+    rows = [""] * len(entries)
+    for name, entry in entries.items():
+        components = report.get(name, {}).get("components", {})
+        key = components.get("minecraft:item_name", {}).get("translate", "")
+        slot = components.get("minecraft:equippable", {}).get("slot", "-")
+        rows[entry["protocol_id"]] = "\t".join([
+            name.removeprefix("minecraft:"), key or "-",
+            str(components.get("minecraft:max_stack_size", 64)),
+            str(components.get("minecraft:max_damage", 0)), slot,
+            components.get("minecraft:rarity", "common")])
+    Path(out_path).write_text("\n".join(rows) + "\n")
+    print(f"{out_path}: {len(rows)} items")
+
+
 def main(args):
-    if len(args) != 3:
+    if len(args) not in (3, 5):
         sys.exit(__doc__)
-    jar_path, protocol, out_path = args
+    jar_path, protocol, out_path = args[:3]
+    if len(args) == 5:
+        write_item_table(args[3], args[4], Path(out_path).with_name(f"items-ui-{protocol}.txt"))
     protocol = int(protocol)
 
     sprites = []

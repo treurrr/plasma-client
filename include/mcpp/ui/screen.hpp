@@ -1,5 +1,6 @@
 #pragma once
 #include "mcpp/ui/gui_graphics.hpp"
+#include "mcpp/ui/layout.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -50,9 +51,8 @@ struct KeyEvent {
 
 class Screen;
 
-class Widget {
+class Widget : public LayoutElement {
 public:
-    virtual ~Widget() = default;
 
     int x = 0;
     int y = 0;
@@ -66,6 +66,14 @@ public:
     float alpha = 1.0f;
     // Shown when the pointer rests on the widget.
     std::vector<Component> tooltip;
+
+    void set_x(int to) override { x = to; }
+    void set_y(int to) override { y = to; }
+    int get_x() const override { return x; }
+    int get_y() const override { return y; }
+    int get_width() const override { return w; }
+    int get_height() const override { return h; }
+    void visit_widgets(const std::function<void(Widget&)>& visit) override { visit(*this); }
 
     bool over(double mx, double my) const {
         return visible && mx >= x && my >= y && mx < x + w && my < y + h;
@@ -110,18 +118,30 @@ public:
         widgets.push_back(std::move(widget));
         return out;
     }
+    // A layout the screen keeps for as long as its widgets.
+    template <typename T, typename... Args> T& layout(Args&&... args) {
+        auto made = std::make_unique<T>(std::forward<Args>(args)...);
+        T& out = *made;
+        layouts.push_back(std::move(made));
+        return out;
+    }
 
     // Built again whenever the window, and so the gui size, changes.
     void open(ScreenManager& owner, int w, int h);
     virtual void init() {}
     virtual void removed() {}
     virtual void tick();
+    // Background, then the screen, then the tooltip: one frame of it.
+    void render_with_tooltip(GuiGraphics& gfx, double mx, double my);
     virtual void render(GuiGraphics& gfx, double mx, double my);
-    virtual void render_background(GuiGraphics& gfx);
+    virtual void render_background(GuiGraphics& gfx, double mx, double my);
+    void render_transparent_background(GuiGraphics& gfx);
+    void render_menu_background(GuiGraphics& gfx, int x, int y, int w, int h);
     virtual bool mouse_clicked(double mx, double my, int button);
     virtual bool mouse_released(double mx, double my, int button);
     virtual bool mouse_dragged(double mx, double my, int button, double dx, double dy);
     virtual bool mouse_scrolled(double mx, double my, double dx, double dy);
+    virtual void mouse_moved(double, double) {}
     virtual bool key_pressed(const KeyEvent& event);
     virtual bool key_released(const KeyEvent&) { return false; }
     virtual bool char_typed(uint32_t code, int mods);
@@ -131,9 +151,12 @@ public:
     // Vanilla pauses a single-player world behind these; on a server nothing
     // pauses, and that is all this client plays.
     virtual bool is_pause_screen() const { return true; }
-    // In-world screens over which the world keeps drawing with no blur or
-    // darkening: the containers.
-    virtual bool draws_world_plain() const { return false; }
+    // Screens over a world drawn without blur, only darkened: containers,
+    // chat, death.
+    virtual bool is_in_game_ui() const { return false; }
+    // The game counts a second press inside 250 ms on the same spot as a
+    // double click; the manager sets this before mouse_clicked.
+    bool double_click = false;
 
     void set_focus(Widget* widget, bool from_keyboard);
     Widget* focus() const { return focused_; }
@@ -141,6 +164,7 @@ public:
     bool move_focus_spatial(int dx, int dy);
 
     std::vector<std::unique_ptr<Widget>> widgets;
+    std::vector<std::unique_ptr<LayoutElement>> layouts;
     Widget* dragging = nullptr;
 
 protected:

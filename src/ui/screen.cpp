@@ -31,6 +31,7 @@ void Screen::open(ScreenManager& owner, int w, int h) {
     width = w;
     height = h;
     widgets.clear();
+    layouts.clear();
     focused_ = nullptr;
     dragging = nullptr;
     init();
@@ -40,17 +41,34 @@ void Screen::tick() {
     for (auto& widget : widgets) widget->tick();
 }
 
-void Screen::render_background(GuiGraphics& gfx) {
-    if (manager != nullptr && manager->in_world) {
-        gfx.blit_tiled("gui/inworld_menu_background", 0, 0, width, height, 32.0f, 32.0f);
-    } else {
-        if (manager != nullptr && manager->panorama) manager->panorama(gfx, true);
-        gfx.blit_tiled("gui/menu_background", 0, 0, width, height, 32.0f, 32.0f);
+void Screen::render_with_tooltip(GuiGraphics& gfx, double mx, double my) {
+    render_background(gfx, mx, my);
+    render(gfx, mx, my);
+    gfx.render_deferred();
+}
+
+void Screen::render_transparent_background(GuiGraphics& gfx) {
+    gfx.fill_gradient(0, 0, width, height, 0xC0101010u, 0xD0101010u);
+}
+
+void Screen::render_menu_background(GuiGraphics& gfx, int x, int y, int w, int h) {
+    const bool world = manager != nullptr && manager->in_world;
+    gfx.blit_tiled(world ? "gui/inworld_menu_background" : "gui/menu_background", x, y, w, h,
+                   32.0f, 32.0f);
+}
+
+void Screen::render_background(GuiGraphics& gfx, double, double) {
+    if (is_in_game_ui()) {
+        render_transparent_background(gfx);
+        return;
     }
+    if (manager != nullptr && !manager->in_world && manager->panorama) {
+        manager->panorama(gfx, true);
+    }
+    render_menu_background(gfx, 0, 0, width, height);
 }
 
 void Screen::render(GuiGraphics& gfx, double mx, double my) {
-    render_background(gfx);
     for (auto& widget : widgets) {
         widget->hovered = widget->over(mx, my);
         if (widget->visible) widget->render(gfx, mx, my);
