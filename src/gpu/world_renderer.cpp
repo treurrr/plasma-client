@@ -750,8 +750,10 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
     vertex_bytes_ = vertex_total * sizeof(world::Vertex);
     index_bytes_ = index_total * sizeof(uint32_t);
     index_count_ = static_cast<uint32_t>(index_total);
+    blends_.clear();
     if (index_count_ > 0) {
         upload_sections(sections, source);
+        keep_blends(sections, source, 0);
     }
 
     upload_ms_ = std::chrono::duration<double, std::milli>(
@@ -769,6 +771,7 @@ void WorldRenderer::reserve(size_t vertex_capacity, size_t index_capacity) {
     vertex_spans_.reset(vertex_capacity_ / sizeof(world::Vertex));
     index_spans_.reset(index_capacity_ / sizeof(uint32_t));
     releasing_.clear();
+    blends_.clear();
 
     auto vertex = make_buffer(device_, vertex_capacity_,
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -788,6 +791,8 @@ template <typename Drop> void WorldRenderer::drop_sections(Drop&& drop) {
     constexpr uint64_t kFramesBeforeReuse = 3;
     std::erase_if(sections_, [&](const Section& entry) {
         if (!drop(entry)) return false;
+        blends_.erase({static_cast<int32_t>(entry.origin[0]), static_cast<int32_t>(entry.origin[1]),
+                       static_cast<int32_t>(entry.origin[2])});
         releasing_.push_back({static_cast<size_t>(entry.vertex_offset), entry.vertex_count,
                               entry.first_index, entry.index_count,
                               frames_recorded_ + kFramesBeforeReuse});
@@ -952,7 +957,128 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
     vertex_bytes_ = vertex_spans_.used() * sizeof(world::Vertex);
     index_bytes_ = index_spans_.used() * sizeof(uint32_t);
     index_count_ = static_cast<uint32_t>(index_spans_.used());
+
+    keep_blends(sections, source, first_section);
     return true;
+}
+
+void WorldRenderer::keep_blends(const std::vector<world::SectionMesh>& sections,
+                                const std::vector<size_t>& source, size_t first_section) {
+    for (size_t slot = 0; slot < source.size(); ++slot) {
+        const auto& section = sections[source[slot]];
+        const auto& entry = sections_[first_section + slot];
+        const std::array<int32_t, 3> key{section.origin[0], section.origin[1], section.origin[2]};
+        if (section.indices.size() <= section.opaque_indices) {
+            blends_.erase(key);
+            continue;
+        }
+        Blend blend;
+        blend.first = entry.first_index + static_cast<uint32_t>(section.opaque_indices);
+        blend.indices.assign(section.indices.begin() +
+                                 static_cast<std::ptrdiff_t>(section.opaque_indices),
+                             section.indices.end());
+        const size_t quads = blend.indices.size() / 6;
+        blend.centres.resize(quads * 3);
+        for (size_t quad = 0; quad < quads; ++quad) {
+            // Six indices over four corners: 0, 1, 2 and the last one.
+            const uint32_t corners[4] = {blend.indices[quad * 6], blend.indices[quad * 6 + 1],
+                                         blend.indices[quad * 6 + 2], blend.indices[quad * 6 + 5]};
+            for (int axis = 0; axis < 3; ++axis) {
+                float sum = 0.0f;
+                for (const uint32_t corner : corners) {
+                    sum += static_cast<float>(section.vertices[corner].position[axis]) /
+                               static_cast<float>(world::kPositionScale) -
+                           static_cast<float>(world::kPositionBias);
+                }
+                blend.centres[quad * 3 + axis] =
+                    static_cast<float>(section.origin[axis]) + sum * 0.25f;
+            }
+        }
+        blends_[key] = std::move(blend);
+    }
+}
+
+void WorldRenderer::sort_translucent(VkCommandBuffer command, const Camera& camera) {
+    if (blends_.empty()) return;
+    // Near sections only, and only when the camera has moved a whole block:
+    // far away the quads are too small for their order to show, and standing
+    // still they are already right.
+    constexpr float kReach = 64.0f;
+    constexpr size_t kPerFrame = 24;
+    const int32_t cell[3] = {static_cast<int32_t>(std::floor(camera.eye[0])),
+                             static_cast<int32_t>(std::floor(camera.eye[1])),
+                             static_cast<int32_t>(std::floor(camera.eye[2]))};
+    std::vector<std::pair<float, Blend*>> due;
+    for (auto& [origin, blend] : blends_) {
+        if (blend.sorted_for[0] == cell[0] && blend.sorted_for[1] == cell[1] &&
+            blend.sorted_for[2] == cell[2]) {
+            continue;
+        }
+        float distance = 0.0f;
+        for (int axis = 0; axis < 3; ++axis) {
+            const float centre = static_cast<float>(origin[axis]) + 8.0f - camera.eye[axis];
+            distance += centre * centre;
+        }
+        if (distance > kReach * kReach) continue;
+        due.emplace_back(distance, &blend);
+    }
+    if (due.empty()) return;
+    std::ranges::sort(due, {}, &std::pair<float, Blend*>::first);
+    if (due.size() > kPerFrame) due.resize(kPerFrame);
+
+    // A frame still in flight may be reading these indices.
+    VkMemoryBarrier2 before{};
+    before.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    before.srcStageMask = VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
+    before.srcAccessMask = VK_ACCESS_2_INDEX_READ_BIT;
+    before.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    before.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    VkDependencyInfo dependency{};
+    dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.memoryBarrierCount = 1;
+    dependency.pMemoryBarriers = &before;
+    vkCmdPipelineBarrier2(command, &dependency);
+
+    std::vector<uint32_t> order;
+    std::vector<float> reach;
+    std::vector<uint32_t> sorted;
+    for (const auto& [distance, blend] : due) {
+        const size_t quads = blend->indices.size() / 6;
+        order.resize(quads);
+        reach.resize(quads);
+        for (size_t quad = 0; quad < quads; ++quad) {
+            order[quad] = static_cast<uint32_t>(quad);
+            float d = 0.0f;
+            for (int axis = 0; axis < 3; ++axis) {
+                const float delta = blend->centres[quad * 3 + axis] - camera.eye[axis];
+                d += delta * delta;
+            }
+            reach[quad] = d;
+        }
+        std::ranges::sort(order, [&](uint32_t a, uint32_t b) { return reach[a] > reach[b]; });
+        sorted.resize(blend->indices.size());
+        for (size_t at = 0; at < quads; ++at) {
+            std::memcpy(&sorted[at * 6], &blend->indices[order[at] * 6], 6 * sizeof(uint32_t));
+        }
+        // vkCmdUpdateBuffer takes at most 64 KiB at a time.
+        constexpr size_t kChunk = 65536 / sizeof(uint32_t);
+        for (size_t at = 0; at < sorted.size(); at += kChunk) {
+            const size_t count = std::min(kChunk, sorted.size() - at);
+            vkCmdUpdateBuffer(command, index_buffer_,
+                              (static_cast<VkDeviceSize>(blend->first) + at) * sizeof(uint32_t),
+                              count * sizeof(uint32_t), sorted.data() + at);
+        }
+        std::copy(std::begin(cell), std::end(cell), blend->sorted_for);
+    }
+
+    VkMemoryBarrier2 after{};
+    after.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    after.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    after.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    after.dstStageMask = VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
+    after.dstAccessMask = VK_ACCESS_2_INDEX_READ_BIT;
+    dependency.pMemoryBarriers = &after;
+    vkCmdPipelineBarrier2(command, &dependency);
 }
 
 void WorldRenderer::upload(const world::Mesh& mesh) {
@@ -1200,10 +1326,12 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
 }
 
 void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback,
-                                 bool leave_transfer_src) {
+                                 bool leave_transfer_src, const Overlay& overlay) {
     ++frames_recorded_;
     vkCmdResetQueryPool(command, timestamps_, 0, 2);
     vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestamps_, 0);
+    // Outside the pass, because the index buffer is written to.
+    sort_translucent(command, camera);
 
     transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
@@ -1272,6 +1400,40 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         }
     }
     vkCmdEndRendering(command);
+
+    // What goes on top - a hud, a menu - is drawn into the same image
+    // after the world, so a screenshot carries the frame it belongs to.
+    if (overlay) {
+        VkMemoryBarrier2 wait{};
+        wait.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        wait.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        wait.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        wait.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        wait.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &wait;
+        vkCmdPipelineBarrier2(command, &dependency);
+
+        VkRenderingAttachmentInfo over{};
+        over.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        over.imageView = color_view_;
+        over.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        over.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        over.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        VkRenderingInfo pass{};
+        pass.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        pass.renderArea = {{0, 0}, {width_, height_}};
+        pass.layerCount = 1;
+        pass.colorAttachmentCount = 1;
+        pass.pColorAttachments = &over;
+        vkCmdBeginRendering(command, &pass);
+        overlay(command, width_, height_);
+        vkCmdEndRendering(command);
+    }
 
     if (readback || leave_transfer_src) {
         transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1394,122 +1556,9 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer");
 
-    vkCmdResetQueryPool(command, timestamps_, 0, 2);
-    vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestamps_, 0);
-
-    transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-               VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-               VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-    transition(command, depth_, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-               VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-               VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-               VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-
-    VkRenderingAttachmentInfo color{};
-    color.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    color.imageView = color_view_;
-    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue.color = {{fog_[0], fog_[1], fog_[2], 1.0f}};
-
-    VkRenderingAttachmentInfo depth_attachment{};
-    depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    depth_attachment.imageView = depth_view_;
-    depth_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depth_attachment.clearValue.depthStencil = {0.0f, 0};
-
-    VkRenderingInfo rendering{};
-    rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-    rendering.renderArea = {{0, 0}, {width_, height_}};
-    rendering.layerCount = 1;
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachments = &color;
-    rendering.pDepthAttachment = &depth_attachment;
-
-    vkCmdBeginRendering(command, &rendering);
-    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, zenith_, fog_);
-    if (index_count_ > 0) {
-        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-        const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width_),
-                                  static_cast<float>(height_), 0.0f, 1.0f};
-        const VkRect2D scissor{{0, 0}, {width_, height_}};
-        vkCmdSetViewport(command, 0, 1, &viewport);
-        vkCmdSetScissor(command, 0, 1, &scissor);
-
-        PushConstants push{};
-        push.eye[0] = camera.eye[0];
-        push.eye[1] = camera.eye[1];
-        push.eye[2] = camera.eye[2];
-        push.eye[3] = camera.fog_start;
-        push.sky[0] = fog_[0];
-        push.sky[1] = fog_[1];
-        push.sky[2] = fog_[2];
-        push.sky[3] = camera.fog_end;
-        push.view_projection = view_projection(camera, static_cast<float>(width_) /
-                                                           static_cast<float>(height_));
-        vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
-                                &descriptor_set_, 0, nullptr);
-
-        const VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
-        vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
-
-        draw_geometry(command, push);
-        if (outline_ != nullptr && outlined_present_) {
-            outline_->record(command, push.view_projection.m, outlined_);
-        }
-    }
-    vkCmdEndRendering(command);
-
-    if (overlay) {
-        VkMemoryBarrier2 wait{};
-        wait.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
-        wait.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        wait.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-        wait.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        wait.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
-                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-        VkDependencyInfo dependency{};
-        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependency.memoryBarrierCount = 1;
-        dependency.pMemoryBarriers = &wait;
-        vkCmdPipelineBarrier2(command, &dependency);
-
-        VkRenderingAttachmentInfo over{};
-        over.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        over.imageView = color_view_;
-        over.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        over.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-        over.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-        VkRenderingInfo pass{};
-        pass.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        pass.renderArea = {{0, 0}, {width_, height_}};
-        pass.layerCount = 1;
-        pass.colorAttachmentCount = 1;
-        pass.pColorAttachments = &over;
-        vkCmdBeginRendering(command, &pass);
-        overlay(command, width_, height_);
-        vkCmdEndRendering(command);
-    }
-
-    transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT,
-               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-               VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-               VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
-               VK_ACCESS_2_TRANSFER_READ_BIT);
-
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {width_, height_, 1};
-    vkCmdCopyImageToBuffer(command, color_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_, 1,
-                           &region);
-
-    vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestamps_, 1);
+    // The same recording the window uses, so a picture of the client is a
+    // picture of what the client draws.
+    record_frame(command, camera, true, false, overlay);
     check(vkEndCommandBuffer(command), "vkEndCommandBuffer");
 
     VkFenceCreateInfo fence_create{};

@@ -5,6 +5,9 @@
 #include "mcpp/world/mesher.hpp"
 
 #include <cstdint>
+#include <map>
+#include <climits>
+#include <array>
 #include <functional>
 #include <span>
 #include <vector>
@@ -116,7 +119,7 @@ public:
 private:
     void record_frame(VkCommandBuffer command, const Camera& camera, bool readback);
     void record_frame(VkCommandBuffer command, const Camera& camera, bool readback,
-                      bool leave_transfer_src);
+                      bool leave_transfer_src, const Overlay& overlay = {});
     double submit(VkCommandBuffer command);
     void upload_merged(const world::Mesh& mesh);
     void upload_sections(const std::vector<world::SectionMesh>& sections,
@@ -203,6 +206,20 @@ private:
     };
     std::vector<Releasing> releasing_;
     uint64_t frames_recorded_ = 0;
+
+    // The see-through quads of a section, kept on the cpu so they can be put
+    // back to front again as the camera moves: inside one section the mesher
+    // emits them in block order, which is right from one side only.
+    struct Blend {
+        uint32_t first = 0;               // where they sit in the index buffer
+        std::vector<uint32_t> indices;    // six per quad, as uploaded
+        std::vector<float> centres;       // three per quad, in world space
+        int32_t sorted_for[3]{INT32_MIN, INT32_MIN, INT32_MIN};
+    };
+    std::map<std::array<int32_t, 3>, Blend> blends_;
+    void sort_translucent(VkCommandBuffer command, const Camera& camera);
+    void keep_blends(const std::vector<world::SectionMesh>& sections,
+                     const std::vector<size_t>& source, size_t first_section);
     template <typename Drop> void drop_sections(Drop&& drop);
     void hand_back_released();
     bool culling_ = true;
