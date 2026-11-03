@@ -261,6 +261,45 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
         status("no known packs reported; server sends the full registries");
         return true;
     }
+    if (packet.id == cb.registry_data) {
+        const std::string registry = in.read_string();
+        const int32_t count = in.read_varint();
+        if (count < 0) fail("negative registry entry count");
+        if (registry != "minecraft:worldgen/biome") return true;
+
+        biomes_.clear();
+        for (int32_t i = 0; i < count; ++i) {
+            world::Biome biome;
+            biome.name = in.read_string();
+            if (in.read_bool()) {
+                const auto tag = nbt::read_network_tag(in);
+                if (const auto* value = tag.find("temperature"); value != nullptr) {
+                    biome.temperature = static_cast<float>(value->as_double().value_or(0.5));
+                }
+                if (const auto* value = tag.find("downfall"); value != nullptr) {
+                    biome.downfall = static_cast<float>(value->as_double().value_or(0.5));
+                }
+                if (const auto* effects = tag.find("effects"); effects != nullptr) {
+                    if (const auto* value = effects->find("grass_color"); value != nullptr) {
+                        biome.fixed_grass = true;
+                        biome.grass = static_cast<uint32_t>(value->as_int().value_or(0)) & 0xFFFFFF;
+                    }
+                    if (const auto* value = effects->find("foliage_color"); value != nullptr) {
+                        biome.fixed_foliage = true;
+                        biome.foliage =
+                            static_cast<uint32_t>(value->as_int().value_or(0)) & 0xFFFFFF;
+                    }
+                    if (const auto* value = effects->find("water_color"); value != nullptr) {
+                        biome.water = static_cast<uint32_t>(value->as_int().value_or(0x3F76E4)) &
+                                      0xFFFFFF;
+                    }
+                }
+            }
+            biomes_.add(std::move(biome));
+        }
+        status(std::format("{} biomes from the server", biomes_.size()));
+        return true;
+    }
     if (packet.id == cb.resource_pack_push) {
         ByteBuffer out;
         out.write_bytes(in.read_bytes(kUuidBytes));

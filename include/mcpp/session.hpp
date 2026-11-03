@@ -5,6 +5,7 @@
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/translations.hpp"
+#include "mcpp/world/biomes.hpp"
 #include "mcpp/world/chunk.hpp"
 
 #include <array>
@@ -67,6 +68,9 @@ public:
     bool has_data() const;
     size_t entity_count() const { return entities_.size(); }
     void close();
+    // Biomes in the order the server sent them, which is the order a chunk's
+    // palette indexes into.
+    const world::BiomeTable& biomes() const { return biomes_; }
     // One tick of being a player rather than a viewer. Vanilla wants the tick
     // marker before the position, or it ignores the movement entirely.
     void send_position(double x, double y, double z, float yaw, float pitch, bool on_ground);
@@ -96,6 +100,7 @@ private:
     const proto::PacketIds* ids_ = nullptr;
     Translations translations_;
     nbt::TranslateLookup lookup_;
+    world::BiomeTable biomes_;
     PacketConnection connection_;
     std::mutex send_mutex_;
     SessionState state_ = SessionState::Handshaking;

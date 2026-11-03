@@ -82,6 +82,15 @@ int32_t Chunk::block_state(int32_t local_x, int32_t y_index, int32_t local_z) co
     return sections[section].blocks.at(index);
 }
 
+int32_t Chunk::biome_at(int32_t local_x, int32_t y_index, int32_t local_z) const {
+    if (local_x < 0 || local_x > 15 || local_z < 0 || local_z > 15 || y_index < 0) return -1;
+    const auto section = static_cast<size_t>(y_index) / 16;
+    if (section >= sections.size()) return -1;
+    const size_t index = static_cast<size_t>((y_index % 16) / 4) * 16 +
+                         static_cast<size_t>(local_z / 4) * 4 + static_cast<size_t>(local_x / 4);
+    return sections[section].biomes.at(index);
+}
+
 uint8_t LightLayer::at(size_t slot, int32_t local_x, int32_t y, int32_t local_z) const {
     if (slot >= sections.size() || sections[slot].empty()) return 0;
     const size_t index = static_cast<size_t>(y) * 256 + static_cast<size_t>(local_z) * 16 +

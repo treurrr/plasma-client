@@ -14,6 +14,7 @@
 #endif
 #include "mcpp/image_png.hpp"
 #include "mcpp/world/atlas.hpp"
+#include "mcpp/world/biomes.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/mesher.hpp"
 
@@ -773,6 +774,20 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             }
         }
         std::cout << "- " << column << '\n';
+        if (!session.biomes().empty()) {
+            mcpp::world::Colormaps maps;
+            maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
+            const int32_t id = first.biome_at(8, 63 + 64, 8);
+            if (const auto* biome = session.biomes().at(static_cast<size_t>(id))) {
+                std::cout << std::format(
+                    "- biome at the surface: {} ({}), temperature {:.2f}, downfall {:.2f}, "
+                    "grass #{:06x}, foliage #{:06x}, water #{:06x}\n",
+                    biome->name, id, biome->temperature, biome->downfall,
+                    session.biomes().grass(static_cast<size_t>(id), maps),
+                    session.biomes().foliage(static_cast<size_t>(id), maps),
+                    session.biomes().water(static_cast<size_t>(id)));
+            }
+        }
         std::map<std::string, int> tops;
         int lowest = 1000;
         int highest = -1000;

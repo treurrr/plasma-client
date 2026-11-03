@@ -59,6 +59,9 @@ struct Chunk {
 
     size_t non_empty_sections() const;
     int32_t block_state(int32_t local_x, int32_t y_index, int32_t local_z) const;
+    // Biomes are stored one per 4x4x4 cell, so this is the cell the block
+    // falls in rather than the block itself.
+    int32_t biome_at(int32_t local_x, int32_t y_index, int32_t local_z) const;
     // Light as the game stores it, 0 to 15. Outside the chunk, sky light is
     // full and block light is none, which is what an unloaded neighbour should
     // look like rather than a black wall.
