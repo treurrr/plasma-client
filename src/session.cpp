@@ -127,7 +127,58 @@ std::string read_component(ByteBuffer& in, const nbt::TranslateLookup& lookup) {
 
 // Layout read off the wire for 774: a signed message carries the plain text and,
 // when the server decorated it, an NBT component that supersedes it.
-std::string read_player_chat(ByteBuffer& in, const nbt::TranslateLookup& lookup) {
+// What player chat and disguised chat share after the message itself: a chat
+// type, the sender, and maybe a target, written out the way the type says.
+std::string format_chat(ByteBuffer& in, const std::string& body,
+                        const nbt::TranslateLookup& lookup, const Registries& registries) {
+    // The chat type says how the line is written out: a translation key and
+    // which of sender, target and content fill it, in what order. Zero means
+    // the type follows inline; anything else is one more than its index in
+    // the chat_type registry sent in configuration.
+    std::string key = "chat.type.text";
+    std::vector<int32_t> order = {0, 2};
+    const int32_t holder = in.read_varint();
+    if (holder == 0) {
+        key = in.read_string();
+        order.clear();
+        const int32_t count = in.read_varint();
+        for (int32_t i = 0; i < count; ++i) order.push_back(in.read_varint());
+        nbt::read_network_tag(in);   // the chat decoration's style
+        in.read_string();            // and the narration, which this client does not speak
+        const int32_t narrated = in.read_varint();
+        for (int32_t i = 0; i < narrated; ++i) in.read_varint();
+        nbt::read_network_tag(in);
+    } else if (const auto* entry = registries.at("minecraft:chat_type",
+                                                 static_cast<size_t>(holder - 1));
+               entry != nullptr && entry->data.has_value()) {
+        if (const auto* chat = entry->data->find("chat")) {
+            if (const auto* text = chat->find("translation_key"); text && text->as_string()) {
+                key = *text->as_string();
+            }
+            if (const auto* list = chat->find("parameters"); list && list->as_list()) {
+                order.clear();
+                for (const auto& item : *list->as_list()) {
+                    const std::string* name = item.as_string();
+                    if (name == nullptr) continue;
+                    order.push_back(*name == "sender" ? 0 : *name == "target" ? 1 : 2);
+                }
+            }
+        }
+    }
+
+    const std::string sender = nbt::component_to_text(nbt::read_network_tag(in), lookup);
+    std::string target;
+    if (in.read_bool()) target = nbt::component_to_text(nbt::read_network_tag(in), lookup);
+
+    const std::string* pattern = lookup ? lookup(key) : nullptr;
+    if (pattern == nullptr) return sender.empty() ? body : std::format("<{}> {}", sender, body);
+    std::vector<std::string> args;
+    for (const int32_t part : order) args.push_back(part == 0 ? sender : part == 1 ? target : body);
+    return nbt::apply_pattern(*pattern, args);
+}
+
+std::string read_player_chat(ByteBuffer& in, const nbt::TranslateLookup& lookup,
+                             const Registries& registries) {
     in.read_varint();
     in.read_bytes(kUuidBytes);
     in.read_varint();
@@ -149,10 +200,7 @@ std::string read_player_chat(ByteBuffer& in, const nbt::TranslateLookup& lookup)
         for (int32_t i = 0; i < longs; ++i) in.read_i64();
     }
 
-    if (in.read_varint() == 0) return body;   // inline chat type: no name to read
-
-    const auto sender = nbt::component_to_text(nbt::read_network_tag(in), lookup);
-    return sender.empty() ? body : std::format("<{}> {}", sender, body);
+    return format_chat(in, body, lookup, registries);
 }
 
 int64_t now_millis() {
@@ -602,7 +650,15 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         return true;
     }
     if (packet.id == cb.player_chat) {
-        const auto text = json::strip_formatting(read_player_chat(in, lookup_));
+        const auto text = json::strip_formatting(read_player_chat(in, lookup_, registries_));
+        if (events_.on_chat && !text.empty()) events_.on_chat(text);
+        return true;
+    }
+    if (packet.id == cb.disguised_chat) {
+        // Chat with nobody signed behind it - the console, a command block, a
+        // /say - so the message is a component rather than a signed string.
+        const std::string body = nbt::component_to_text(nbt::read_network_tag(in), lookup_);
+        const auto text = json::strip_formatting(format_chat(in, body, lookup_, registries_));
         if (events_.on_chat && !text.empty()) events_.on_chat(text);
         return true;
     }

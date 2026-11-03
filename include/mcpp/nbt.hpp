@@ -45,5 +45,7 @@ using TranslateLookup = std::function<const std::string*(std::string_view)>;
 
 // A text component is a bare string, a list, or a compound with text/extra/translate.
 std::string component_to_text(const Value& value, const TranslateLookup& lookup = {});
+// A language pattern filled in: %s takes the arguments in order, %N$s by place.
+std::string apply_pattern(std::string_view pattern, const std::vector<std::string>& args);
 
 } // namespace mcpp::nbt

@@ -1884,6 +1884,23 @@ int do_inspect(const std::string& target) {
     for (const auto& [name, list] : registries.all()) {
         std::cout << std::format("  {:5}  {}\n", list.size(), name);
     }
+    if (const auto* types = registries.find("minecraft:chat_type")) {
+        for (const auto& entry : *types) {
+            if (!entry.data.has_value()) continue;
+            const auto* chat = entry.data->find("chat");
+            const auto* key = chat != nullptr ? chat->find("translation_key") : nullptr;
+            std::string parameters;
+            if (const auto* list = chat != nullptr ? chat->find("parameters") : nullptr) {
+                if (const auto* items = list->as_list()) {
+                    for (const auto& item : *items) {
+                        if (const auto* text = item.as_string()) parameters += *text + " ";
+                    }
+                }
+            }
+            std::cout << std::format("  chat {:28} {:34} {}\n", entry.name,
+                                     key && key->as_string() ? *key->as_string() : "?", parameters);
+        }
+    }
     // The shape of every dimension, as the server describes it.
     if (const auto* types = registries.find("minecraft:dimension_type")) {
         for (const auto& entry : *types) {

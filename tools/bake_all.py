@@ -10,6 +10,7 @@ the player already owns; none of it is committed here or shipped.
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
@@ -41,6 +42,13 @@ def main(args):
         Path(report).parent / "items.json", protocol,
         out / f"items-{protocol}.plit")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu")
+    # The language file, without which every server message that names a key
+    # - a death, a chat format, an advancement - shows the key itself.
+    lang = out.parent / "lang"
+    lang.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(jar) as archive:
+        (lang / "en_us.json").write_bytes(archive.read("assets/minecraft/lang/en_us.json"))
+    print(f"{lang / 'en_us.json'}")
     print(f"\n{out} is ready for protocol {protocol}")
 
 

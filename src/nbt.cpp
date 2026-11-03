@@ -77,8 +77,11 @@ Value read_payload(ByteBuffer& buffer, Tag tag, int depth) {
         return Value{std::move(fields)};
     }
     }
-    throw ProtocolError(std::format("onbekende nbt-tag {}", static_cast<int>(tag)));
+    throw ProtocolError(std::format("unknown nbt tag {}", static_cast<int>(tag)));
 }
+
+
+} // namespace
 
 // Minecraft patterns use %s in order and %N$s by position.
 std::string apply_pattern(std::string_view pattern, const std::vector<std::string>& args) {
@@ -116,8 +119,6 @@ std::string apply_pattern(std::string_view pattern, const std::vector<std::strin
     }
     return out;
 }
-
-} // namespace
 
 const Value* Value::find(std::string_view key) const {
     const auto* fields = std::get_if<Compound>(&storage_);
