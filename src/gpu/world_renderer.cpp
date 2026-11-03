@@ -402,7 +402,11 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     VkSamplerCreateInfo sampler{};
     sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     sampler.magFilter = VK_FILTER_NEAREST;
-    sampler.minFilter = VK_FILTER_LINEAR;
+    // Nearest inside a mip level, linear only between levels, which is what
+    // the game does. Filtering inside a level blends an opaque texel with its
+    // transparent neighbour, and a transparent texel is black, so every cutout
+    // texture - leaves, grass, every plant - comes out darkened at its edges.
+    sampler.minFilter = VK_FILTER_NEAREST;
     sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler.maxLod = static_cast<float>(mips);
     if (device_.adapter().capabilities.sampler_anisotropy) {
@@ -417,27 +421,67 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
     check(vkCreateSampler(device_.handle(), &sampler, nullptr, &sampler_), "vkCreateSampler");
 
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // One colour per biome per tint, filled from the registry the server sends
+    // and the game's own colour maps. A vertex carries the biome index, so a
+    // swamp and a plains can share a buffer and a draw.
+    VkBufferCreateInfo biome_create{};
+    biome_create.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    biome_create.size = kBiomeSlots * 4 * sizeof(uint32_t);
+    biome_create.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    check(vkCreateBuffer(device_.handle(), &biome_create, nullptr, &biome_buffer_),
+          "vkCreateBuffer biomes");
+    VkMemoryRequirements biome_requirements{};
+    vkGetBufferMemoryRequirements(device_.handle(), biome_buffer_, &biome_requirements);
+    VkMemoryAllocateInfo biome_allocate{};
+    biome_allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    biome_allocate.allocationSize = biome_requirements.size;
+    biome_allocate.memoryTypeIndex =
+        memory_type(device_.physical(), biome_requirements.memoryTypeBits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    check(vkAllocateMemory(device_.handle(), &biome_allocate, nullptr, &biome_memory_),
+          "vkAllocateMemory biomes");
+    check(vkBindBufferMemory(device_.handle(), biome_buffer_, biome_memory_, 0),
+          "vkBindBufferMemory biomes");
+    void* biome_mapped = nullptr;
+    check(vkMapMemory(device_.handle(), biome_memory_, 0, VK_WHOLE_SIZE, 0, &biome_mapped),
+          "vkMapMemory biomes");
+    biome_colours_ = static_cast<uint32_t*>(biome_mapped);
+    // Plains until the server says otherwise, which is what a world with no
+    // biome registry - a showcase, a test - should look like.
+    for (uint32_t i = 0; i < kBiomeSlots; ++i) {
+        biome_colours_[i * 4 + 0] = 0x91BD59u;
+        biome_colours_[i * 4 + 1] = 0x77AB2Fu;
+        biome_colours_[i * 4 + 2] = 0x3F76E4u;
+        biome_colours_[i * 4 + 3] = 0x8F7A36u;
+    }
+
+    VkDescriptorSetLayoutBinding bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
     VkDescriptorSetLayoutCreateInfo layout{};
     layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout.bindingCount = 1;
-    layout.pBindings = &binding;
+    layout.bindingCount = 2;
+    layout.pBindings = bindings;
     check(vkCreateDescriptorSetLayout(device_.handle(), &layout, nullptr, &set_layout_),
           "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize size{};
-    size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    size.descriptorCount = 1;
+    VkDescriptorPoolSize sizes[2]{};
+    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sizes[0].descriptorCount = 1;
+    sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    sizes[1].descriptorCount = 1;
     VkDescriptorPoolCreateInfo pool_create{};
     pool_create.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_create.maxSets = 1;
-    pool_create.poolSizeCount = 1;
-    pool_create.pPoolSizes = &size;
+    pool_create.poolSizeCount = 2;
+    pool_create.pPoolSizes = sizes;
     check(vkCreateDescriptorPool(device_.handle(), &pool_create, nullptr, &descriptor_pool_),
           "vkCreateDescriptorPool");
 
@@ -453,14 +497,24 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     image_info.sampler = sampler_;
     image_info.imageView = atlas_view_;
     image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = descriptor_set_;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &image_info;
-    vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
+    VkDescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = biome_buffer_;
+    buffer_info.range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet writes[2]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descriptor_set_;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &image_info;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = descriptor_set_;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].pBufferInfo = &buffer_info;
+    vkUpdateDescriptorSets(device_.handle(), 2, writes, 0, nullptr);
 }
 
 void WorldRenderer::create_targets() {
@@ -584,7 +638,10 @@ void WorldRenderer::create_pipeline() {
     depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth.depthTestEnable = VK_TRUE;
     depth.depthWriteEnable = VK_TRUE;
-    depth.depthCompareOp = VK_COMPARE_OP_GREATER;
+    // Reversed depth, and equal passes: grass blocks draw their tinted overlay
+    // as a second element on exactly the same plane as the first, and with a
+    // strict test that overlay never wins.
+    depth.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
     depth.maxDepthBounds = 1.0f;
 
     VkPipelineColorBlendAttachmentState blend_attachment{};
@@ -1396,6 +1453,9 @@ WorldRenderer::~WorldRenderer() {
     if (device_.handle() == VK_NULL_HANDLE) return;
     vkDeviceWaitIdle(device_.handle());
     destroy_mesh();
+    if (biome_colours_ != nullptr) vkUnmapMemory(device_.handle(), biome_memory_);
+    vkDestroyBuffer(device_.handle(), biome_buffer_, nullptr);
+    vkFreeMemory(device_.handle(), biome_memory_, nullptr);
     vkDestroyPipeline(device_.handle(), pipeline_, nullptr);
     vkDestroyPipeline(device_.handle(), blended_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_.handle(), layout_, nullptr);

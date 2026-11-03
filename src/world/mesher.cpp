@@ -107,6 +107,15 @@ ChunkBlocks::ChunkBlocks(const Chunk& chunk) : sections_(chunk.sections.size()) 
 
     // Light is one byte per block for the whole column: a nibble lookup per
     // read would otherwise happen 27 times per block while meshing.
+    biomes_.resize(chunk.sections.size() * kBiomesPerSection);
+    for (size_t i = 0; i < chunk.sections.size(); ++i) {
+        const auto& biomes = chunk.sections[i].biomes;
+        for (size_t at = 0; at < kBiomesPerSection; ++at) {
+            biomes_[i * kBiomesPerSection + at] =
+                static_cast<uint16_t>(std::max<int32_t>(0, biomes.at(at)));
+        }
+    }
+
     light_.resize(chunk.sections.size() * kBlocksPerSection);
     for (size_t i = 0; i < chunk.sections.size(); ++i) {
         for (int32_t y = 0; y < 16; ++y) {
@@ -121,6 +130,14 @@ ChunkBlocks::ChunkBlocks(const Chunk& chunk) : sections_(chunk.sections.size()) 
             }
         }
     }
+}
+
+uint16_t ChunkBlocks::biome_at(int32_t x, int32_t y, int32_t z) const {
+    if (x < 0 || x > 15 || z < 0 || z > 15 || y < 0) return 0;
+    const auto section = static_cast<size_t>(y) / 16;
+    if (section >= sections_.size()) return 0;
+    return biomes_[section * kBiomesPerSection + static_cast<size_t>((y % 16) / 4) * 16 +
+                   static_cast<size_t>(z / 4) * 4 + static_cast<size_t>(x / 4)];
 }
 
 uint8_t ChunkBlocks::light_at(int32_t x, int32_t y, int32_t z) const {
@@ -150,6 +167,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
     std::vector<int32_t> padded_state(kPaddedCells);
     std::vector<uint8_t> padded_solid(kPaddedCells);
     std::vector<uint8_t> padded_light(kPaddedCells);
+    std::vector<uint16_t> padded_biome(kPaddedCells);
 
     const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
         const bool past_x = x < 0 || x > 15;
@@ -168,6 +186,21 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
             return side ? side->at(x, y, z & 15) : -1;
         }
         return blocks.at(x, y, z);
+    };
+
+    const auto biome_at = [&](int32_t x, int32_t y, int32_t z) -> uint16_t {
+        const bool past_x = x < 0 || x > 15;
+        const bool past_z = z < 0 || z > 15;
+        if (past_x && past_z) return 0;
+        if (past_x) {
+            const ChunkBlocks* side = x < 0 ? neighbours.west : neighbours.east;
+            return side ? side->biome_at(x & 15, y, z) : 0;
+        }
+        if (past_z) {
+            const ChunkBlocks* side = z < 0 ? neighbours.north : neighbours.south;
+            return side ? side->biome_at(x, y, z & 15) : 0;
+        }
+        return blocks.biome_at(x, y, z);
     };
 
     // Daylight on anything we cannot see, so an unloaded neighbour reads as
@@ -199,6 +232,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     padded_state[cell] = state;
                     padded_solid[cell] = state >= 0 && table.occludes(state);
                     padded_light[cell] = light_at(px, section * kSection + py, pz);
+                    padded_biome[cell] = biome_at(px, section * kSection + py, pz);
                 }
             }
         }
@@ -353,7 +387,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             }
                             vertex.packed |= static_cast<uint16_t>(shadow << 6);
                             if ((quad.flags & kQuadNoShade) != 0) vertex.packed |= 0x0100u;
-                            vertex.light = static_cast<uint16_t>(sky | (block << 4));
+                            const uint16_t biome =
+                                padded_biome[padded_index(x, local_y, z)] & 0xFF;
+                            vertex.light = static_cast<uint16_t>(sky | (block << 4) |
+                                                                 (biome << 8));
                             mesh.vertices.push_back(vertex);
                         }
 

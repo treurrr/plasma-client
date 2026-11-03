@@ -18,7 +18,8 @@ layout(push_constant) uniform Push {
 
 void main() {
     vec4 texel = texture(atlas, in_uv);
-    if (texel.a < 0.5) discard;
+    // The game's own cutout threshold; 0.5 eats thin geometry at a distance.
+    if (texel.a < 0.1) discard;
     vec3 colour = texel.rgb * in_tint * in_shade * in_light;
     if (push.sky.w > 0.0) {
         float fog = clamp((in_distance - push.eye.w) / max(push.sky.w - push.eye.w, 1.0),

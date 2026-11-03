@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <vector>
 
 namespace mcpp::gpu {
@@ -60,6 +61,10 @@ public:
     // Drawn inside the world's own pass, before the terrain, so it needs no
     // second attachment and no second clear.
     void set_sky(const Sky* sky) { sky_ = sky; }
+    // Four colours per biome - grass, foliage, water, dry foliage - packed
+    // 0xRRGGBB, in the order the server listed the biomes.
+    static constexpr uint32_t kBiomeSlots = 256;
+    void set_biome_colours(std::span<const uint32_t> colours);
     void record_present(VkCommandBuffer command, const Camera& camera);
     VkFormat colour_format() const;
     VkImage color_image() const { return color_; }
@@ -123,6 +128,9 @@ private:
 
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline blended_pipeline_ = VK_NULL_HANDLE;
+    VkBuffer biome_buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory biome_memory_ = VK_NULL_HANDLE;
+    uint32_t* biome_colours_ = nullptr;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
     // Allocated once. A command buffer and a fence per frame were costing more

@@ -15,6 +15,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 MAGIC = b"PLAT"
@@ -74,6 +75,71 @@ def load_tile(archive, name, size):
         return image.copy()
 
 
+def to_linear(srgb):
+    return np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
+
+
+def to_srgb(linear):
+    return np.where(linear <= 0.0031308, linear * 12.92,
+                    1.055 * np.clip(linear, 0.0, None) ** (1.0 / 2.4) - 0.055)
+
+
+def bleed(tile):
+    """Give transparent texels the colour of their nearest opaque neighbour.
+
+    A transparent texel in a png is usually black, and black is what bleeds
+    into the edge of a leaf once anything averages or filters across it."""
+    pixels = np.asarray(tile, dtype=np.float32)
+    rgb = pixels[:, :, :3]
+    alpha = pixels[:, :, 3]
+    known = alpha > 0
+    if not known.any() or known.all():
+        return tile
+
+    for _ in range(max(tile.width, tile.height)):
+        weight = np.zeros_like(alpha)
+        total = np.zeros_like(rgb)
+        for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            shifted_rgb = np.roll(np.roll(rgb, dy, axis=0), dx, axis=1)
+            shifted_known = np.roll(np.roll(known, dy, axis=0), dx, axis=1)
+            total += shifted_rgb * shifted_known[:, :, None]
+            weight += shifted_known
+        fill = (~known) & (weight > 0)
+        if not fill.any():
+            break
+        rgb[fill] = total[fill] / weight[fill][:, None]
+        known = known | fill
+
+    pixels[:, :, :3] = rgb
+    return Image.fromarray(np.round(pixels).astype(np.uint8), "RGBA")
+
+
+def mip(tile):
+    """Half-size, averaged the way the game averages: in linear light, weighted
+    by alpha, so a texel nobody can see cannot darken one they can."""
+    pixels = np.asarray(tile, dtype=np.float32) / 255.0
+    alpha = pixels[:, :, 3]
+    linear = to_linear(pixels[:, :, :3])
+
+    quads = lambda a: (a[0::2, 0::2], a[0::2, 1::2], a[1::2, 0::2], a[1::2, 1::2])
+    weights = quads(alpha)
+    colours = quads(linear)
+
+    weight = sum(weights)
+    total = sum(c * w[:, :, None] for c, w in zip(colours, weights))
+    safe = np.maximum(weight, 1e-6)[:, :, None]
+    rgb = to_srgb(total / safe)
+    # Where everything was transparent there is no colour to average; the
+    # bleed above already put a sensible one there, so take it flat.
+    flat = sum(colours) / 4.0
+    rgb = np.where((weight == 0)[:, :, None], to_srgb(flat), rgb)
+
+    out = np.empty((rgb.shape[0], rgb.shape[1], 4), dtype=np.float32)
+    out[:, :, :3] = np.clip(rgb, 0.0, 1.0) * 255.0
+    out[:, :, 3] = weight / 4.0 * 255.0
+    return Image.fromarray(np.round(out).astype(np.uint8), "RGBA")
+
+
 def missing_tile(size):
     # The classic missing-texture check, so a gap is obvious on screen.
     tile = Image.new("RGBA", (size, size), (0, 0, 0, 255))
@@ -107,7 +173,7 @@ def main(args):
         if tile is None:
             tile = fallback
             missing += 1
-        tiles.append(tile)
+        tiles.append(bleed(tile))
 
     mips = 1
     while mips < MIP_LEVELS and (tile_size >> mips) >= 1:
@@ -116,11 +182,12 @@ def main(args):
     # Vulkan reads one region per mip level with every layer behind each other,
     # so the file is laid out the same way.
     chunks = []
-    for mip in range(mips):
-        size = tile_size >> mip
-        for tile in tiles:
-            level = tile if size == tile_size else tile.resize((size, size), Image.BOX)
-            chunks.append(level.tobytes())
+    levels = [tiles]
+    for _ in range(1, mips):
+        levels.append([mip(tile) for tile in levels[-1]])
+    for level in levels:
+        for tile in level:
+            chunks.append(tile.tobytes())
     pixels = b"".join(chunks)
 
     header = MAGIC + struct.pack("<6I", VERSION, protocol, tile_size, len(tiles), mips,

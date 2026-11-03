@@ -20,7 +20,7 @@ struct Vertex {
     uint16_t packed;        // face | tint kind | corner shadow
     uint16_t uv[2];         // normalised across the texture
     uint16_t texture;       // array layer
-    uint16_t light;         // sky light in the low nibble, block light above it
+    uint16_t light;         // sky and block light in the low byte, biome in the high one
 
     static uint16_t encode(float blocks) {
         const float shifted = (blocks + static_cast<float>(kPositionBias)) *
@@ -82,11 +82,14 @@ public:
     // Sky light in the low nibble, block light in the high one, which is how
     // it reaches the vertex and the shader.
     uint8_t light_at(int32_t x, int32_t y, int32_t z) const;
+    // The biome registry index, as the chunk's own palette gives it.
+    uint16_t biome_at(int32_t x, int32_t y, int32_t z) const;
     size_t section_count() const { return sections_.size(); }
 
 private:
     std::vector<std::vector<int32_t>> sections_;   // an empty section is all air
     std::vector<uint8_t> light_;
+    std::vector<uint16_t> biomes_;
 };
 
 // Without these a chunk emits all four of its side walls, because every edge
