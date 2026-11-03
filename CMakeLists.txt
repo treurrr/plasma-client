@@ -175,3 +175,4 @@ function(mcpp_probe name)
 endfunction()
 
 mcpp_probe(jmath_probe)
+mcpp_probe(timeline_probe)
