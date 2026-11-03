@@ -1,4 +1,5 @@
 #include "client/common.hpp"
+#include "client/entityshot.hpp"
 #ifdef MCPP_HAVE_WINDOW
 #include "client/game.hpp"
 #endif
@@ -1800,6 +1801,9 @@ int main(int argc, char** argv) {
     argc = static_cast<int>(arguments.size());
 
     try {
+        if (const int entities = client::entity_command(argc, argv); entities >= 0) {
+            return entities;
+        }
         if (command == "features") {
             print_features();
             return 0;

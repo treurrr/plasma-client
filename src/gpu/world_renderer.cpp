@@ -1399,6 +1399,11 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
             outline_->record(command, push.view_projection.m, outlined_);
         }
     }
+    if (in_world_) {
+        const Mat4 matrix =
+            view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));
+        in_world_(command, matrix.m, width_, height_, fog_, camera);
+    }
     vkCmdEndRendering(command);
 
     // What goes on top - a hud, a menu - is drawn into the same image

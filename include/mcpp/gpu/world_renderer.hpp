@@ -90,6 +90,12 @@ public:
             outlined_[2] = block[2];
         }
     }
+    // Recorded in the world's own pass after the terrain, against its depth:
+    // entities, and whatever else is in the world without being a block.
+    using InWorld = std::function<void(VkCommandBuffer, const float* view_projection,
+                                       uint32_t width, uint32_t height, const float* fog,
+                                       const Camera& camera)>;
+    void set_in_world(InWorld draw) { in_world_ = std::move(draw); }
     // Four colours per biome - grass, foliage, water, dry foliage - packed
     // 0xRRGGBB, in the order the server listed the biomes.
     static constexpr uint32_t kBiomeSlots = 256;
@@ -244,6 +250,7 @@ private:
     double upload_copy_ms_ = 0.0;
     double upload_gpu_ms_ = 0.0;
     float timestamp_period_ = 1.0f;
+    InWorld in_world_;
 };
 
 } // namespace mcpp::gpu
