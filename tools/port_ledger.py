@@ -9,7 +9,6 @@ Every query takes --json. docs/PORT-LEDGER.md says how it matches and what it ca
 """
 import argparse
 import bisect
-import fnmatch
 import json
 import os
 import re
@@ -79,9 +78,12 @@ STATUS_ORDER = ["ported", "inline", "mapped", "named", "absent", "skip", "trivia
 FOUND = {"ported", "inline", "mapped", "named"}
 
 
+SCOPE_RE = re.compile("|".join(
+    re.escape(g).replace(r"/\*\*", "/.*").replace(r"\*", "[^/]*") for g in SCOPE) + "$")
+
+
 def in_scope(rel):
-    return any(fnmatch.fnmatchcase(rel, g) or (g.endswith("/**") and rel.startswith(g[:-2]))
-               for g in SCOPE)
+    return bool(SCOPE_RE.match(rel))
 
 
 def package_of(rel):
@@ -303,7 +305,6 @@ def parse_cpp(rel, text):
         lead = len(hdr) - len(hdr.lstrip())
         h = re.sub(r"^(?:(?:public|private|protected)\s*:\s*)+", "", hdr.strip())
         skipped = len(hdr.strip()) - len(h)
-        h0 = h
         while True:
             t = re.match(r"template\s*<", h)
             if not t:
@@ -332,7 +333,6 @@ def parse_cpp(rel, text):
         funcs.append(rec)
         stack.append(("func", rec))
         in_func += 1
-    del h0
     by_line = {f["line"]: f for f in funcs}
     raw = text.splitlines()
     cites = []
@@ -460,6 +460,20 @@ def snake(name):
     return re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", name).lower()
 
 
+def named_for(f, key, classes, cited):
+    """Rule 2: a member of a type named for the class (or a supertype), or a free function in a file
+    citing the class whose name no other class that file cites has."""
+    if key not in cited[f["file"]]:
+        return False
+    cls = classes[key]
+    owner = f["name"].split("::")[:-1]
+    if owner:
+        return owner[-1].replace("_", "").lower() in {
+            n.lower() for n in [cls["name"].split(".")[-1]] + cls["supers"]}
+    return sum(1 for k in cited[f["file"]]
+               if any(snake(m) == f["short"] for m in classes[k]["methods"])) == 1
+
+
 def is_citation(cite, idx):
     """A ticked ref that opens a comment, or any ref whose class exists."""
     if cite["kind"] == "mention":
@@ -536,7 +550,7 @@ def match(classes, funcs, cites, rows):
             names = {snake(method), method}
             if re.match(r"(get|is)[A-Z]", method):
                 names.add(snake(re.sub(r"^(get|is)", "", method)).lstrip("_"))
-            hit = next((f for n in names for f in by_short.get(n, ()) if key in cited_classes[f["file"]]), None)
+            hit = next((f for n in names for f in by_short.get(n, ()) if named_for(f, key, classes, cited_classes)), None)
             if crow or prow:
                 r = crow or prow
                 put(key, method, r["verdict"] if r["verdict"] in ("skip", "absent") else "mapped",
@@ -856,7 +870,7 @@ def cmd_check(args, ledger):
             continue
         for k in file_classes[f["file"]]:
             for m in classes[k]["methods"]:
-                if snake(m) == f["short"]:
+                if snake(m) == f["short"] and named_for(f, k, classes, file_classes):
                     uncited.append(f"{f['file']}:{f['line']} {f['name']} looks like {classes[k]['name']}.{m}")
     data = {"base": base, "files": code + maps, "ports_touched": ports,
             "citations_added": [f"{c['file']}:{c['line']} {c['symbol']}: {c['ref']}" for c in added],
