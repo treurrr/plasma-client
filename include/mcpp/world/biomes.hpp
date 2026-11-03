@@ -23,6 +23,9 @@ struct Biome {
     uint32_t foliage = 0;
     uint32_t water = 0x3F76E4;
     GrassModifier grass_modifier = GrassModifier::None;
+    // A swamp fixes the colour of dry leaves the way others fix grass.
+    bool fixed_dry_foliage = false;
+    uint32_t dry_foliage = 0;
 };
 
 // The 256x256 maps the game looks grass and foliage colour up in. They are

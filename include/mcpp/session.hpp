@@ -8,6 +8,7 @@
 #include "mcpp/translations.hpp"
 #include "mcpp/world/biomes.hpp"
 #include "mcpp/world/chunk.hpp"
+#include "mcpp/world/environment.hpp"
 
 #include <array>
 #include <map>
@@ -64,6 +65,46 @@ struct Dimension {
     float ambient_light = 0.0f;
     int32_t sea_level = 63;
     int32_t section_count() const { return height / 16; }
+    // What the 1.21.11 dimension type carries besides its shape.
+    double coordinate_scale = 1.0;
+    int32_t logical_height = 384;
+    bool has_fixed_time = false;
+    std::string skybox = "overworld";            // overworld, end or none
+    std::string cardinal_light = "default";      // default or nether
+    std::string infiniburn;
+    int32_t monster_spawn_block_light_limit = 0;
+};
+
+// The two clocks the server keeps: how long the world has existed, which only
+// counts up, and the time of day, which /time set moves and the timelines are
+// read against. ticking is false when the daylight cycle is stopped.
+struct WorldTime {
+    int64_t game_time = 0;
+    int64_t day_time = 0;
+    bool ticking = true;
+    // Counts set_time packets, so a client that runs the clock on between
+    // them knows when the server has corrected it.
+    uint32_t updates = 0;
+};
+
+// Rain and thunder as the server last set them, each 0 to 1.
+struct Weather {
+    bool raining = false;
+    float rain_level = 0.0f;
+    float thunder_level = 0.0f;
+};
+
+// The border the server draws round the world. Diameters in blocks; a border
+// that is moving goes from size to target over lerp_ms.
+struct WorldBorder {
+    double centre_x = 0.0;
+    double centre_z = 0.0;
+    double size = 59999968.0;
+    double target = 59999968.0;
+    int64_t lerp_ms = 0;
+    int32_t absolute_max = 29999984;
+    int32_t warning_blocks = 5;
+    int32_t warning_seconds = 15;
 };
 
 // Everything the server says about another thing in the world, as of the last
@@ -148,6 +189,20 @@ struct SessionEvents {
         // The player moved to another dimension, or respawned. Everything the
         // client held belongs to the world it left: chunks, light, entities.
         std::function<void(const Dimension&)> on_respawn;
+        // A game_event the world area does not act on itself, as the server
+        // numbered it: a win screen, a demo message, an arrow hitting a player.
+        std::function<void(int32_t, float)> on_game_event;
+        // New biomes for chunks that are already loaded; the chunk keeps its
+        // blocks and must be meshed again for its tints.
+        std::function<void(int32_t, int32_t, std::vector<world::PalettedContainer>&)>
+            on_chunk_biomes;
+        // A block entity's data, from the chunk or on its own: x, y, z, type
+        // and its compound.
+        std::function<void(int32_t, int32_t, int32_t, int32_t, const nbt::Value&)>
+            on_block_entity;
+        // The world border: centre, diameter now, diameter it is moving to and
+        // in how many milliseconds, and the two warning settings.
+        std::function<void(const WorldBorder&)> on_border;
     } world;
 
     struct Entities {
@@ -232,6 +287,12 @@ public:
     // palette indexes into.
     const world::BiomeTable& biomes() const { return world_.biomes; }
     const Dimension& dimension() const { return world_.dimension; }
+    // The sky, fog and light the server's data describes, for the dimension
+    // the player is in.
+    const world::Environment& environment() const { return world_.environment; }
+    const WorldTime& time() const { return world_.time; }
+    const Weather& weather() const { return world_.weather; }
+    const WorldBorder& border() const { return world_.border; }
 
     // Entities: session_entities.cpp.
     // True between the two delimiters of a bundle. The server bundles what has
@@ -321,9 +382,15 @@ private:
         int32_t area_x = 0;
         int32_t area_z = 0;
         int32_t area_radius = -1;
+        world::Environment environment;
+        bool environment_loaded = false;
+        WorldTime time;
+        Weather weather;
+        WorldBorder border;
     };
     WorldState world_;
     void read_spawn_info(ByteBuffer& in);
+    void read_biome_extras();
 
     struct EntityState {
         std::map<int32_t, Entity> entities;

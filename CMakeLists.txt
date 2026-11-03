@@ -102,6 +102,7 @@ add_library(mcpp_net STATIC
     src/world/light.cpp
     src/world/atlas.cpp
     src/world/biomes.cpp
+    src/world/environment.cpp
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
@@ -156,3 +157,4 @@ endfunction()
 mcpp_test(protocol)
 mcpp_test(packet_ids)
 mcpp_test(assets)
+mcpp_test(world)

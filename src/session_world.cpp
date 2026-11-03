@@ -2,6 +2,7 @@
 
 #include "mcpp/world/chunk.hpp"
 
+#include <algorithm>
 #include <format>
 #include <fstream>
 
@@ -57,16 +58,66 @@ void Session::read_spawn_info(ByteBuffer& in) {
                 return value != nullptr ? value->as_int().value_or(fallback ? 1 : 0) != 0
                                         : fallback;
             };
-            world_.dimension.min_y = integer("min_y", world_.dimension.min_y);
-            world_.dimension.height = integer("height", world_.dimension.height);
-            world_.dimension.has_skylight = flag("has_skylight", world_.dimension.has_skylight);
-            world_.dimension.has_ceiling = flag("has_ceiling", world_.dimension.has_ceiling);
+            const auto text = [&](std::string_view key, std::string fallback) {
+                const auto* value = tag.find(key);
+                const std::string* found = value != nullptr ? value->as_string() : nullptr;
+                return found != nullptr ? *found : fallback;
+            };
+            auto& dimension = world_.dimension;
+            dimension.min_y = integer("min_y", -64);
+            dimension.height = integer("height", 384);
+            dimension.logical_height = integer("logical_height", dimension.height);
+            dimension.has_skylight = flag("has_skylight", true);
+            dimension.has_ceiling = flag("has_ceiling", false);
+            dimension.has_fixed_time = flag("has_fixed_time", false);
+            dimension.ambient_light = 0.0f;
             if (const auto* value = tag.find("ambient_light"); value != nullptr) {
-                world_.dimension.ambient_light =
-                    static_cast<float>(value->as_double().value_or(0.0));
+                dimension.ambient_light = static_cast<float>(value->as_double().value_or(0.0));
             }
+            dimension.coordinate_scale = 1.0;
+            if (const auto* value = tag.find("coordinate_scale"); value != nullptr) {
+                dimension.coordinate_scale = value->as_double().value_or(1.0);
+            }
+            dimension.skybox = text("skybox", "overworld");
+            dimension.cardinal_light = text("cardinal_light", "default");
+            dimension.infiniburn = text("infiniburn", "");
+            dimension.monster_spawn_block_light_limit =
+                integer("monster_spawn_block_light_limit", 0);
         }
     }
+
+    // The registries are all in by the time the player enters a world; the
+    // environment is read from them once and pointed at each new dimension.
+    if (!world_.environment_loaded) {
+        world_.environment.load(data_.registries, data_.tags);
+        world_.environment_loaded = true;
+        read_biome_extras();
+    }
+    if (!world_.environment.select(world_.dimension.type)) {
+        status(std::format("no environment for dimension type {}", world_.dimension.type));
+    }
+}
+
+// What session.cpp's biome reader leaves out: the fixed dry foliage colour.
+void Session::read_biome_extras() {
+    const auto* entries = data_.registries.find("minecraft:worldgen/biome");
+    if (entries == nullptr) return;
+    world::BiomeTable table;
+    for (size_t i = 0; i < world_.biomes.size(); ++i) {
+        world::Biome biome = *world_.biomes.at(i);
+        if (i < entries->size() && (*entries)[i].data) {
+            if (const auto* effects = (*entries)[i].data->find("effects")) {
+                if (const auto* value = effects->find("dry_foliage_color")) {
+                    if (const auto rgb = world::parse_colour(*value, false)) {
+                        biome.fixed_dry_foliage = true;
+                        biome.dry_foliage = *rgb & 0xFFFFFFu;
+                    }
+                }
+            }
+        }
+        table.add(std::move(biome));
+    }
+    world_.biomes = std::move(table);
 }
 
 bool Session::handle_world(PacketConnection::Packet& packet) {
@@ -197,9 +248,86 @@ bool Session::handle_world(PacketConnection::Packet& packet) {
     if (packet.id == cb.game_event) {
         const auto event = in.read_u8();
         const float value = in.read_f32();
-        // Three is the one that says the game mode changed, and the value is
-        // the mode itself.
-        if (event == 3) player_.vitals.game_mode = static_cast<int32_t>(value);
+        // 1 and 2 start and stop the rain; 7 and 8 are how far along rain and
+        // thunder are, sent every tick while either changes. 3 is a new game
+        // mode, the value being the mode itself. The rest are for other areas.
+        switch (event) {
+        case 1: world_.weather.raining = true; break;
+        case 2: world_.weather.raining = false; break;
+        case 3: player_.vitals.game_mode = static_cast<int32_t>(value); break;
+        case 7: world_.weather.rain_level = std::clamp(value, 0.0f, 1.0f); break;
+        case 8: world_.weather.thunder_level = std::clamp(value, 0.0f, 1.0f); break;
+        default: break;
+        }
+        if (events_.world.on_game_event) events_.world.on_game_event(event, value);
+        return true;
+    }
+    if (packet.id == cb.set_time) {
+        world_.time.game_time = in.read_i64();
+        world_.time.day_time = in.read_i64();
+        world_.time.ticking = in.read_bool();
+        ++world_.time.updates;
+        return true;
+    }
+    if (packet.id == cb.chunks_biomes) {
+        const int32_t count = in.read_varint();
+        for (int32_t i = 0; i < count; ++i) {
+            const int32_t chunk_z = in.read_i32();
+            const int32_t chunk_x = in.read_i32();
+            const int32_t length = in.read_varint();
+            if (length < 0) fail("negative biome data length");
+            ByteBuffer data(in.read_bytes(static_cast<size_t>(length)));
+            std::vector<world::PalettedContainer> sections;
+            while (data.remaining() > 0) {
+                sections.push_back(
+                    world::PalettedContainer::read(data, world::kBiomesPerSection, 3));
+            }
+            if (events_.world.on_chunk_biomes) {
+                events_.world.on_chunk_biomes(chunk_x, chunk_z, sections);
+            }
+        }
+        return true;
+    }
+    if (packet.id == cb.block_entity_data) {
+        int32_t x = 0;
+        int32_t y = 0;
+        int32_t z = 0;
+        unpack_position(in.read_i64(), x, y, z);
+        const int32_t type = in.read_varint();
+        const nbt::Value data = nbt::read_network_tag(in);
+        if (events_.world.on_block_entity) events_.world.on_block_entity(x, y, z, type, data);
+        return true;
+    }
+    if (packet.id == cb.initialize_border || packet.id == cb.set_border_center ||
+        packet.id == cb.set_border_lerp_size || packet.id == cb.set_border_size ||
+        packet.id == cb.set_border_warning_delay || packet.id == cb.set_border_warning_distance) {
+        auto& border = world_.border;
+        if (packet.id == cb.initialize_border) {
+            border.centre_x = in.read_f64();
+            border.centre_z = in.read_f64();
+            border.size = in.read_f64();
+            border.target = in.read_f64();
+            border.lerp_ms = in.read_varlong();
+            border.absolute_max = in.read_varint();
+            border.warning_blocks = in.read_varint();
+            border.warning_seconds = in.read_varint();
+        } else if (packet.id == cb.set_border_center) {
+            border.centre_x = in.read_f64();
+            border.centre_z = in.read_f64();
+        } else if (packet.id == cb.set_border_lerp_size) {
+            border.size = in.read_f64();
+            border.target = in.read_f64();
+            border.lerp_ms = in.read_varlong();
+        } else if (packet.id == cb.set_border_size) {
+            border.size = in.read_f64();
+            border.target = border.size;
+            border.lerp_ms = 0;
+        } else if (packet.id == cb.set_border_warning_delay) {
+            border.warning_seconds = in.read_varint();
+        } else {
+            border.warning_blocks = in.read_varint();
+        }
+        if (events_.world.on_border) events_.world.on_border(border);
         return true;
     }
     return false;

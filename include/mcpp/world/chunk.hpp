@@ -1,5 +1,6 @@
 #pragma once
 #include "mcpp/byte_buffer.hpp"
+#include "mcpp/nbt.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -48,6 +49,9 @@ struct BlockEntity {
     int32_t y = 0;
     int32_t z = 0;
     int32_t type = 0;
+    // What the type's own renderer needs - a sign's text, a banner's
+    // patterns - as the server sent it.
+    nbt::Value data;
 };
 
 // Half a byte per block, as the server sends it: 4096 nibbles for a section.

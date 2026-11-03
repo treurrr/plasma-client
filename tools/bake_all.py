@@ -44,6 +44,7 @@ def main(args):
         Path(report).parent / "items.json", protocol,
         out / f"items-{protocol}.plit")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu")
+    run("bake_datapack.py", jar, out / f"datapack-{protocol}")
     # The registries the client has built in, in id order: what an attribute,
     # an effect or an entity type number means.
     registries = json.loads((Path(report).parent / "registries.json").read_text())
