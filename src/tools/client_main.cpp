@@ -619,9 +619,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
     };
     std::vector<mcpp::world::Chunk> pending;
     std::set<std::pair<int32_t, int32_t>> seen;
-    events.on_entity_add = [&](int32_t id, int32_t type, double x, double y, double z) {
+    events.on_entity_add = [&](const mcpp::Entity& entity) {
         std::cout << std::format("- entity {} of type {} appeared at {:.2f} {:.2f} {:.2f}\n",
-                                 id, type, x, y, z);
+                                 entity.id, entity.type, entity.x, entity.y, entity.z);
     };
     events.on_entity_remove = [&](int32_t id) {
         std::cout << std::format("- entity {} gone\n", id);

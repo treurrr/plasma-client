@@ -10,6 +10,7 @@
 
 #include <array>
 #include <map>
+#include <set>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -41,6 +42,26 @@ struct SessionOptions {
     std::filesystem::path chunk_dump;
 };
 
+// Everything the server says about another thing in the world, as of the last
+// packet about it. Angles are in degrees; velocity is in blocks per tick,
+// which is the unit the game moves in.
+struct Entity {
+    int32_t id = 0;
+    uint64_t uuid[2]{};
+    int32_t type = 0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    double vx = 0.0;
+    double vy = 0.0;
+    double vz = 0.0;
+    float yaw = 0.0f;
+    float pitch = 0.0f;
+    float head_yaw = 0.0f;
+    int32_t data = 0;   // means something different for every type that uses it
+    bool on_ground = false;
+};
+
 struct SessionEvents {
     std::function<void(std::string_view)> on_status;
     std::function<void(std::string_view)> on_chat;
@@ -51,8 +72,8 @@ struct SessionEvents {
     std::function<void(double, double, double, float, float)> on_position;
     // Other things in the world. type is the registry id from the server's own
     // report; we do not pretend to know what it means yet.
-    std::function<void(int32_t, int32_t, double, double, double)> on_entity_add;
-    std::function<void(int32_t, double, double, double)> on_entity_move;
+    std::function<void(const Entity&)> on_entity_add;
+    std::function<void(const Entity&)> on_entity_move;
     std::function<void(int32_t)> on_entity_remove;
     // A block changed under us. The renderer has to remesh the section it is
     // in, and the sections next to it when it sits on a seam.
@@ -111,6 +132,7 @@ public:
     // Lets a render loop drain whatever arrived without blocking on an idle socket.
     bool has_data() const;
     size_t entity_count() const { return entities_.size(); }
+    const std::map<int32_t, Entity>& entities() const { return entities_; }
     // What the server says our latency is, or -1 before it has said.
     int32_t ping_ms() const { return ping_ms_; }
     void close();
@@ -162,6 +184,7 @@ private:
     Vitals vitals_;
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;
+    std::set<int32_t> part_read_;
     int32_t area_x_ = 0;
     int32_t area_z_ = 0;
     int32_t area_radius_ = -1;
@@ -191,8 +214,7 @@ private:
     std::string profile_name_;
     std::string profile_uuid_;
     int32_t entity_id_ = -1;
-    std::map<int32_t, std::array<double, 3>> entities_;
-    void track_entity(int32_t id, double x, double y, double z);
+    std::map<int32_t, Entity> entities_;
 };
 
 } // namespace mcpp

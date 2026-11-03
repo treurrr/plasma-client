@@ -36,6 +36,37 @@ ItemStack read_slot(ByteBuffer& in, bool& readable) {
     return stack;
 }
 
+// Velocity since 1.21.9. At rest it is one zero byte. Otherwise six bytes
+// hold three fifteen bit components over -1 to 1 and two bits of scale, with
+// a flag that more scale follows as a varint, which is how a fast arrow fits.
+// Measured off the wire against known motions: 0.5 east, a quarter north,
+// one up, and five east in seven bytes rather than six.
+void read_velocity(ByteBuffer& in, double& x, double& y, double& z) {
+    const uint8_t first = in.read_u8();
+    if (first == 0) {
+        x = y = z = 0.0;
+        return;
+    }
+    const uint8_t second = in.read_u8();
+    const auto rest = static_cast<uint32_t>(in.read_i32());
+    const uint64_t packed =
+        (static_cast<uint64_t>(rest) << 16) | (static_cast<uint64_t>(second) << 8) | first;
+    uint64_t scale = packed & 3;
+    if ((packed & 4) != 0) scale |= static_cast<uint64_t>(in.read_varint()) << 2;
+    const auto component = [&](int shift) {
+        const uint64_t bits = std::min<uint64_t>((packed >> shift) & 0x7FFF, 32766);
+        return (static_cast<double>(bits) * 2.0 / 32766.0 - 1.0) * static_cast<double>(scale);
+    };
+    x = component(3);
+    y = component(18);
+    z = component(33);
+}
+
+// An angle is a 256th of a turn.
+float read_angle(ByteBuffer& in) {
+    return static_cast<float>(static_cast<int8_t>(in.read_u8())) * 360.0f / 256.0f;
+}
+
 // A block position is one long: 26 bits of x, 26 of z and 12 of y, all signed,
 // which is why each one is sign extended on the way out.
 void unpack_position(int64_t packed, int32_t& x, int32_t& y, int32_t& z) {
@@ -493,40 +524,74 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         return true;
     }
     if (packet.id == cb.add_entity) {
-        const int32_t id = in.read_varint();
-        in.read_i64();   // uuid
-        in.read_i64();
-        const int32_t type = in.read_varint();
-        const double x = in.read_f64();
-        const double y = in.read_f64();
-        const double z = in.read_f64();
-        if (events_.on_entity_add) events_.on_entity_add(id, type, x, y, z);
-        track_entity(id, x, y, z);
+        Entity entity;
+        entity.id = in.read_varint();
+        entity.uuid[0] = static_cast<uint64_t>(in.read_i64());
+        entity.uuid[1] = static_cast<uint64_t>(in.read_i64());
+        entity.type = in.read_varint();
+        entity.x = in.read_f64();
+        entity.y = in.read_f64();
+        entity.z = in.read_f64();
+        // Velocity before the angles since 1.21.9, and pitch before yaw here,
+        // the other way round from every movement packet after it.
+        read_velocity(in, entity.vx, entity.vy, entity.vz);
+        entity.pitch = read_angle(in);
+        entity.yaw = read_angle(in);
+        entity.head_yaw = read_angle(in);
+        entity.data = in.read_varint();
+        const auto& stored = entities_[entity.id] = entity;
+        if (events_.on_entity_add) events_.on_entity_add(stored);
         return true;
     }
     if (packet.id == cb.entity_position_sync) {
         const int32_t id = in.read_varint();
-        const double x = in.read_f64();
-        const double y = in.read_f64();
-        const double z = in.read_f64();
-        track_entity(id, x, y, z);
-        if (events_.on_entity_move) events_.on_entity_move(id, x, y, z);
+        Entity& entity = entities_[id];
+        entity.id = id;
+        entity.x = in.read_f64();
+        entity.y = in.read_f64();
+        entity.z = in.read_f64();
+        entity.vx = in.read_f64();
+        entity.vy = in.read_f64();
+        entity.vz = in.read_f64();
+        entity.yaw = in.read_f32();
+        entity.pitch = in.read_f32();
+        entity.on_ground = in.read_bool();
+        if (events_.on_entity_move) events_.on_entity_move(entity);
         return true;
     }
-    if (packet.id == cb.move_entity_pos || packet.id == cb.move_entity_pos_rot) {
-        // Deltas are in 1/4096 of a block, relative to where we last saw it.
+    if (packet.id == cb.move_entity_pos || packet.id == cb.move_entity_pos_rot ||
+        packet.id == cb.move_entity_rot) {
+        // Positions move in 1/4096 of a block relative to where it last was;
+        // angles are absolute, yaw first. Every one ends on the ground flag.
         const int32_t id = in.read_varint();
-        const double dx = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
-        const double dy = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
-        const double dz = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
-        auto it = entities_.find(id);
-        if (it != entities_.end()) {
-            it->second[0] += dx;
-            it->second[1] += dy;
-            it->second[2] += dz;
-            if (events_.on_entity_move) {
-                events_.on_entity_move(id, it->second[0], it->second[1], it->second[2]);
+        double dx = 0.0;
+        double dy = 0.0;
+        double dz = 0.0;
+        if (packet.id != cb.move_entity_rot) {
+            dx = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+            dy = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+            dz = static_cast<double>(static_cast<int16_t>(in.read_u16())) / 4096.0;
+        }
+        float yaw = 0.0f;
+        float pitch = 0.0f;
+        const bool turned = packet.id != cb.move_entity_pos;
+        if (turned) {
+            yaw = read_angle(in);
+            pitch = read_angle(in);
+        }
+        const bool on_ground = in.read_bool();
+        const auto found = entities_.find(id);
+        if (found != entities_.end()) {
+            Entity& entity = found->second;
+            entity.x += dx;
+            entity.y += dy;
+            entity.z += dz;
+            if (turned) {
+                entity.yaw = yaw;
+                entity.pitch = pitch;
             }
+            entity.on_ground = on_ground;
+            if (events_.on_entity_move) events_.on_entity_move(entity);
         }
         return true;
     }
@@ -763,17 +828,25 @@ void Session::connect() {
     begin_configuration();
 }
 
-void Session::track_entity(int32_t id, double x, double y, double z) {
-    entities_[id] = {x, y, z};
-}
-
 bool Session::has_data() const { return connection_.socket().readable(); }
 
 bool Session::pump() {
     if (state_ == SessionState::Closed) return false;
     auto packet = connection_.receive();
     if (state_ == SessionState::Configuration) return handle_configuration(packet);
-    if (state_ == SessionState::Play) return handle_play(packet);
+    if (state_ == SessionState::Play) {
+        const size_t size = packet.data.remaining();
+        const bool keep = handle_play(packet);
+        // A handler that read some of a packet and then stopped has read the
+        // layout wrong, or knows it reads only part of it. Either way it is
+        // worth saying once: a packet left untouched is one we ignore, and
+        // that is fine; one half read is how a wrong field order hides.
+        const size_t left = packet.data.remaining();
+        if (left != 0 && left != size && part_read_.insert(packet.id).second) {
+            status(std::format("packet {} read {} of {} bytes", packet.id, size - left, size));
+        }
+        return keep;
+    }
     return true;
 }
 
