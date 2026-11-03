@@ -42,7 +42,14 @@ void parallel_for(size_t count, Body&& body) {
 }
 
 
-constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
+// Deliberately not an sRGB format. Minecraft multiplies its face shading,
+// ambient occlusion and biome tints into sRGB bytes, so doing the same
+// arithmetic on linear values gives a washed-out picture: a tinted block loses
+// about 43% of its saturation and the sides stop reading as sides. Keeping the
+// atlas and the target in the same gamma space as the game makes the shader's
+// constants mean what they mean in the game, and spares the present blit a
+// conversion it would not undo.
+constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
 // The sky the world is cleared to, and the colour distance fades into.
 constexpr float kSky[3] = {0.45f, 0.62f, 0.86f};
@@ -291,7 +298,7 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     VkImageCreateInfo create{};
     create.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     create.imageType = VK_IMAGE_TYPE_2D;
-    create.format = VK_FORMAT_R8G8B8A8_SRGB;
+    create.format = kColorFormat;
     create.extent = {atlas_tile_, atlas_tile_, 1};
     create.mipLevels = atlas.mip_levels();
     create.arrayLayers = atlas_layers_;
@@ -379,7 +386,7 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view.image = atlas_image_;
     view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    view.format = VK_FORMAT_R8G8B8A8_SRGB;
+    view.format = kColorFormat;
     view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, atlas_layers_};
     check(vkCreateImageView(device_.handle(), &view, nullptr, &atlas_view_),
           "vkCreateImageView atlas");
