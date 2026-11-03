@@ -60,7 +60,7 @@ CURATED = {
         "container_set_slot": "container_set_slot", "container_close": "container_close",
         "set_held_slot": "set_held_slot", "set_experience": "set_experience",
         "set_cursor_item": "set_cursor_item", "set_player_inventory": "set_player_inventory",
-        "block_changed_ack": "block_changed_ack",
+        "block_changed_ack": "block_changed_ack", "bundle_delimiter": "bundle_delimiter",
     }),
     "play_sb": ("play", "serverbound", {
         "keep_alive": "keep_alive", "pong": "pong", "chat": "chat",

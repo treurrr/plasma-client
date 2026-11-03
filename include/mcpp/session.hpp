@@ -132,6 +132,10 @@ public:
     bool pump();
     // Lets a render loop drain whatever arrived without blocking on an idle socket.
     bool has_data() const;
+    // True between the two delimiters of a bundle. The server bundles what has
+    // to land together - a player's spawn with its skin and equipment - and a
+    // frame drawn in the middle shows one frame of a naked default player.
+    bool in_bundle() const { return in_bundle_; }
     size_t entity_count() const { return entities_.size(); }
     const std::map<int32_t, Entity>& entities() const { return entities_; }
     // What the server says our latency is, or -1 before it has said.
@@ -186,6 +190,7 @@ private:
     Vitals vitals_;
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;
+    bool in_bundle_ = false;
     std::set<int32_t> part_read_;
     // Where the player last was, by the server's word or by our own movement:
     // what a relative teleport is an offset from.

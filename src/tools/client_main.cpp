@@ -1053,8 +1053,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
         camera.fov_degrees = fov;
 
         // Drain whatever the server sent, then report where we are. Standing
-        // still in the socket is how a client gets timed out.
-        while (session.has_data()) {
+        // still in the socket is how a client gets timed out. A bundle is read
+        // to its end even if the rest of it is still on the wire, so no frame
+        // is drawn with half of it applied.
+        while (session.has_data() || session.in_bundle()) {
             try {
                 if (!session.pump()) break;
             } catch (const std::exception&) {

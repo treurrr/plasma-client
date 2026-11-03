@@ -38,7 +38,7 @@ struct PacketIds {
             move_entity_pos_rot, move_entity_rot, entity_position_sync, player_info_update,
             player_info_remove, container_set_content, container_set_slot, container_close,
             set_held_slot, set_experience, set_cursor_item, set_player_inventory,
-            block_changed_ack;
+            block_changed_ack, bundle_delimiter;
     } play_cb;
 
     struct PlayServerbound {

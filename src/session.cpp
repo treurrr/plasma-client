@@ -626,6 +626,10 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         }
         return true;
     }
+    if (packet.id == cb.bundle_delimiter) {
+        in_bundle_ = !in_bundle_;
+        return true;
+    }
     if (packet.id == cb.set_chunk_cache_center || packet.id == cb.set_chunk_cache_radius) {
         if (packet.id == cb.set_chunk_cache_center) {
             area_x_ = in.read_varint();
