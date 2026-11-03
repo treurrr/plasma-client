@@ -504,6 +504,19 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         send(ids_->play_sb.pong, out);
         return true;
     }
+    if (packet.id == cb.respawn) {
+        // The same spawn info as login, then a byte saying what of the player
+        // to keep across it. A new dimension has its own height and its own
+        // entities, so the old ones are dropped here and the client drops
+        // its world on the event.
+        read_spawn_info(in);
+        in.read_u8();
+        entities_.clear();
+        status(std::format("now in {}, from y {} for {}", dimension_.name, dimension_.min_y,
+                           dimension_.height));
+        if (events_.on_respawn) events_.on_respawn(dimension_);
+        return true;
+    }
     if (packet.id == cb.login) {
         entity_id_ = in.read_i32();
         in.read_bool();   // hardcore

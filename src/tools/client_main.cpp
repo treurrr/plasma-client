@@ -711,6 +711,22 @@ int do_play(const std::string& target, size_t chunk_limit) {
         forgotten.push_back({chunk_x, chunk_z});
     };
 
+    // A new dimension is a new world: nothing the client held is still there.
+    // Every chunk goes the way a forgotten one goes, so the renderer hands back
+    // its room and the mesher drops anything it is still holding.
+    events.on_respawn = [&](const mcpp::Dimension&) {
+        std::vector<std::pair<int32_t, int32_t>> held;
+        {
+            std::lock_guard lock(world_guard);
+            for (const auto& [key, chunk] : world) held.push_back(key);
+        }
+        {
+            std::lock_guard lock(guard);
+            for (const auto& chunk : pending) held.emplace_back(chunk.x, chunk.z);
+        }
+        for (const auto& [chunk_x, chunk_z] : held) events.on_chunk_forget(chunk_x, chunk_z);
+    };
+
     events.on_chunk_area = [&](int32_t centre_x, int32_t centre_z, int32_t radius) {
         // A couple of chunks of slack past the edge: dropping one the server
         // still counts as ours leaves a hole until it is sent again, and
@@ -2052,6 +2068,12 @@ int do_digtest(const std::string& target) {
     events.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
         if (events_forget_hook) events_forget_hook(chunk_x, chunk_z);
     };
+    std::vector<std::string> journeys;
+    events.on_respawn = [&](const mcpp::Dimension& dimension) {
+        journeys.push_back(std::format("{} from y {}, {} chunks let go", dimension.name,
+                                       dimension.min_y, world.size()));
+        world.clear();
+    };
     // Counted on its own, before anything is erased, so it shows the safety
     // net would have caught the old area even with no forget sent at all.
     size_t outside_area = 0;
@@ -2189,6 +2211,7 @@ int do_digtest(const std::string& target) {
     std::cout << std::format("- after placing: {} ({})\n", rebuilt, table.block_name(rebuilt));
 
     std::cout << std::format("- {} light updates arrived\n", relit);
+    for (const auto& line : journeys) std::cout << "- respawned into " << line << '\n';
     for (const auto& line : said_over_hotbar) std::cout << "- over the hotbar: " << line << '\n';
     for (const auto& line : said_in_chat) {
         if (line.find("plasma-test") != std::string::npos) std::cout << "- in chat: " << line << '\n';

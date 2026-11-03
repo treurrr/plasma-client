@@ -50,6 +50,21 @@ struct SessionOptions {
     std::filesystem::path replay;
 };
 
+// Which world the player is in and what shape it has. min_y and height decide
+// where a chunk's lowest section sits, which turns every world y into an array
+// index - so the overworld's -64 is right in the overworld and nowhere else.
+struct Dimension {
+    std::string name = "minecraft:overworld";
+    std::string type = "minecraft:overworld";
+    int32_t min_y = -64;
+    int32_t height = 384;
+    bool has_skylight = true;
+    bool has_ceiling = false;
+    float ambient_light = 0.0f;
+    int32_t sea_level = 63;
+    int32_t section_count() const { return height / 16; }
+};
+
 // Everything the server says about another thing in the world, as of the last
 // packet about it. Angles are in degrees; velocity is in blocks per tick,
 // which is the unit the game moves in.
@@ -99,21 +114,9 @@ struct SessionEvents {
     // reaches. A proxy may never send forget_level_chunk; this is how the
     // client knows what to let go of anyway.
     std::function<void(int32_t, int32_t, int32_t)> on_chunk_area;
-};
-
-// Which world the player is in and what shape it has. min_y and height decide
-// where a chunk's lowest section sits, which turns every world y into an array
-// index - so the overworld's -64 is right in the overworld and nowhere else.
-struct Dimension {
-    std::string name = "minecraft:overworld";
-    std::string type = "minecraft:overworld";
-    int32_t min_y = -64;
-    int32_t height = 384;
-    bool has_skylight = true;
-    bool has_ceiling = false;
-    float ambient_light = 0.0f;
-    int32_t sea_level = 63;
-    int32_t section_count() const { return height / 16; }
+    // The player moved to another dimension, or respawned. Everything the
+    // client held belongs to the world it left: chunks, light, entities.
+    std::function<void(const Dimension&)> on_respawn;
 };
 
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false
