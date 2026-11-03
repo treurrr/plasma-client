@@ -18,3 +18,4 @@ __pycache__/
 /corpus/*
 !/corpus/README
 /.claude/
+/logs/

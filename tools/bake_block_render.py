@@ -30,7 +30,8 @@ def main(args):
         subprocess.run(["javac", "-cp", cp, "-d", classes, str(HERE / "java" / "BlockRenderExport.java")],
                        check=True)
         table = subprocess.run(["java", "-Djava.awt.headless=true", "-cp", classes + os.pathsep + cp,
-                                "BlockRenderExport"], capture_output=True, text=True, check=True).stdout
+                                "BlockRenderExport"], capture_output=True, text=True, check=True,
+                               cwd=classes).stdout
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(table)
     print(f"{out}: {table.count(chr(10))} states")
