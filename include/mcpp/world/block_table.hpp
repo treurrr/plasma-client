@@ -24,6 +24,8 @@ enum QuadFlags : uint8_t {
     kQuadNoAo = 1 << 2,
     // Fractional alpha: blended after everything solid, not cut out.
     kQuadTranslucent = 1 << 3,
+    // Widen the element so its corners stay where they were after the turn.
+    kQuadRescale = 1 << 4,
 };
 
 #pragma pack(push, 1)
@@ -38,9 +40,14 @@ struct BakedQuad {
     uint8_t flags;      // QuadFlags
     uint8_t rotation_x; // quarter turns
     uint8_t rotation_y;
+    // The element's own turn, which the blockstate's quarter turns know
+    // nothing about: up to two eighths of 45 degrees about one axis.
+    int8_t element_eighths;
+    uint8_t element_axis;
+    int16_t element_origin[3];
 };
 #pragma pack(pop)
-static_assert(sizeof(BakedQuad) == 28, "the baked layout must match the generator");
+static_assert(sizeof(BakedQuad) == 36, "the baked layout must match the generator");
 
 // Read-only view on a table built by tools/bake_block_table.py. Nothing is
 // parsed or copied at startup: the file is mapped and indexed in place.

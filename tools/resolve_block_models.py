@@ -52,6 +52,7 @@ def fluid_quads(name, properties):
             "uv": None,
             "tintindex": tint if tint >= 0 else None,
             "rotation": (0, 0),
+            "element_rotation": None,
             "uvlock": False,
         })
     return quads
@@ -205,6 +206,10 @@ def quads_for_state(assets, block_name, properties):
                     # and look half dead if the renderer ignores them.
                     "shade": element.get("shade", True),
                     "ambientocclusion": model.get("ambientocclusion") is not False,
+                    # An element may be turned about one axis by up to 45
+                    # degrees. Without it every plant is a plus instead of a
+                    # cross and every wall torch stands upright.
+                    "element_rotation": element.get("rotation"),
                 })
     return quads, None
 

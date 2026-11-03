@@ -34,6 +34,7 @@ QUAD_UVLOCK = 1 << 0
 QUAD_NO_SHADE = 1 << 1
 QUAD_NO_AO = 1 << 2
 QUAD_TRANSLUCENT = 1 << 3
+QUAD_RESCALE = 1 << 4
 
 # A model only says a face is tinted, never which tint. Which one is a property
 # of the block, the way the game decides it: grass and foliage read different
@@ -54,6 +55,20 @@ GRASS_TINTED = {
 DRY_TINTED = {"minecraft:pale_oak_leaves", "minecraft:leaf_litter"}
 
 
+AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
+def element_rotation(rotation):
+    """Angle in eighths of 45 degrees, the axis, the origin, and whether the
+    element is widened to keep its corners where they were."""
+    if not rotation:
+        return 0, 0, (8.0, 8.0, 8.0), False
+    angle = float(rotation.get("angle", 0))
+    axis = AXIS_INDEX.get(rotation.get("axis", "y"), 1)
+    origin = tuple(float(v) for v in rotation.get("origin", [8, 8, 8]))
+    return round(angle / 22.5), axis, origin, bool(rotation.get("rescale"))
+
+
 def tint_kind(name, tint):
     if tint is None:
         return -1
@@ -70,8 +85,8 @@ def tint_kind(name, tint):
     return TINT_GRASS
 
 
-QUAD = struct.Struct("<3h3h4hHBbbBBB")
-assert QUAD.size == 28, QUAD.size
+QUAD = struct.Struct("<3h3h4hHBbbBBBb B 3h")
+assert QUAD.size == 36, QUAD.size
 
 
 def fixed(value):
@@ -202,6 +217,7 @@ def main(args):
         for q in quads:
             uv = q["uv"] or [0, 0, 16, 16]
             tint = q["tintindex"]
+            eighths, axis, origin, rescale = element_rotation(q.get("element_rotation"))
             quad_blob.extend(QUAD.pack(
                 fixed(q["from"][0]), fixed(q["from"][1]), fixed(q["from"][2]),
                 fixed(q["to"][0]), fixed(q["to"][1]), fixed(q["to"][2]),
@@ -213,9 +229,13 @@ def main(args):
                 ((1 if q["uvlock"] else 0) |
                  (0 if q.get("shade", True) else QUAD_NO_SHADE) |
                  (0 if q.get("ambientocclusion", True) else QUAD_NO_AO) |
-                 (QUAD_TRANSLUCENT if translucent(q["texture"]) else 0)),
+                 (QUAD_TRANSLUCENT if translucent(q["texture"]) else 0) |
+                 (QUAD_RESCALE if rescale else 0)),
                 (q["rotation"][0] // 90) % 4,
                 (q["rotation"][1] // 90) % 4,
+                eighths,
+                axis,
+                fixed(origin[0]), fixed(origin[1]), fixed(origin[2]),
             ))
 
         quad_offsets.append(len(quad_blob) // QUAD.size)

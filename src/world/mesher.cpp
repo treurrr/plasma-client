@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 
 namespace mcpp::world {
 namespace {
@@ -71,6 +72,38 @@ void apply_rotation(float position[3], uint8_t rotation_x, uint8_t rotation_y) {
     position[0] = x + 0.5f;
     position[1] = y + 0.5f;
     position[2] = z + 0.5f;
+}
+
+// An element can be turned about one axis by 22.5 or 45 degrees. `rescale`
+// widens it across that axis so a cross still spans the whole block.
+void apply_element_rotation(float position[3], const BakedQuad& quad) {
+    if (quad.element_eighths == 0) return;
+
+    const float angle = static_cast<float>(quad.element_eighths) * 22.5f *
+                        std::numbers::pi_v<float> / 180.0f;
+    const float cosine = std::cos(angle);
+    const float sine = std::sin(angle);
+    const int axis = quad.element_axis % 3;
+    const int first = (axis + 1) % 3;
+    const int second = (axis + 2) % 3;
+
+    float local[3];
+    for (int i = 0; i < 3; ++i) {
+        local[i] = position[i] - static_cast<float>(quad.element_origin[i]) /
+                                    static_cast<float>(kUnitsPerBlock);
+    }
+    float a = local[first] * cosine - local[second] * sine;
+    float b = local[first] * sine + local[second] * cosine;
+    if ((quad.flags & kQuadRescale) != 0 && cosine != 0.0f) {
+        a /= cosine;
+        b /= cosine;
+    }
+    local[first] = a;
+    local[second] = b;
+    for (int i = 0; i < 3; ++i) {
+        position[i] = local[i] + static_cast<float>(quad.element_origin[i]) /
+                                     static_cast<float>(kUnitsPerBlock);
+    }
 }
 
 int rotate_face(int face, uint8_t rotation_x, uint8_t rotation_y) {
@@ -304,6 +337,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                                 (pick[1] ? top : quad.from[1]) / kBlock,
                                 (pick[2] ? quad.to[2] : quad.from[2]) / kBlock,
                             };
+                            apply_element_rotation(local, quad);
                             apply_rotation(local, quad.rotation_x, quad.rotation_y);
 
                             const int away[3] = {normal.x, normal.y, normal.z};
