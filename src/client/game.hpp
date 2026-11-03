@@ -141,6 +141,46 @@ struct PlayerArea {
     float game_yaw = 0.0f;
     int32_t aimed[3] = {0, 0, 0};
     bool aiming = false;
+
+    // E: the game's own tick clock, mouse, camera and block-interaction state.
+    double partial_tick = 0.0;
+    bool started = false;
+    bool connection_lost = false;
+    mcpp::world::Stats stats;
+    mcpp::world::BlockTags tags;
+    size_t tags_seen = 0;
+    bool server_flying = false;
+    // The options the movement and the camera read; the options screen sets them.
+    double sensitivity = 0.5;
+    bool smooth_camera = false;
+    bool bob_view = true;
+    int fov_option = 70;
+    float fov_effect_scale = 1.0f;
+    // Cinematic camera: the game's own smoothing of the mouse.
+    struct Smooth {
+        double target = 0.0;
+        double remaining = 0.0;
+        double last = 0.0;
+    } smooth_x, smooth_y;
+    std::chrono::steady_clock::time_point last_turn{};
+    float fov_modifier = 1.0f;
+    float fov_modifier_old = 1.0f;
+    float eye_height = mcpp::world::kStandingEye;
+    float eye_height_old = mcpp::world::kStandingEye;
+    // What the crosshair is on: the block, the face it entered and where.
+    int32_t hit_face = 1;
+    double hit_location[3] = {0.0, 0.0, 0.0};
+    // Breaking a block over several ticks, the way the game counts it.
+    bool destroying = false;
+    int32_t destroy_pos[3] = {0, 0, 0};
+    int32_t destroy_item = -1;
+    float destroy_progress = 0.0f;
+    float destroy_ticks = 0.0f;
+    int destroy_delay = 0;
+    int miss_time = 0;
+    int right_click_delay = 0;
+    bool attack_was = false;
+    bool use_was = false;
 };
 
 struct ScreensArea {

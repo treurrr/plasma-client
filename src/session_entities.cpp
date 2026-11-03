@@ -213,7 +213,13 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         return true;
     }
     if (packet.id == cb.set_entity_motion) {
+        const auto before = in.position();
         const int32_t id = in.read_varint();
+        // Our own knockback belongs to the player area.
+        if (id == entity_id_) {
+            in.set_position(before);
+            return false;
+        }
         double vx = 0.0;
         double vy = 0.0;
         double vz = 0.0;

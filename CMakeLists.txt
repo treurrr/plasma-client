@@ -105,6 +105,7 @@ add_library(mcpp_net STATIC
     src/world/block_table.cpp
     src/world/mesher.cpp
     src/world/physics.cpp
+    src/world/shapes.cpp
     src/world/light.cpp
     src/world/atlas.cpp
     src/world/biomes.cpp
@@ -177,7 +178,8 @@ if(glfw3_FOUND)
 endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
     src/client/common.cpp src/client/screenshot.cpp src/client/hud_shot.cpp
-    src/client/clicktest.cpp src/client/inspect.cpp src/client/entityshot.cpp ${MCPP_PLAY_SOURCES})
+    src/client/clicktest.cpp src/client/inspect.cpp src/client/entityshot.cpp
+    src/client/player_rules.cpp src/client/movetest.cpp ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
@@ -199,6 +201,9 @@ mcpp_test(protocol)
 mcpp_test(packet_ids)
 mcpp_test(assets)
 mcpp_test(ui)
+mcpp_test(player)
+target_sources(test_player PRIVATE src/client/player_rules.cpp)
+target_include_directories(test_player PRIVATE src)
 mcpp_test(jmath)
 mcpp_test(data)
 mcpp_test(world)
@@ -219,5 +224,8 @@ mcpp_probe(jmath_probe)
 mcpp_probe(codec_probe)
 mcpp_probe(timeline_probe)
 mcpp_probe(model_probe)
+mcpp_probe(movement_probe)
+target_sources(movement_probe PRIVATE src/client/player_rules.cpp)
+target_include_directories(movement_probe PRIVATE src)
 mcpp_probe(sound_probe)
 target_link_libraries(sound_probe PRIVATE mcpp_audio)

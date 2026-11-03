@@ -362,6 +362,27 @@ struct SessionEvents {
         // Where the server says we are. It decides, not us: starting anywhere else
         // makes the first movement packet look like a teleport.
         std::function<void(double, double, double, float, float)> on_position;
+        // The teleport as the server sent it, for a client that moves itself:
+        // it resolves the relative bits against its own body and answers with
+        // accept_teleport. Without a handler the session answers by itself.
+        struct Teleport {
+            int32_t id = 0;
+            double x = 0.0;
+            double y = 0.0;
+            double z = 0.0;
+            double vx = 0.0;
+            double vy = 0.0;
+            double vz = 0.0;
+            float yaw = 0.0f;
+            float pitch = 0.0f;
+            // x, y, z, yaw, pitch, then velocity x, y, z, then turning the
+            // velocity with the change of facing.
+            uint32_t relative = 0;
+        };
+        std::function<void(const Teleport&)> on_teleport;
+        // The server setting our own velocity: knockback, a launch. The game
+        // takes it as the body's new delta movement.
+        std::function<void(double, double, double)> on_motion;
     } player;
 
     struct Ui {
@@ -561,9 +582,41 @@ public:
     // acknowledges the number, which is how it undoes a block the player was
     // not allowed to change without the client having to guess.
     void send_dig(int32_t x, int32_t y, int32_t z, int32_t face, bool finished);
+    // Start (0), abort (1) or finish (2) breaking a block, on a face from 0
+    // (down) to 5 (east). Start and finish are predicted and numbered.
+    void send_dig_action(int32_t action, int32_t x, int32_t y, int32_t z, int32_t face);
     void send_place(int32_t x, int32_t y, int32_t z, int32_t face, float cursor_x,
                     float cursor_y, float cursor_z);
     void send_swing();
+
+    // One game tick of a player that moves itself, in the order the game
+    // sends it: the keys if they changed, sprinting if it changed, the
+    // cheapest of the four movement packets that says what changed, and the
+    // end of the tick. The rotation is the game's: yaw 0 faces south.
+    struct Movement {
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        float yaw = 0.0f;
+        float pitch = 0.0f;
+        bool on_ground = false;
+        bool horizontal_collision = false;
+        bool sprinting = false;
+        // The keys held: forward, back, left, right, jump, sneak, sprint.
+        uint8_t keys = 0;
+    };
+    void send_movement(const Movement& movement);
+    // The game's last word in each tick, after everything else it sent.
+    void send_tick_end();
+    // Creative flight switched on or off by the player.
+    void send_flying(bool flying);
+    // The answer to a teleport the client resolved itself: where it now is.
+    void accept_teleport(int32_t id, double x, double y, double z, float yaw, float pitch);
+    // How many times the server has put us somewhere we did not move to,
+    // after the first placement: corrections, as a test counts them.
+    size_t teleports() const { return player_.teleports; }
+    // The level of an effect on the player by name, 0 when it is not on.
+    int32_t effect_level(std::string_view name) const;
 
     // Ui: session_ui.cpp.
     void send_chat(std::string_view message);
@@ -684,6 +737,18 @@ private:
         float last_yaw = 0.0f;
         float last_pitch = 0.0f;
         int32_t container_state = 0;
+        // What the server was last told, so each tick sends only what changed.
+        double sent_x = 0.0;
+        double sent_y = 0.0;
+        double sent_z = 0.0;
+        float sent_yaw = 0.0f;
+        float sent_pitch = 0.0f;
+        bool sent_on_ground = false;
+        bool sent_collision = false;
+        bool sent_sprinting = false;
+        uint8_t sent_keys = 0;
+        int32_t position_reminder = 0;
+        size_t teleports = 0;
     };
     PlayerState player_;
 

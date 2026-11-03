@@ -1,11 +1,10 @@
 #pragma once
+#include "mcpp/world/fluid.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <vector>
 
 namespace mcpp::world {
-
-enum class Fluid : uint8_t { None, Water, Lava };
 
 // What fluid a block state holds, the way the game's FluidState sees it.
 struct FluidState {

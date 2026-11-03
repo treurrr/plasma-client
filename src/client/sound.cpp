@@ -243,7 +243,7 @@ void sound_tick(Game& game) {
     player.x = body.x;
     player.y = body.y;
     player.z = body.z;
-    player.eye_y = body.y + mcpp::world::kEyeHeight;
+    player.eye_y = body.y + body.eye_height();
     const auto ambient = dimension == "minecraft:overworld" ? mcpp::audio::AmbientSounds::legacy_cave()
                                                             : mcpp::audio::AmbientSounds{};
     const auto light = [&game](bool sky_layer) {

@@ -67,6 +67,7 @@ def main(args):
         Path(report).parent / "registries.json", Path(report).parent / "items.json")
     run("bake_datapack.py", jar, out / f"datapack-{protocol}")
     ask_the_game("bake_block_render.py", out / f"block-render-{protocol}.txt")
+    ask_the_game("oracle/bake_shapes.py", out / f"collision_shapes-{protocol}.txt")
     ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")
     ask_the_game("gen_block_sounds.py", out / f"block_sounds-{protocol}.txt")
     models = out / f"entity_models-{protocol}.txt"
