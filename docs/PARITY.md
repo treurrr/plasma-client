@@ -166,9 +166,12 @@ index 29 are present on this machine; nothing needs downloading.
 `src/session.cpp` (853), `src/ui/menu.cpp` (793), `src/gpu/*`, `src/world/*`,
 `tools/bake_*.py`. 16,556 lines across 81 files.
 
-**Clean-room is absolute and nothing below breaks it.** No decompiled game code
-is read or used. Where a feature genuinely cannot be built from these four
-sources, Appendix D says so and prices the clean-room alternative.
+**Superseded on 2026-11-03.** This plan was written under a clean-room rule
+that no longer holds: vanilla's client, decompiled locally with Mojang's
+official mappings, is now the reference, translated method by method and
+tracked by the port ledger (`docs/METHOD.md`, `docs/GAMEPLAN.md`). The
+clean-room routes discussed below, Appendix D included, are kept as history.
+What has not changed: nothing of Mojang's enters the repository or ships.
 
 ---
 

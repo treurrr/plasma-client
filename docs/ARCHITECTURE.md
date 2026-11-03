@@ -574,8 +574,8 @@ For our target version things are different. Measured on 2 November:
 
 Mojang stopped obfuscating with the 26 series and publishes no mappings there any
 more. For 1.21.11 they do exist, and that is exactly the kind of choice that must
-not stay implicit: using mappings to call an oracle falls in a grey area of our
-clean-room rule.
+not stay implicit. (Decided on 2026-11-03: the decompiled client with official
+mappings is the reference and oracles call it; see `docs/METHOD.md`.)
 
 That choice is not urgent now. **The whole networking side needs no oracle** -
 there the server is the referee, and it says so immediately when we send
