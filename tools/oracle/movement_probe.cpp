@@ -10,6 +10,7 @@
 // The C++ half of MovementOracle: the same inputs in the same order, values only.
 int main() {
     namespace w = mcpp::world;
+    if (!w::BlockShapes::game().loaded()) return 1;
     const double sensitivities[] = {0.0, 0.25, 0.5, 0.75, 1.0, 0.123};
     const double pixels[] = {1.0, -1.0, 3.0, 17.5, -250.0, 0.25};
     for (const double s : sensitivities) {

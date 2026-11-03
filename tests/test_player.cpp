@@ -4,6 +4,7 @@
 // 2.35 m/s up), not values read back from this code.
 #include "client/player_rules.hpp"
 #include "mcpp/world/physics.hpp"
+#include "mcpp/protocol_versions.hpp"
 #include "mcpp/world/shapes.hpp"
 
 #include <chrono>
@@ -289,8 +290,13 @@ void test_speed() {
 } // namespace
 
 int main() {
-    test_table();
     test_mouse();
+    if (!shapes().loaded()) {
+        std::cout << "skipped: no collision shapes at "
+                  << w::BlockShapes::default_path(mcpp::protocol::kProtocol_1_21_11).string() << "; bake them with tools/bake_all.py\n";
+        return failures > 0 ? 1 : 0;
+    }
+    test_table();
     test_walking();
     test_jump();
     test_steps_and_walls();

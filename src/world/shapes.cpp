@@ -1,10 +1,14 @@
 #include "mcpp/world/shapes.hpp"
 
-#include "mcpp/data/collision_shapes.hpp"
+#include "mcpp/protocol_versions.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cstdlib>
+#include <format>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace mcpp::world {
@@ -78,10 +82,33 @@ Special special_of(std::string_view name) {
 
 } // namespace
 
+std::filesystem::path BlockShapes::default_path(int32_t protocol) {
+    std::filesystem::path base;
+    if (const char* data_home = std::getenv("XDG_DATA_HOME")) {
+        base = data_home;
+    } else if (const char* home = std::getenv("HOME")) {
+        base = std::filesystem::path(home) / ".local" / "share";
+    }
+    return base / "plasma-client" / "data" / std::format("collision_shapes-{}.txt", protocol);
+}
+
 const BlockShapes& BlockShapes::game() {
     static const BlockShapes table = [] {
         BlockShapes shapes;
-        if (!shapes.parse(kCollisionShapes)) throw std::runtime_error("collision shape table is damaged");
+        const auto path = default_path(protocol::kProtocol_1_21_11);
+        std::ifstream input(path);
+        if (input) {
+            std::stringstream text;
+            text << input.rdbuf();
+            if (!shapes.parse(text.str())) {
+                throw std::runtime_error(std::format("{} is damaged; bake it again", path.string()));
+            }
+            return shapes;
+        }
+        std::cerr << std::format("no collision shapes at {}; every block is air to the player's "
+                                 "own movement until tools/bake_all.py bakes them\n",
+                                 path.string());
+        shapes.parse("shape\t0\t-\nminecraft:air\t0\t0\t1\t-\t0.6\t1\t1\t-\t0\t0\t-\t0\t0\t0\n");
         return shapes;
     }();
     return table;

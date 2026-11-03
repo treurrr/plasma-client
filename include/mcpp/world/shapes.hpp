@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <cstdint>
 #include <initializer_list>
 #include <span>
@@ -99,8 +100,10 @@ struct BlockInfo {
 // lookup after that is an index.
 class BlockShapes {
 public:
-    // The table built into the program.
+    static std::filesystem::path default_path(int32_t protocol);
+    // The baked table, read once. Without one, every state is air.
     static const BlockShapes& game();
+    bool loaded() const { return states_.size() > 1; }
 
     bool parse(std::string_view text);
     size_t size() const { return states_.size(); }

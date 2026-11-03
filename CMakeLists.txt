@@ -72,24 +72,6 @@ mcpp_shader(ui.vert UiVert)
 mcpp_shader(ui.frag UiFrag)
 add_custom_target(mcpp_shaders DEPENDS ${MCPP_SHADER_HEADERS})
 
-# Tables from data/, compiled in: hand tables, and numbers the game's own
-# code reported through tools/oracle.
-set(MCPP_DATA_DIR ${CMAKE_BINARY_DIR}/generated/mcpp/data)
-file(MAKE_DIRECTORY ${MCPP_DATA_DIR})
-function(mcpp_data name symbol)
-    set(header ${MCPP_DATA_DIR}/${name}.hpp)
-    add_custom_command(
-        OUTPUT ${header}
-        COMMAND ${CMAKE_COMMAND} -E env python3 ${CMAKE_SOURCE_DIR}/tools/embed_text.py
-                ${CMAKE_SOURCE_DIR}/data/${name}.txt ${header} ${symbol}
-        DEPENDS ${CMAKE_SOURCE_DIR}/data/${name}.txt ${CMAKE_SOURCE_DIR}/tools/embed_text.py
-        COMMENT "data ${name}"
-        VERBATIM)
-    set(MCPP_DATA_HEADERS ${MCPP_DATA_HEADERS} ${header} PARENT_SCOPE)
-endfunction()
-mcpp_data(collision_shapes kCollisionShapes)
-add_custom_target(mcpp_data DEPENDS ${MCPP_DATA_HEADERS})
-
 if(glfw3_FOUND)
     set(MCPP_WINDOW_SOURCES src/gpu/window.cpp)
 endif()
@@ -133,7 +115,7 @@ add_library(mcpp_net STATIC
     src/proto/packet_ids_gen.cpp
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
-add_dependencies(mcpp_net mcpp_shaders mcpp_data)
+add_dependencies(mcpp_net mcpp_shaders)
 target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl OpenSSL::Crypto)
 if(glfw3_FOUND)
     target_link_libraries(mcpp_net PUBLIC glfw)
