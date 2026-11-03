@@ -135,6 +135,7 @@ if(glfw3_FOUND)
     set(MCPP_PLAY_SOURCES
         src/client/play.cpp
         src/client/world.cpp
+        src/client/worldbench.cpp
         src/client/entities.cpp
         src/client/player.cpp
         src/client/screens.cpp

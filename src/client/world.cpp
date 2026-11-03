@@ -536,7 +536,24 @@ mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
     const double eye[3] = {camera.eye[0], camera.eye[1], camera.eye[2]};
     mcpp::world::AttributeProbe probe;
     probe.reset(attributes_at(session, day_time, eye, find_chunk, weather));
-    return mcpp::world::atmosphere(probe, 0.0f, inputs_for(session, camera, render_distance, weather));
+    auto in = inputs_for(session, camera, render_distance, weather);
+    static const mcpp::world::BlockTable no_table;
+    static const mcpp::world::RenderTable render = [] {
+        mcpp::world::RenderTable loaded;
+        loaded.open(mcpp::world::RenderTable::default_path(mcpp::protocol::kTargetProtocol));
+        return loaded;
+    }();
+    const auto block_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
+        const auto* chunk = find_chunk(x >> 4, z >> 4);
+        if (chunk == nullptr) return 0;
+        const int32_t index = chunk->index_of(y);
+        if (index < 0 || index >= static_cast<int32_t>(chunk->sections.size()) * 16) return 0;
+        return chunk->block_state(x & 15, index, z & 15);
+    };
+    in.medium = medium_at(camera.eye, block_at, render, no_table);
+    // A picture is taken with the eyes long since used to the water.
+    in.water_vision = 1.0f;
+    return mcpp::world::atmosphere(probe, 0.0f, in);
 }
 
 } // namespace client

@@ -1842,6 +1842,13 @@ int main(int argc, char** argv) {
                                                                : command.substr(0, 4);
             return do_worldshot(argv[2], out, limit, view, overlay);
         }
+        if (command == "worldbench" && argc > 2) {
+            std::vector<int32_t> distances;
+            std::stringstream list(argc > 5 ? argv[5] : "8,16,32");
+            for (std::string item; std::getline(list, item, ',');) distances.push_back(std::stoi(item));
+            return client::world_bench(argv[2], argc > 3 ? std::stoul(argv[3]) : 200,
+                                       argc > 4 ? std::stoul(argv[4]) : 600, distances);
+        }
         if (command == "inspect" && argc > 2) {
             return do_inspect(argv[2]);
         }
