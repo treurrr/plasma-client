@@ -409,6 +409,7 @@ void advance_sky(Game& game) {
     in.rain_fog = area.rain_fog.multiplier;
     game.renderer->set_atmosphere(mcpp::world::atmosphere(area.probe, area.partial, in));
     if (area.sky) area.sky->set_cloud_time(area.game_time, area.partial);
+    game.renderer->set_texture_ticks(static_cast<uint64_t>(std::max<int64_t>(area.game_time, 0)));
 }
 
 void world_tick(Game& game) {

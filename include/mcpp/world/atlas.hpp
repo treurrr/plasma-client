@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
+#include <utility>
+#include <vector>
 
 namespace mcpp::world {
 
@@ -27,6 +29,26 @@ public:
 
     std::span<const uint8_t> pixels() const { return {pixels_, pixel_bytes_}; }
 
+    // A texture the game animates: its frames as (layer, ticks shown), in
+    // the order its .mcmeta plays them, and whether it fades between them.
+    struct Animation {
+        uint32_t texture = 0;
+        bool interpolate = false;
+        std::vector<std::pair<uint32_t, uint32_t>> frames;
+        uint32_t length = 0;
+    };
+    // Layers below this are textures by id; the rest are further frames.
+    uint32_t textures() const { return textures_; }
+    const std::vector<Animation>& animations() const { return animations_; }
+    // The game's ticker: which layer shows after this many ticks, the next one,
+    // and how far towards it an interpolating texture has faded.
+    struct Frame {
+        uint32_t layer = 0;
+        uint32_t next = 0;
+        float fade = 0.0f;
+    };
+    static Frame frame_at(const Animation& animation, uint64_t ticks);
+
     // Byte offset of a mip level's first layer; layers follow one another.
     size_t level_offset(uint32_t mip) const;
     size_t level_bytes(uint32_t mip) const;
@@ -42,6 +64,8 @@ private:
     uint32_t mip_levels_ = 1;
     const uint8_t* pixels_ = nullptr;
     size_t pixel_bytes_ = 0;
+    uint32_t textures_ = 0;
+    std::vector<Animation> animations_;
 };
 
 } // namespace mcpp::world

@@ -7,6 +7,12 @@ layout(set = 0, binding = 2) uniform Fog {
     vec4 distances;   // environmental start and end, render distance start and end
 } fog;
 
+// Per texture: the layer it shows now and the next in the low and high half,
+// and how far an interpolating one has faded towards the next.
+layout(set = 0, binding = 4) readonly buffer Animation {
+    uvec2 frames[];
+} animation;
+
 layout(push_constant) uniform Push {
     mat4 view_projection;
     vec4 origin;
@@ -27,7 +33,13 @@ float linear_fog(float distance, float start, float end) {
 }
 
 void main() {
-    vec4 colour = texture(atlas, in_uv) * in_colour;
+    uvec2 frame = animation.frames[uint(in_uv.z + 0.5)];
+    vec4 texel = texture(atlas, vec3(in_uv.xy, float(frame.x & 0xFFFFu)));
+    float fade = uintBitsToFloat(frame.y);
+    if (fade > 0.0) {
+        texel = mix(texel, texture(atlas, vec3(in_uv.xy, float(frame.x >> 16))), fade);
+    }
+    vec4 colour = texel * in_colour;
     if (colour.a < push.eye.w) discard;
     float amount = max(linear_fog(in_spherical, fog.distances.x, fog.distances.y),
                        linear_fog(in_cylindrical, fog.distances.z, fog.distances.w));

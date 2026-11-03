@@ -326,6 +326,22 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
 void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     atlas_tile_ = atlas.tile_size();
     atlas_layers_ = atlas.layers();
+    animations_ = atlas.animations();
+    {
+        const uint32_t textures = std::max<uint32_t>(atlas.textures(), 1);
+        animation_slot_bytes_ = (textures * 8 + 255) & ~255u;
+        const auto buffer = vk::mapped_buffer(device_, kFrameSlots * animation_slot_bytes_,
+                                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        animation_data_ = {buffer.buffer, buffer.memory, buffer.mapped, buffer.size};
+        for (uint32_t slot = 0; slot < kFrameSlots; ++slot) {
+            auto* entries = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(animation_data_.mapped) +
+                                                        slot * animation_slot_bytes_);
+            for (uint32_t texture = 0; texture < textures; ++texture) {
+                entries[texture * 2] = texture | (texture << 16);
+                entries[texture * 2 + 1] = 0;
+            }
+        }
+    }
 
     VkPhysicalDeviceProperties limits{};
     vkGetPhysicalDeviceProperties(device_.physical(), &limits);
@@ -508,7 +524,11 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     check(vkCreateImageView(device_.handle(), &plain, nullptr, &lightmap_view_),
           "vkCreateImageView lightmap");
 
-    VkDescriptorSetLayoutBinding bindings[4]{};
+    VkDescriptorSetLayoutBinding bindings[5]{};
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     bindings[2].binding = 2;
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     bindings[2].descriptorCount = 1;
@@ -528,12 +548,14 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
 
     VkDescriptorSetLayoutCreateInfo layout{};
     layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout.bindingCount = 4;
+    layout.bindingCount = 5;
     layout.pBindings = bindings;
     check(vkCreateDescriptorSetLayout(device_.handle(), &layout, nullptr, &set_layout_),
           "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[3]{};
+    VkDescriptorPoolSize sizes[4]{};
+    sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    sizes[3].descriptorCount = 1;
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     sizes[0].descriptorCount = 2;
     sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -543,7 +565,7 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     VkDescriptorPoolCreateInfo pool_create{};
     pool_create.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_create.maxSets = 1;
-    pool_create.poolSizeCount = 3;
+    pool_create.poolSizeCount = 4;
     pool_create.pPoolSizes = sizes;
     check(vkCreateDescriptorPool(device_.handle(), &pool_create, nullptr, &descriptor_pool_),
           "vkCreateDescriptorPool");
@@ -572,7 +594,16 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     lightmap_info.imageView = lightmap_view_;
     lightmap_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    VkWriteDescriptorSet writes[4]{};
+    VkDescriptorBufferInfo animation_info{};
+    animation_info.buffer = animation_data_.buffer;
+    animation_info.range = animation_slot_bytes_;
+    VkWriteDescriptorSet writes[5]{};
+    writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[4].dstSet = descriptor_set_;
+    writes[4].dstBinding = 4;
+    writes[4].descriptorCount = 1;
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    writes[4].pBufferInfo = &animation_info;
     writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[2].dstSet = descriptor_set_;
     writes[2].dstBinding = 2;
@@ -597,7 +628,7 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[1].pBufferInfo = &buffer_info;
-    vkUpdateDescriptorSets(device_.handle(), 4, writes, 0, nullptr);
+    vkUpdateDescriptorSets(device_.handle(), 5, writes, 0, nullptr);
 }
 
 void WorldRenderer::create_targets() {
@@ -1421,6 +1452,16 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
                             slot * kFrameSlotBytes + kLightmapOffset, 16, 16, !lightmap_ready_);
     lightmap_ready_ = true;
     frame_offset_ = slot * kFrameSlotBytes;
+    animation_offset_ = slot * animation_slot_bytes_;
+    {
+        auto* entries = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(animation_data_.mapped) +
+                                                    animation_offset_);
+        for (const auto& animation : animations_) {
+            const auto frame = world::Atlas::frame_at(animation, texture_ticks_);
+            entries[animation.texture * 2] = frame.layer | (frame.next << 16);
+            std::memcpy(&entries[animation.texture * 2 + 1], &frame.fade, sizeof(float));
+        }
+    }
 
     transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
@@ -1477,8 +1518,9 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         push.eye[3] = kCutout;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
+        const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
-                                &descriptor_set_, 1, &frame_offset_);
+                                &descriptor_set_, 2, dynamic_offsets);
 
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
@@ -1719,6 +1761,7 @@ WorldRenderer::~WorldRenderer() {
     vkDestroyPipelineLayout(device_.handle(), layout_, nullptr);
     vkDestroyDescriptorPool(device_.handle(), descriptor_pool_, nullptr);
     frame_data_.destroy(device_.handle());
+    animation_data_.destroy(device_.handle());
     if (lightmap_view_ != VK_NULL_HANDLE) vkDestroyImageView(device_.handle(), lightmap_view_, nullptr);
     lightmap_.destroy(device_.handle());
     if (lightmap_sampler_ != VK_NULL_HANDLE) vkDestroySampler(device_.handle(), lightmap_sampler_, nullptr);

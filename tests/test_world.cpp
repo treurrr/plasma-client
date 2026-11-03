@@ -1,5 +1,6 @@
 #include "mcpp/json.hpp"
 #include "mcpp/session.hpp"
+#include "mcpp/world/atlas.hpp"
 #include "mcpp/world/environment.hpp"
 
 #include <cmath>
@@ -259,9 +260,27 @@ void test_recording() {
           std::format("set_time arrived ({})", session.time().day_time));
 }
 
+// The game's sprite ticker: each frame for its own number of ticks, then the
+// next, round and round; an interpolating one fades towards the next.
+void test_texture_animation() {
+    Atlas::Animation animation;
+    animation.frames = {{5, 2}, {7, 3}};
+    animation.length = 5;
+    const uint32_t expected[] = {5, 5, 7, 7, 7, 5, 5};
+    for (uint64_t tick = 0; tick < 7; ++tick) {
+        check(Atlas::frame_at(animation, tick).layer == expected[tick],
+              std::format("frame at tick {}", tick));
+    }
+    animation.interpolate = true;
+    const auto halfway = Atlas::frame_at(animation, 1);
+    check(halfway.next == 7 && near(halfway.fade, 0.5), "half way through a two-tick frame");
+    check(near(Atlas::frame_at(animation, 3).fade, 1.0 / 3.0), "a third through a three-tick frame");
+}
+
 } // namespace
 
 int main() {
+    test_texture_animation();
     test_tracks();
     test_datapack();
     test_recording();

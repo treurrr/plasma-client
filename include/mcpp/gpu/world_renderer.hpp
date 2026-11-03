@@ -107,6 +107,8 @@ public:
     void set_biome_colours(std::span<const uint32_t> colours);
     // This frame's sky, fog and lightmap.
     void set_atmosphere(const world::Atmosphere& atmosphere);
+    // Client ticks since the textures were loaded; animated ones follow it.
+    void set_texture_ticks(uint64_t ticks) { texture_ticks_ = ticks; }
     const world::Atmosphere& atmosphere() const { return atmosphere_; }
     void record_present(VkCommandBuffer command, const Camera& camera);
     VkFormat colour_format() const;
@@ -174,6 +176,12 @@ private:
     VkSampler lightmap_sampler_ = VK_NULL_HANDLE;
     bool lightmap_ready_ = false;
     uint32_t frame_offset_ = 0;
+    // Which layer each texture shows this frame, and the next one it fades to.
+    MappedBuffer animation_data_;
+    uint32_t animation_slot_bytes_ = 0;
+    uint32_t animation_offset_ = 0;
+    std::vector<world::Atlas::Animation> animations_;
+    uint64_t texture_ticks_ = 0;
     uint32_t width_;
     uint32_t height_;
 
