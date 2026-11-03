@@ -18,6 +18,7 @@
 #include "mcpp/image_png.hpp"
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/biomes.hpp"
+#include "mcpp/world/light.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/mesher.hpp"
 #include "mcpp/world/physics.hpp"
@@ -516,6 +517,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
     // once it has turned them into triangles.
     std::mutex world_guard;
     std::map<std::pair<int32_t, int32_t>, mcpp::world::Chunk> world;
+    mcpp::world::LightEngine light(table);
 
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
@@ -550,13 +552,16 @@ int do_play(const std::string& target, size_t chunk_limit) {
     events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const int32_t chunk_x = x >> 4;
         const int32_t chunk_z = z >> 4;
+        std::set<std::pair<int32_t, int32_t>> relit;
         {
             std::lock_guard lock(world_guard);
             const auto found = world.find({chunk_x, chunk_z});
             if (found == world.end()) return;
             if (!found->second.set_block_state(x & 15, y + 64, z & 15, state)) return;
+            relit = light.relight(world, x, y, z);
         }
         std::lock_guard lock(dirty_guard);
+        dirty.insert(relit.begin(), relit.end());
         dirty.insert({chunk_x, chunk_z});
         // A block on a seam changes what its neighbour may cull, so the chunk
         // on the other side has to be meshed again too.
@@ -759,13 +764,16 @@ int do_play(const std::string& target, size_t chunk_limit) {
     const auto predict_block = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const int32_t chunk_x = x >> 4;
         const int32_t chunk_z = z >> 4;
+        std::set<std::pair<int32_t, int32_t>> relit;
         {
             std::lock_guard lock(world_guard);
             const auto found = world.find({chunk_x, chunk_z});
             if (found == world.end()) return;
             if (!found->second.set_block_state(x & 15, y + 64, z & 15, state)) return;
+            relit = light.relight(world, x, y, z);
         }
         std::lock_guard lock(dirty_guard);
+        dirty.insert(relit.begin(), relit.end());
         dirty.insert({chunk_x, chunk_z});
         if ((x & 15) == 0) dirty.insert({chunk_x - 1, chunk_z});
         if ((x & 15) == 15) dirty.insert({chunk_x + 1, chunk_z});
@@ -1710,9 +1718,12 @@ int do_digtest(const std::string& target) {
         world.insert_or_assign({chunk.x, chunk.z}, chunk);
         if (world.size() >= 25 && placed) ready.store(true);
     };
+    mcpp::world::LightEngine light(table);
     events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const auto found = world.find({x >> 4, z >> 4});
-        if (found != world.end()) found->second.set_block_state(x & 15, y + 64, z & 15, state);
+        if (found != world.end() && found->second.set_block_state(x & 15, y + 64, z & 15, state)) {
+            light.relight(world, x, y, z);
+        }
         changes.push_back(std::format("{} {} {} is now {} ({})", x, y, z, state,
                                       table.block_name(state)));
     };
@@ -1797,6 +1808,19 @@ int do_digtest(const std::string& target) {
     pump_for(1.5);
     const int32_t after = block_at(foot_x, target_y, foot_z);
     std::cout << std::format("- after digging: {} ({})\n", after, table.block_name(after));
+    {
+        const auto found = world.find({foot_x >> 4, foot_z >> 4});
+        if (found != world.end()) {
+            const auto& chunk = found->second;
+            const int32_t index = target_y + 64;
+            std::cout << std::format(
+                "- light in the hole: sky {} block {}; above it sky {}; beside it sky {}\n",
+                chunk.sky_light_at(foot_x & 15, index, foot_z & 15),
+                chunk.block_light_at(foot_x & 15, index, foot_z & 15),
+                chunk.sky_light_at(foot_x & 15, index + 1, foot_z & 15),
+                chunk.sky_light_at((foot_x + 1) & 15, index, foot_z & 15));
+        }
+    }
 
     session.send_place(foot_x, target_y - 1, foot_z, 1, 0.5f, 1.0f, 0.5f);
     session.send_swing();

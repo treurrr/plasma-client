@@ -190,6 +190,17 @@ uint8_t LightLayer::at(size_t slot, int32_t local_x, int32_t y, int32_t local_z)
     return (index & 1) != 0 ? static_cast<uint8_t>(packed >> 4) : static_cast<uint8_t>(packed & 0x0F);
 }
 
+void LightLayer::set(size_t slot, int32_t local_x, int32_t y, int32_t local_z, uint8_t value) {
+    if (slot >= sections.size()) return;
+    auto& data = sections[slot];
+    if (data.empty()) data.assign(2048, 0);
+    const size_t index = static_cast<size_t>(y) * 256 + static_cast<size_t>(local_z) * 16 +
+                         static_cast<size_t>(local_x);
+    uint8_t& packed = data[index >> 1];
+    packed = (index & 1) != 0 ? static_cast<uint8_t>((packed & 0x0F) | (value << 4))
+                              : static_cast<uint8_t>((packed & 0xF0) | (value & 0x0F));
+}
+
 uint8_t Chunk::sky_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const {
     // A chunk we built ourselves, or one whose light has not arrived, is lit
     // rather than pitch black.

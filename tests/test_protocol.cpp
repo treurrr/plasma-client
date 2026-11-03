@@ -5,6 +5,7 @@
 #include "mcpp/proto/packet_ids.hpp"
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
+#include "mcpp/world/light.hpp"
 #include "mcpp/world/mesher.hpp"
 #include "mcpp/world/physics.hpp"
 
@@ -630,6 +631,78 @@ void test_packet_tables() {
 
 } // namespace
 
+// A hole dug under open sky has to fill with sunlight, a block placed in the
+// open has to throw a shadow, and taking it away again has to give the light
+// back. The server sends none of this; it is the client's to work out.
+void test_light_engine() {
+    const auto path = write_cube_table("plasma-test-light.plbk");
+    mcpp::world::BlockTable table;
+    check(table.open(path), "the light test's table opens");
+
+    // One section, stone in the bottom eight layers and air above, lit the
+    // way the server lights it: full sky over the stone, dark inside it.
+    mcpp::ByteBuffer air;
+    air.write_u8(0);
+    air.write_varint(0);
+    mcpp::ByteBuffer biomes;
+    biomes.write_u8(0);
+    biomes.write_varint(0);
+    mcpp::world::ChunkSection section;
+    section.blocks = mcpp::world::PalettedContainer::read(air, 4096, 8);
+    section.biomes = mcpp::world::PalettedContainer::read(biomes, 64, 3);
+
+    mcpp::world::ChunkMap world;
+    auto& chunk = world[{0, 0}];
+    chunk.sections.push_back(std::move(section));
+    chunk.sky_light.sections.assign(3, std::vector<uint8_t>(2048, 0));
+    chunk.block_light.sections.assign(3, std::vector<uint8_t>(2048, 0));
+    for (int32_t y = 0; y < 16; ++y) {
+        for (int32_t z = 0; z < 16; ++z) {
+            for (int32_t x = 0; x < 16; ++x) {
+                if (y < 8) chunk.set_block_state(x, y, z, 1);
+                chunk.sky_light.set(1, x, y, z, y < 8 ? 0 : 15);
+            }
+        }
+    }
+    const auto sky = [&](int32_t y) { return chunk.sky_light_at(8, y + 64, 8); };
+
+    mcpp::world::LightEngine light(table);
+
+    // Dig the top stone. Sunlight falls into it at full strength.
+    chunk.set_block_state(8, 7, 8, 0);
+    const auto relit = light.relight(world, 8, 7 - 64, 8);
+    check(sky(7 - 64) == 15, std::format("a hole dug under open sky is lit to {}", sky(7 - 64)));
+    check(!relit.empty(), "and the chunk it is in is marked to be meshed again");
+
+    // Dig the one below. The light keeps falling without fading.
+    chunk.set_block_state(8, 6, 8, 0);
+    light.relight(world, 8, 6 - 64, 8);
+    check(sky(6 - 64) == 15, std::format("and keeps falling down a shaft: {}", sky(6 - 64)));
+
+    // Put a block in the open air above the shaft. Everything under it loses
+    // the sun and is lit from the side instead, one level down.
+    chunk.set_block_state(8, 12, 8, 1);
+    light.relight(world, 8, 12 - 64, 8);
+    check(sky(12 - 64) == 0, "a placed block is dark inside");
+    check(sky(11 - 64) == 14,
+          std::format("the air right under it is lit from the side: {}", sky(11 - 64)));
+    check(sky(8 - 64) == 14, std::format("as is all the open air down to the stone: {}",
+                                         sky(8 - 64)));
+    // Inside the dug shaft the sides are stone, so the light only comes from
+    // above and fades a level per block.
+    check(sky(7 - 64) == 13 && sky(6 - 64) == 12,
+          std::format("and the shaft in the stone fades a level a block: {} then {}",
+                      sky(7 - 64), sky(6 - 64)));
+
+    // Take it away and the sun comes straight back down.
+    chunk.set_block_state(8, 12, 8, 0);
+    light.relight(world, 8, 12 - 64, 8);
+    check(sky(11 - 64) == 15 && sky(6 - 64) == 15,
+          std::format("removing it gives the light back: {} and {}", sky(11 - 64), sky(6 - 64)));
+
+    std::filesystem::remove(path);
+}
+
 int main() {
     test_varint_encoding();
     test_varlong_and_numbers();
@@ -640,6 +713,7 @@ int main() {
     test_paletted_container();
     test_block_table();
     test_mesher_culls_interiors();
+    test_light_engine();
     test_physics_stands_and_stops();
     test_packet_tables();
     test_server_hash();

@@ -56,6 +56,8 @@ struct BlockEntity {
 struct LightLayer {
     std::vector<std::vector<uint8_t>> sections;
     uint8_t at(size_t slot, int32_t local_x, int32_t y, int32_t local_z) const;
+    // An absent section reads as dark; writing to one makes it real.
+    void set(size_t slot, int32_t local_x, int32_t y, int32_t local_z, uint8_t value);
 };
 
 struct Chunk {
