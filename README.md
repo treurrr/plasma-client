@@ -12,15 +12,25 @@ with the client.
 
 ## State
 
-It joins a real server, opens a window, and lets you walk through the world it
-streams. Chat works both ways, movement is reported to the server, and chunks
-arriving while you play are meshed on a worker and appended to the gpu rather
-than rebuilding everything. A heads-up display reports what the frame actually
-cost, and a feature menu lists what the client has. Entities are tracked as the
-server reports them but not drawn, the menu shows state rather than changing it,
-there is no singleplayer, and joining still needs a token from elsewhere: the
-encryption handshake is implemented, the Microsoft sign-in that precedes it is
-not.
+It signs in with a Microsoft account, joins a real server, opens a window, and
+lets you walk through the world it streams. The player is a box that falls,
+collides and jumps rather than a camera that flies. Chat works both ways, typed
+in the window. Chunks arriving while you play are meshed on a worker and
+appended to the gpu rather than rebuilding everything.
+
+The world is drawn the way the game draws it: sky light and block light from
+the chunk, smooth lighting, per-block biome tints read from the game's own
+colour maps, distance fog, a sky with clouds, and every multiplier applied in
+the same gamma space Minecraft uses. Every colour the client puts on grass or
+leaves is within 2 of 255 of the colour the game would put there.
+
+The interface is the client's own: a heads-up display with numbers that are
+measured rather than estimated, and a feature menu you click to switch things
+on and off.
+
+Entities are tracked as the server reports them but not drawn, water is opaque
+where it should be see-through, blocks cannot be placed or broken, and there is
+no singleplayer.
 
 Measured on an RTX 4070 Laptop with 16 threads, 1920x1080, 200 chunks of
 overworld, 2.06 million triangles, 862k of them drawn after culling:
@@ -92,13 +102,20 @@ biome tints are looked up in, and the sky.
 ## Running
 
 ```sh
+plasma-client login                            # sign in with a Microsoft account
 plasma-client play <host>[:port]               # open a window and walk around
 plasma-client join <host>[:port] [name]        # join and stay in the play state
 plasma-client bench <host>[:port]              # frame time and fps
+plasma-client walktest <host>[:port] [seconds] # walk the world with no window
 plasma-client worldshot <host>[:port] out.png  # render the world to a file
+plasma-client hudshot <host>[:port] out.png    # the same, with the hud over it
+plasma-client menushot <host>[:port] out.png   # the same, with the menu over it
 plasma-client showcase out.png <state>...      # render given blocks on their own
 plasma-client gpu                              # adapters and features
 ```
+
+In the window: WASD to move, mouse to look, space to jump, left control to
+sprint, `f` to fly, `t` to chat, `m` for the feature menu, escape to leave.
 
 `showcase` is how rendering bugs get found here. Blocks whose texture
 orientation you know - a log, a grass block, a furnace - show a mistake at a
