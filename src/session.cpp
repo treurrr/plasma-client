@@ -456,16 +456,30 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.player_position) {
         const int32_t teleport = in.read_varint();
+        const double x = in.read_f64();
+        const double y = in.read_f64();
+        const double z = in.read_f64();
+        in.read_f64();   // velocity, which this client works out itself
+        in.read_f64();
+        in.read_f64();
+        const float yaw = in.read_f32();
+        const float pitch = in.read_f32();
+        // Each bit makes one field an offset from where the player already is
+        // rather than a place: x, y and z, then yaw and pitch. Measured: a
+        // plain teleport sends 0x18, keeping the player's own facing, and a
+        // server correcting a few blocks sends 0xff with the offsets alone -
+        // read as a place, that drops the player under the world at 0, 0.
+        const auto relative = static_cast<uint32_t>(in.read_i32());
+        const auto pick = [&](uint32_t bit, double value, double was) {
+            return (relative & bit) != 0 ? was + value : value;
+        };
+        last_x_ = pick(0x01, x, last_x_);
+        last_y_ = pick(0x02, y, last_y_);
+        last_z_ = pick(0x04, z, last_z_);
+        last_yaw_ = static_cast<float>(pick(0x08, yaw, last_yaw_));
+        last_pitch_ = static_cast<float>(pick(0x10, pitch, last_pitch_));
         if (events_.on_position) {
-            const double x = in.read_f64();
-            const double y = in.read_f64();
-            const double z = in.read_f64();
-            in.read_f64();
-            in.read_f64();
-            in.read_f64();
-            const float yaw = in.read_f32();
-            const float pitch = in.read_f32();
-            events_.on_position(x, y, z, yaw, pitch);
+            events_.on_position(last_x_, last_y_, last_z_, last_yaw_, last_pitch_);
         }
         ByteBuffer out;
         out.write_varint(teleport);
@@ -859,6 +873,11 @@ void Session::close() {
 void Session::send_position(double x, double y, double z, float yaw, float pitch,
                             bool on_ground) {
     if (state_ != SessionState::Play) return;
+    last_x_ = x;
+    last_y_ = y;
+    last_z_ = z;
+    last_yaw_ = yaw;
+    last_pitch_ = pitch;
 
     send(ids_->play_sb.client_tick_end, ByteBuffer{});
 

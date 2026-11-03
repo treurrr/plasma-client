@@ -185,6 +185,13 @@ private:
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;
     std::set<int32_t> part_read_;
+    // Where the player last was, by the server's word or by our own movement:
+    // what a relative teleport is an offset from.
+    double last_x_ = 0.0;
+    double last_y_ = 0.0;
+    double last_z_ = 0.0;
+    float last_yaw_ = 0.0f;
+    float last_pitch_ = 0.0f;
     int32_t area_x_ = 0;
     int32_t area_z_ = 0;
     int32_t area_radius_ = -1;

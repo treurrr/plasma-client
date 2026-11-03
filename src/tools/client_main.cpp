@@ -1951,6 +1951,14 @@ int do_digtest(const std::string& target) {
     session.send_command("tp @s 4 70 3");
     pump_for(1.5);
 
+    // A relative teleport is an offset, not a place. Read as a place, ten up
+    // from 70 lands at 10.
+    session.send_command("tp @s ~ ~10 ~");
+    pump_for(1.0);
+    std::cout << std::format("- ten up from 70 by a relative teleport: y {:.2f}\n", spawn[1]);
+    session.send_command("tp @s 4 70 3");
+    pump_for(1.0);
+
     // The test gives itself something to build with, so placing is actually
     // exercised rather than silently doing nothing with an empty hand.
     session.send_command("give @s minecraft:stone 64");
