@@ -66,6 +66,12 @@ public:
     // is the left half of its picture, not the whole picture at half width.
     void sprite_part(std::string_view name, float x, float y, float width, float height,
                      float fraction_x, float fraction_y, uint32_t rgba = 0xFFFFFFFFu);
+    // A sprite that grows the way the game grows it: corners as drawn, edges
+    // and middle repeated - or the middle stretched where the sprite says so -
+    // at `scale` screen pixels per game pixel. A sprite with no slicing of its
+    // own is simply stretched.
+    void nine_slice(std::string_view name, float x, float y, float width, float height,
+                    float scale, uint32_t rgba = 0xFFFFFFFFu);
     // Its natural size in game pixels, or {0, 0} when this build has no such
     // sprite, which is also what a caller should check before leaning on one.
     std::pair<float, float> sprite_size(std::string_view name) const;
@@ -89,6 +95,15 @@ private:
         float u, v, du, dv;
         float width, height;
     };
+
+    struct Slicing {
+        float left, top, right, bottom;
+        bool stretch_inner;
+    };
+    void region(const Sprite& sprite, float sx, float sy, float sw, float sh, float dx, float dy,
+                float dw, float dh, uint32_t rgba);
+    void tile(const Sprite& sprite, float sx, float sy, float sw, float sh, float dx, float dy,
+              float dw, float dh, float scale, uint32_t rgba);
 
     struct Glyph {
         Sprite sprite;
@@ -119,6 +134,7 @@ private:
     std::vector<uint8_t> item_armour_;
     std::map<std::string, Sprite, std::less<>> sprites_;
     std::unordered_map<uint32_t, Glyph> glyphs_;
+    std::map<std::string, Slicing, std::less<>> slicing_;
     VkImage gui_image_ = VK_NULL_HANDLE;
     VkDeviceMemory gui_memory_ = VK_NULL_HANDLE;
     VkImageView gui_view_ = VK_NULL_HANDLE;

@@ -267,9 +267,9 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
     if (gui_input) {
         char magic[4]{};
         gui_input.read(magic, 4);
-        uint32_t header[6]{};
+        uint32_t header[7]{};
         gui_input.read(reinterpret_cast<char*>(header), sizeof(header));
-        if (std::memcmp(magic, "PLGU", 4) == 0 && header[0] == 2 && header[2] > 0) {
+        if (std::memcmp(magic, "PLGU", 4) == 0 && header[0] == 3 && header[2] > 0) {
             gui_side = header[2];
             gui_input.seekg(static_cast<std::streamoff>(((4 + sizeof(header)) + 7) & ~size_t{7}));
             gui_pixels.resize(static_cast<size_t>(gui_side) * gui_side * 4);
@@ -314,6 +314,20 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
                 }
                 glyphs_.emplace(code, glyph);
             }
+            for (uint32_t i = 0; i < header[6]; ++i) {
+                uint16_t length = 0;
+                gui_input.read(reinterpret_cast<char*>(&length), sizeof(length));
+                std::string name(length, '\0');
+                if (length != 0) gui_input.read(name.data(), length);
+                uint8_t values[5]{};
+                gui_input.read(reinterpret_cast<char*>(values), sizeof(values));
+                if (!gui_input) break;
+                slicing_.emplace(std::move(name),
+                                 Slicing{static_cast<float>(values[0]),
+                                         static_cast<float>(values[1]),
+                                         static_cast<float>(values[2]),
+                                         static_cast<float>(values[3]), values[4] != 0});
+            }
         }
     }
     if (gui_pixels.empty()) {
@@ -321,6 +335,7 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
         gui_pixels.assign(4, 0);
         sprites_.clear();
         glyphs_.clear();
+        slicing_.clear();
     }
     upload_texture(gui_pixels, gui_side, gui_side, 1, gui_image_, gui_memory_, gui_view_,
                    VK_IMAGE_VIEW_TYPE_2D);
@@ -706,6 +721,83 @@ void UiRenderer::sprite_part(std::string_view name, float x, float y, float widt
     quad.uv[2] = found->second.du * fraction_x;
     quad.uv[3] = found->second.dv * fraction_y;
     add(quad);
+}
+
+void UiRenderer::region(const Sprite& sprite, float sx, float sy, float sw, float sh, float dx,
+                        float dy, float dw, float dh, uint32_t rgba) {
+    if (dw <= 0.0f || dh <= 0.0f || sw <= 0.0f || sh <= 0.0f) return;
+    Quad quad;
+    quad.x = dx;
+    quad.y = dy;
+    quad.width = dw;
+    quad.height = dh;
+    quad.fill_top = rgba;
+    quad.fill_bottom = rgba;
+    quad.layer = -2;
+    quad.uv[0] = sprite.u + sprite.du * (sx / sprite.width);
+    quad.uv[1] = sprite.v + sprite.dv * (sy / sprite.height);
+    quad.uv[2] = sprite.du * (sw / sprite.width);
+    quad.uv[3] = sprite.dv * (sh / sprite.height);
+    add(quad);
+}
+
+// Repeats a piece of a sprite across a rectangle at its natural size, cutting
+// the last copy short rather than squeezing every copy to fit.
+void UiRenderer::tile(const Sprite& sprite, float sx, float sy, float sw, float sh, float dx,
+                      float dy, float dw, float dh, float scale, uint32_t rgba) {
+    const float step_x = sw * scale;
+    const float step_y = sh * scale;
+    if (step_x <= 0.0f || step_y <= 0.0f) return;
+    for (float y = 0.0f; y < dh; y += step_y) {
+        const float h = std::min(step_y, dh - y);
+        for (float x = 0.0f; x < dw; x += step_x) {
+            const float w = std::min(step_x, dw - x);
+            region(sprite, sx, sy, w / scale, h / scale, dx + x, dy + y, w, h, rgba);
+        }
+    }
+}
+
+void UiRenderer::nine_slice(std::string_view name, float x, float y, float width, float height,
+                            float scale, uint32_t rgba) {
+    const auto found = sprites_.find(name);
+    if (found == sprites_.end()) return;
+    const Sprite& sprite = found->second;
+    const auto slicing = slicing_.find(name);
+    if (slicing == slicing_.end()) {
+        region(sprite, 0.0f, 0.0f, sprite.width, sprite.height, x, y, width, height, rgba);
+        return;
+    }
+    const Slicing& s = slicing->second;
+    // In game pixels on the sprite, and in screen pixels on the target.
+    const float W = sprite.width;
+    const float H = sprite.height;
+    const float inner_w = W - s.left - s.right;
+    const float inner_h = H - s.top - s.bottom;
+    const float l = s.left * scale;
+    const float t = s.top * scale;
+    const float r = s.right * scale;
+    const float b = s.bottom * scale;
+    const float mid_w = width - l - r;
+    const float mid_h = height - t - b;
+
+    region(sprite, 0, 0, s.left, s.top, x, y, l, t, rgba);
+    region(sprite, W - s.right, 0, s.right, s.top, x + width - r, y, r, t, rgba);
+    region(sprite, 0, H - s.bottom, s.left, s.bottom, x, y + height - b, l, b, rgba);
+    region(sprite, W - s.right, H - s.bottom, s.right, s.bottom, x + width - r, y + height - b, r,
+           b, rgba);
+
+    tile(sprite, s.left, 0, inner_w, s.top, x + l, y, mid_w, t, scale, rgba);
+    tile(sprite, s.left, H - s.bottom, inner_w, s.bottom, x + l, y + height - b, mid_w, b, scale,
+         rgba);
+    tile(sprite, 0, s.top, s.left, inner_h, x, y + t, l, mid_h, scale, rgba);
+    tile(sprite, W - s.right, s.top, s.right, inner_h, x + width - r, y + t, r, mid_h, scale,
+         rgba);
+
+    if (s.stretch_inner) {
+        region(sprite, s.left, s.top, inner_w, inner_h, x + l, y + t, mid_w, mid_h, rgba);
+    } else {
+        tile(sprite, s.left, s.top, inner_w, inner_h, x + l, y + t, mid_w, mid_h, scale, rgba);
+    }
 }
 
 std::pair<float, float> UiRenderer::sprite_size(std::string_view name) const {

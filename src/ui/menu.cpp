@@ -530,12 +530,20 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
                 if (state.slots[i] > 0) hovered = state.slot_names[i];
             }
             if (!hovered.empty()) {
-                const float text_width = quads.text_width(hovered, gui);
-                const float box_x = state.pointer_x + 8.0f * gui;
-                const float box_y = state.pointer_y - 16.0f * gui;
-                quads.panel(box_x - 3.0f * gui, box_y - 3.0f * gui, text_width + 6.0f * gui,
-                            14.0f * gui, 0.0f, 0x100010F0u, 0x2D0A63F0u, gui);
-                quads.text(hovered, box_x, box_y, gui, 0xFFFFFFFFu, false);
+                // The game's own tooltip sprites, sliced. Their solid part
+                // starts eight pixels in, and the game leaves three of it
+                // showing around the text, which sits above and right of the
+                // pointer.
+                const float text_w = quads.text_width(hovered, gui);
+                const float text_x = state.pointer_x + 12.0f * gui;
+                const float text_y = state.pointer_y - 12.0f * gui;
+                const float box_x = text_x - 11.0f * gui;
+                const float box_y = text_y - 11.0f * gui;
+                const float box_w = text_w + 22.0f * gui;
+                const float box_h = (8.0f + 22.0f) * gui;
+                quads.nine_slice("tooltip/background", box_x, box_y, box_w, box_h, gui);
+                quads.nine_slice("tooltip/frame", box_x, box_y, box_w, box_h, gui);
+                quads.text(hovered, text_x, text_y, gui, 0xFFFFFFFFu);
             }
 
             // Whatever is on the cursor follows the pointer rather than a slot.

@@ -6,8 +6,9 @@ Usage: bake_gui.py <client.jar> <protocol> <out.plgu>
 The hotbar, the hearts, the crosshair and everything else the hud is made of
 ship as separate images. They are packed into one texture here, with the names
 kept, so the client can draw an interface that is the game's rather than a
-lookalike. Nine-slice data is not in the jar, so sprites that stretch are
-recorded at their natural size and stretched by the caller.
+lookalike. Sprites that are meant to grow - buttons, tooltips, tabs - say how
+in their own .mcmeta: the border that keeps its size, and whether the middle
+stretches or repeats. That is carried along for the client to draw nine slices.
 """
 import io
 import json
@@ -19,7 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 MAGIC = b"PLGU"
-VERSION = 2
+VERSION = 3
 PREFIX = "assets/minecraft/textures/gui/sprites/"
 # The container backgrounds are not sprites: they are whole 256x256 sheets the
 # game blits a window out of, so they come in under their own names.
@@ -96,6 +97,7 @@ def main(args):
 
     sprites = []
     glyphs = []
+    slicing = {}
     with zipfile.ZipFile(jar_path) as jar:
         glyphs = read_font(jar)
         for name in sorted(jar.namelist()):
@@ -108,14 +110,23 @@ def main(args):
             image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")
             # An animated sprite stacks its frames; the first one is the sprite.
             meta = name + ".mcmeta"
+            short = name[len(PREFIX):-len(".png")]
             if meta in jar.namelist():
                 try:
                     frames = json.loads(jar.read(meta))
                     if "animation" in frames and image.height > image.width:
                         image = image.crop((0, 0, image.width, image.width))
+                    scaling = frames.get("gui", {}).get("scaling", {})
+                    if scaling.get("type") == "nine_slice":
+                        border = scaling["border"]
+                        if isinstance(border, int):
+                            border = {"left": border, "top": border, "right": border,
+                                      "bottom": border}
+                        slicing[short] = (border["left"], border["top"], border["right"],
+                                          border["bottom"], int(scaling.get("stretch_inner", False)))
                 except ValueError:
                     pass
-            sprites.append((name[len(PREFIX):-len(".png")], image))
+            sprites.append((short, image))
 
     # The font rides in the same atlas: a glyph is a sprite like any other.
     for code, image, advance, height, ascent in glyphs:
@@ -148,15 +159,18 @@ def main(args):
     # a space is, so the font table is kept apart from the sprite rectangles.
     font = b"".join(struct.pack("<IhBB", code, advance, height, ascent)
                     for code, (advance, height, ascent) in sorted(advances.items()))
+    slices = b"".join(struct.pack("<H", len(name.encode())) + name.encode() +
+                      struct.pack("<5B", *values) for name, values in sorted(slicing.items()))
     pixels = atlas.tobytes()
-    header = MAGIC + struct.pack("<6I", VERSION, protocol, SIDE, len(placed), len(table),
-                                 len(advances))
+    header = MAGIC + struct.pack("<7I", VERSION, protocol, SIDE, len(placed), len(table),
+                                 len(advances), len(slicing))
     header += b"\0" * (align8(len(header)) - len(header))
-    Path(out_path).write_bytes(header + pixels + table + font)
+    Path(out_path).write_bytes(header + pixels + table + font + slices)
 
     print(f"{out_path}: {(len(header) + len(pixels) + len(table) + len(font)) / 1e6:.2f} MB")
     print(f"  {len(placed)} sprites in {SIDE}x{SIDE}, {y + shelf} rows used")
     print(f"  {len(advances)} glyphs from the game's own font")
+    print(f"  {len(slicing)} sprites drawn in nine slices")
 
 
 if __name__ == "__main__":

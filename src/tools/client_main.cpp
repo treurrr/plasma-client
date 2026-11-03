@@ -1763,6 +1763,72 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     return 0;
 }
 
+// The game's own interface pieces on their own, at the game's gui scale, so a
+// sprite drawn in nine slices can be checked at more than one size without a
+// world, a server or a pointer in the way.
+int do_uishot(const std::string& out_path) {
+    constexpr uint32_t kWidth = 1280;
+    constexpr uint32_t kHeight = 720;
+    mcpp::world::Atlas atlas;
+    if (!atlas.open(mcpp::world::Atlas::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "no atlas; bake one with tools/bake_all.py\n";
+        return 1;
+    }
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options options;
+    device.create(options);
+    mcpp::gpu::WorldRenderer renderer(device, kWidth, kHeight, atlas);
+    mcpp::gpu::UiRenderer quads(
+        device, renderer.colour_format(),
+        mcpp::gpu::UiRenderer::default_items_path(mcpp::protocol::kTargetProtocol),
+        mcpp::gpu::UiRenderer::default_gui_path(mcpp::protocol::kTargetProtocol));
+    if (!quads.has_sprites() || !quads.has_font()) {
+        std::cerr << "no interface atlas; bake one with tools/bake_gui.py\n";
+        return 1;
+    }
+
+    constexpr float gui = 3.0f;
+    const auto overlay = [&](VkCommandBuffer command, uint32_t width, uint32_t height) {
+        quads.begin();
+        quads.panel(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f,
+                    0x6E6E78FFu);
+        // A button at the game's own width, and narrower and wider, so a
+        // stretch shows up as a smeared border and a good slice does not.
+        float y = 30.0f * gui;
+        for (const float game_width : {50.0f, 200.0f, 400.0f}) {
+            const float w = std::min(game_width * gui, static_cast<float>(width) - 40.0f);
+            const float x = std::round((static_cast<float>(width) - w) * 0.5f);
+            quads.nine_slice("widget/button", x, y, w, 20.0f * gui, gui);
+            const std::string label = std::format("Button {:.0f}", game_width);
+            quads.text(label, std::round(x + (w - quads.text_width(label, gui)) * 0.5f),
+                       y + 6.0f * gui, gui, 0xFFFFFFFFu);
+            y += 26.0f * gui;
+        }
+        quads.nine_slice("widget/button_highlighted", 40.0f * gui, y, 200.0f * gui, 20.0f * gui,
+                         gui);
+        quads.nine_slice("widget/button_disabled", 250.0f * gui, y, 120.0f * gui, 20.0f * gui,
+                         gui);
+        y += 34.0f * gui;
+        const std::string tip = "Diamond Sword";
+        const float text_w = quads.text_width(tip, gui);
+        const float text_x = 60.0f * gui;
+        quads.nine_slice("tooltip/background", text_x - 11.0f * gui, y - 11.0f * gui,
+                         text_w + 22.0f * gui, 30.0f * gui, gui);
+        quads.nine_slice("tooltip/frame", text_x - 11.0f * gui, y - 11.0f * gui,
+                         text_w + 22.0f * gui, 30.0f * gui, gui);
+        quads.text(tip, text_x, y, gui, 0xFFFFFFFFu);
+        quads.record(command, width, height);
+    };
+    mcpp::gpu::Camera camera{};
+    camera.eye[1] = 10000.0f;
+    camera.target[0] = 1.0f;
+    camera.target[1] = 10000.0f;
+    const auto pixels = renderer.render(camera, overlay);
+    mcpp::write_png(out_path, kWidth, kHeight, pixels);
+    std::cout << out_path << '\n';
+    return 0;
+}
+
 int do_render(const std::string& out_path, uint32_t width, uint32_t height) {
     using clock = std::chrono::steady_clock;
     const auto ms = [](auto from, auto to) {
@@ -2620,6 +2686,9 @@ int main(int argc, char** argv) {
             const std::string overlay = command == "worldshot" ? "none"
                                                                : command.substr(0, 4);
             return do_worldshot(argv[2], out, limit, view, overlay);
+        }
+        if (command == "uishot") {
+            return do_uishot(argc > 2 ? argv[2] : "ui.png");
         }
         if (command == "render") {
             const std::string out = argc > 2 ? argv[2] : "frame.png";
