@@ -1862,6 +1862,10 @@ int do_digtest(const std::string& target) {
         if (world.size() >= 25 && placed) ready.store(true);
     };
     mcpp::world::LightEngine light(table);
+    std::vector<std::string> said_in_chat;
+    std::vector<std::string> said_over_hotbar;
+    events.on_chat = [&](std::string_view line) { said_in_chat.emplace_back(line); };
+    events.on_action_bar = [&](std::string_view line) { said_over_hotbar.emplace_back(line); };
     std::function<void(int32_t, int32_t)> events_forget_hook;
     events.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
         if (events_forget_hook) events_forget_hook(chunk_x, chunk_z);
@@ -2003,6 +2007,10 @@ int do_digtest(const std::string& target) {
     std::cout << std::format("- after placing: {} ({})\n", rebuilt, table.block_name(rebuilt));
 
     std::cout << std::format("- {} light updates arrived\n", relit);
+    for (const auto& line : said_over_hotbar) std::cout << "- over the hotbar: " << line << '\n';
+    for (const auto& line : said_in_chat) {
+        if (line.find("plasma-test") != std::string::npos) std::cout << "- in chat: " << line << '\n';
+    }
 
     // Go far away; every chunk around the old spot should be forgotten, and
     // each one forgotten should be one we were actually holding.

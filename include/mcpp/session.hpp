@@ -65,6 +65,7 @@ struct Entity {
 struct SessionEvents {
     std::function<void(std::string_view)> on_status;
     std::function<void(std::string_view)> on_chat;
+    std::function<void(std::string_view)> on_action_bar;
     std::function<void(std::string_view)> on_disconnect;
     std::function<void(const world::Chunk&)> on_chunk;
     // Where the server says we are. It decides, not us: starting anywhere else
@@ -149,6 +150,7 @@ public:
         float saturation = 5.0f;
         float experience = 0.0f;   // 0 to 1 across the bar
         int32_t level = 0;
+        int32_t total_experience = 0;
         // Survival, creative, adventure, spectator, in the game's own order.
         // Creative and spectator show no health, food or armour at all.
         int32_t game_mode = 0;

@@ -528,7 +528,15 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.system_chat) {
         const auto text = read_component(in, lookup_);
-        if (events_.on_chat && !text.empty()) events_.on_chat(text);
+        // The last byte says it belongs over the hotbar rather than in the
+        // chat: a minigame's countdown, a sleeping message, a server's hint.
+        const bool action_bar = in.read_bool();
+        if (text.empty()) return true;
+        if (action_bar) {
+            if (events_.on_action_bar) events_.on_action_bar(text);
+        } else if (events_.on_chat) {
+            events_.on_chat(text);
+        }
         return true;
     }
     if (packet.id == cb.start_configuration) {
@@ -702,6 +710,7 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
     if (packet.id == cb.set_experience) {
         vitals_.experience = in.read_f32();
         vitals_.level = in.read_varint();
+        vitals_.total_experience = in.read_varint();
         return true;
     }
     if (packet.id == cb.set_held_slot) {
