@@ -19,10 +19,16 @@ in the window. Chunks arriving while you play are meshed on a worker and
 appended to the gpu rather than rebuilding everything.
 
 The world is drawn the way the game draws it: sky light and block light from
-the chunk, smooth lighting, per-block biome tints read from the game's own
-colour maps, distance fog, a sky with clouds, and every multiplier applied in
-the same gamma space Minecraft uses. Every colour the client puts on grass or
-leaves is within 2 of 255 of the colour the game would put there.
+the chunk, smooth lighting, the seven tints the game applies to grass, foliage,
+water and the three leaves that ignore the colour maps, distance fog, a sky
+with clouds, and every multiplier applied in the same gamma space Minecraft
+uses. Every colour the client puts on grass or leaves is within 2 of 255 of the
+colour the game would put there.
+
+The biome registry the server sends is read, and so are the game's own colour
+maps, so a swamp or a badlands resolves to its real colour. The renderer still
+paints every block with the plains values; wiring the per-block biome through
+to the shader is the next step there.
 
 The interface is the client's own: a heads-up display with numbers that are
 measured rather than estimated, and a feature menu you click to switch things
