@@ -22,6 +22,7 @@ from PIL import Image
 MAGIC = b"PLGU"
 VERSION = 3
 PREFIX = "assets/minecraft/textures/gui/sprites/"
+EFFECTS = "assets/minecraft/textures/mob_effect/"
 # The container backgrounds are not sprites: they are whole 256x256 sheets the
 # game blits a window out of, so they come in under their own names.
 CONTAINERS = "assets/minecraft/textures/gui/container/"
@@ -137,6 +138,11 @@ def main(args):
             if name.startswith(CONTAINERS) and name.endswith(".png"):
                 image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")
                 sprites.append(("container/" + name[len(CONTAINERS):-len(".png")], image))
+                continue
+            # Effect icons live in their own atlas in the game, not under sprites/.
+            if name.startswith(EFFECTS) and name.endswith(".png"):
+                image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")
+                sprites.append(("mob_effect/" + name[len(EFFECTS):-len(".png")], image))
                 continue
             if not name.startswith(PREFIX) or not name.endswith(".png"):
                 continue
