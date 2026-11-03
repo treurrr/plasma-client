@@ -10,6 +10,10 @@ namespace mcpp::world {
 // rest of the registries, so a datapack biome is handled the same as a vanilla
 // one without the client knowing anything about it beforehand.
 struct Biome {
+    // The two the game applies on top of the colour map, named the way the
+    // biome's own effects name them.
+    enum class GrassModifier { None, Swamp, DarkForest };
+
     std::string name;
     float temperature = 0.5f;
     float downfall = 0.5f;
@@ -18,6 +22,7 @@ struct Biome {
     bool fixed_foliage = false;
     uint32_t foliage = 0;
     uint32_t water = 0x3F76E4;
+    GrassModifier grass_modifier = GrassModifier::None;
 };
 
 // The 256x256 maps the game looks grass and foliage colour up in. They are
@@ -56,6 +61,9 @@ public:
     uint32_t grass(size_t index, const Colormaps& maps) const;
     uint32_t foliage(size_t index, const Colormaps& maps) const;
     uint32_t water(size_t index) const;
+    uint32_t dry_foliage(size_t index, const Colormaps& maps) const;
+    // The four of them per biome, flattened the way the renderer uploads them.
+    std::vector<uint32_t> tints(const Colormaps& maps) const;
     // The game computes this one rather than storing it: a colder biome gets a
     // deeper, bluer sky.
     uint32_t sky(size_t index) const;

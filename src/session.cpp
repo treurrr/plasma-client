@@ -7,12 +7,28 @@
 #include "mcpp/nbt.hpp"
 #include "mcpp/world/chunk.hpp"
 
+#include <charconv>
 #include <chrono>
 #include <fstream>
 #include <format>
 
 namespace mcpp {
 namespace {
+
+// A colour in the biome registry arrives either as a packed int or as the text
+// "#rrggbb", depending on how the server's datapack was written.
+std::optional<uint32_t> read_colour(const nbt::Value& value) {
+    if (const auto number = value.as_int()) return static_cast<uint32_t>(*number) & 0xFFFFFFu;
+    const std::string* text = value.as_string();
+    if (text == nullptr) return std::nullopt;
+    std::string_view digits = *text;
+    if (!digits.empty() && digits.front() == '#') digits.remove_prefix(1);
+    uint32_t rgb = 0;
+    const char* end = digits.data() + digits.size();
+    const auto parsed = std::from_chars(digits.data(), end, rgb, 16);
+    if (parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
+    return rgb & 0xFFFFFFu;
+}
 
 constexpr int32_t kNextStateLogin = 2;
 constexpr size_t kUuidBytes = 16;
@@ -281,17 +297,28 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
                 }
                 if (const auto* effects = tag.find("effects"); effects != nullptr) {
                     if (const auto* value = effects->find("grass_color"); value != nullptr) {
-                        biome.fixed_grass = true;
-                        biome.grass = static_cast<uint32_t>(value->as_int().value_or(0)) & 0xFFFFFF;
+                        if (const auto rgb = read_colour(*value)) {
+                            biome.fixed_grass = true;
+                            biome.grass = *rgb;
+                        }
                     }
                     if (const auto* value = effects->find("foliage_color"); value != nullptr) {
-                        biome.fixed_foliage = true;
-                        biome.foliage =
-                            static_cast<uint32_t>(value->as_int().value_or(0)) & 0xFFFFFF;
+                        if (const auto rgb = read_colour(*value)) {
+                            biome.fixed_foliage = true;
+                            biome.foliage = *rgb;
+                        }
+                    }
+                    if (const auto* value = effects->find("grass_color_modifier");
+                        value != nullptr) {
+                        const std::string* kind = value->as_string();
+                        if (kind != nullptr && *kind == "swamp") {
+                            biome.grass_modifier = world::Biome::GrassModifier::Swamp;
+                        } else if (kind != nullptr && *kind == "dark_forest") {
+                            biome.grass_modifier = world::Biome::GrassModifier::DarkForest;
+                        }
                     }
                     if (const auto* value = effects->find("water_color"); value != nullptr) {
-                        biome.water = static_cast<uint32_t>(value->as_int().value_or(0x3F76E4)) &
-                                      0xFFFFFF;
+                        biome.water = read_colour(*value).value_or(0x3F76E4u);
                     }
                 }
             }

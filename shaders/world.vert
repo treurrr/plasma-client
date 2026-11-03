@@ -7,6 +7,12 @@ layout(push_constant) uniform Push {
     vec4 sky;      // what the fog fades into, w is where it finishes
 } push;
 
+// Four colours per biome - grass, foliage, water, dry foliage - each 0xRRGGBB,
+// in the order the server listed them.
+layout(set = 0, binding = 1) uniform Biomes {
+    uvec4 colour[256];
+} biomes;
+
 layout(location = 0) in uvec4 in_position;   // xyz fixed point, w packed flags
 layout(location = 1) in vec2 in_uv;
 layout(location = 2) in uvec2 in_texture_light;
@@ -26,6 +32,10 @@ const float kFaceShade[6] = float[](0.50, 1.00, 0.80, 0.80, 0.60, 0.60);
 // The game's own light curve: the last few levels fall away far faster than
 // the first ones, which is why a torch lights a small bright circle rather
 // than a wide dim one.
+vec3 unpack(uint rgb) {
+    return vec3((rgb >> 16) & 0xFFu, (rgb >> 8) & 0xFFu, rgb & 0xFFu) / 255.0;
+}
+
 float brightness(float level) {
     float f = level / 15.0;
     return f / (4.0 - 3.0 * f);
@@ -64,14 +74,17 @@ void main() {
                          float((in_texture_light.y >> 4) & 0x0Fu));
 
     // Tinted faces ship as greyscale and are multiplied by a colour the block
-    // decides. Three of them never vary; the rest come from the biome.
-    const vec3 kTint[8] = vec3[](vec3(1.0),
-                                 vec3(0.5686, 0.7412, 0.3490),   // grass, plains
-                                 vec3(0.4667, 0.6706, 0.1843),   // foliage, plains
-                                 vec3(0.2471, 0.4627, 0.8941),   // water
-                                 vec3(0.3804, 0.6000, 0.3804),   // spruce
-                                 vec3(0.5020, 0.6549, 0.3333),   // birch
-                                 vec3(0.1255, 0.5020, 0.1882),   // lily pad
-                                 vec3(0.5608, 0.4784, 0.2118));  // dry foliage
-    out_tint = kTint[(flags >> 3) & 7u];
+    // decides. Three of them are fixed whatever the climate; the rest the game
+    // looks up per biome, so a swamp's grass and a badlands' are not the same.
+    const vec3 kFixedTint[8] = vec3[](vec3(1.0), vec3(1.0), vec3(1.0), vec3(1.0),
+                                      vec3(0.3804, 0.6000, 0.3804),   // spruce
+                                      vec3(0.5020, 0.6549, 0.3333),   // birch
+                                      vec3(0.1255, 0.5020, 0.1882),   // lily pad
+                                      vec3(1.0));
+    const int kBiomeChannel[8] = int[](-1, 0, 1, 2, -1, -1, -1, 3);
+    uint tint = (flags >> 3) & 7u;
+    int channel = kBiomeChannel[tint];
+    out_tint = channel < 0
+        ? kFixedTint[tint]
+        : unpack(biomes.colour[(in_texture_light.y >> 8) & 0xFFu][channel]);
 }

@@ -546,6 +546,18 @@ int do_play(const std::string& target, size_t chunk_limit) {
     // split would run out of indices long before it ran out of room.
     renderer.reserve(384u << 20, 160u << 20);
     renderer.append(combined);
+
+    std::optional<mcpp::gpu::Sky> sky;
+    const auto sky_path = mcpp::gpu::Sky::default_path(mcpp::protocol::kTargetProtocol);
+    if (std::filesystem::exists(sky_path)) {
+        sky.emplace(device, renderer.colour_format(), sky_path);
+        renderer.set_sky(&*sky);
+    }
+    if (!session.biomes().empty()) {
+        mcpp::world::Colormaps maps;
+        maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
+        renderer.set_biome_colours(session.biomes().tints(maps));
+    }
     std::cout << std::format("- {:.0f} MB reserved on the gpu, {:.1f} MB used by the first {} chunks\n",
                              renderer.vertex_capacity() / 1e6, vertex_bytes / 1e6, chunks.size());
 
@@ -766,6 +778,21 @@ int do_play(const std::string& target, size_t chunk_limit) {
         tick_accumulator += dt;
         if (tick_accumulator >= 0.05f) {
             tick_accumulator = 0.0f;
+            // The sky is the standing biome's, so walking from a plains into a
+            // taiga changes the colour overhead the way it does in the game.
+            if (!session.biomes().empty()) {
+                const int32_t cx = static_cast<int32_t>(std::floor(eye[0] / 16.0));
+                const int32_t cz = static_cast<int32_t>(std::floor(eye[2] / 16.0));
+                std::lock_guard lock(world_guard);
+                if (const auto found = world.find({cx, cz}); found != world.end()) {
+                    const int32_t biome = found->second.biome_at(
+                        static_cast<int32_t>(std::floor(eye[0])) & 15,
+                        static_cast<int32_t>(std::floor(eye[1])) + 64,
+                        static_cast<int32_t>(std::floor(eye[2])) & 15);
+                    renderer.set_sky_colours(
+                        session.biomes().sky(static_cast<size_t>(std::max(biome, 0))), 0xC0D8FFu);
+                }
+            }
             try {
                 session.send_position(eye[0], eye[1] - 1.62, eye[2], yaw + 90.0f, -pitch, false);
                 ++ticks_sent;
@@ -939,6 +966,32 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         if (!session.biomes().empty()) {
             mcpp::world::Colormaps maps;
             maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
+            std::map<std::string, int> present;
+            for (const auto& chunk : chunks) {
+                for (int32_t z = 2; z < 16; z += 6) {
+                    for (int32_t x = 2; x < 16; x += 6) {
+                        const int32_t id = chunk.biome_at(x, 63 + 64, z);
+                        if (const auto* biome = session.biomes().at(static_cast<size_t>(id))) {
+                            ++present[std::format("{} #{:06x}", biome->name,
+                                                  session.biomes().grass(
+                                                      static_cast<size_t>(id), maps))];
+                        }
+                    }
+                }
+            }
+            // Black is never a colour a biome asks for, so it only ever means a
+            // field the registry sent in a shape we failed to read.
+            for (size_t i = 0; i < session.biomes().size(); ++i) {
+                if (session.biomes().grass(i, maps) == 0 ||
+                    session.biomes().foliage(i, maps) == 0) {
+                    std::cout << std::format("- warning: {} resolves to black\n",
+                                             session.biomes().at(i)->name);
+                }
+            }
+            std::cout << std::format("- {} biomes across the loaded chunks:\n", present.size());
+            for (const auto& [name, count] : present) {
+                std::cout << std::format("    {:4}x {}\n", count, name);
+            }
             const int32_t id = first.biome_at(8, 63 + 64, 8);
             if (const auto* biome = session.biomes().at(static_cast<size_t>(id))) {
                 std::cout << std::format(
@@ -1083,9 +1136,13 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         camera.fog_start = reach * 0.85f;
     }
 
-    // The sky follows the biome the camera stands in, the way the game works
-    // it out from that biome's temperature.
+    // Every biome the server listed gets its four tints, and the sky follows the
+    // one the camera stands in, the way the game works it out from the
+    // temperature.
     if (!session.biomes().empty() && !chunks.empty()) {
+        mcpp::world::Colormaps maps;
+        maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
+        renderer.set_biome_colours(session.biomes().tints(maps));
         const auto& here = chunks.front();
         const int32_t biome = here.biome_at(8, 64 + 64, 8);
         renderer.set_sky_colours(session.biomes().sky(static_cast<size_t>(std::max(biome, 0))),

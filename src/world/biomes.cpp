@@ -25,8 +25,16 @@ const Biome* BiomeTable::at(size_t index) const {
 uint32_t BiomeTable::grass(size_t index, const Colormaps& maps) const {
     const Biome* biome = at(index);
     if (biome == nullptr) return kDefaultGrass;
-    if (biome->fixed_grass) return biome->grass;
-    return maps.grass(biome->temperature, biome->downfall);
+    const uint32_t base =
+        biome->fixed_grass ? biome->grass : maps.grass(biome->temperature, biome->downfall);
+    switch (biome->grass_modifier) {
+    // A swamp ignores its climate entirely and a dark forest is dragged half
+    // way towards a brown, which is what makes either one recognisable.
+    case Biome::GrassModifier::Swamp: return 0x6A7039u;
+    case Biome::GrassModifier::DarkForest: return ((base & 0xFEFEFEu) + 0x28340Au) >> 1;
+    case Biome::GrassModifier::None: break;
+    }
+    return base;
 }
 
 uint32_t BiomeTable::foliage(size_t index, const Colormaps& maps) const {
@@ -69,6 +77,23 @@ uint32_t BiomeTable::sky(size_t index) const {
     const float temperature = biome != nullptr ? biome->temperature : 0.8f;
     const float shade = std::clamp(temperature / 3.0f, -1.0f, 1.0f);
     return from_hsv(0.62222222f - shade * 0.05f, 0.5f + shade * 0.1f, 1.0f);
+}
+
+uint32_t BiomeTable::dry_foliage(size_t index, const Colormaps& maps) const {
+    const Biome* biome = at(index);
+    if (biome == nullptr) return 0x8F7A36u;
+    return maps.dry_foliage(biome->temperature, biome->downfall);
+}
+
+std::vector<uint32_t> BiomeTable::tints(const Colormaps& maps) const {
+    std::vector<uint32_t> table(biomes_.size() * 4);
+    for (size_t i = 0; i < biomes_.size(); ++i) {
+        table[i * 4 + 0] = grass(i, maps);
+        table[i * 4 + 1] = foliage(i, maps);
+        table[i * 4 + 2] = water(i);
+        table[i * 4 + 3] = dry_foliage(i, maps);
+    }
+    return table;
 }
 
 uint32_t BiomeTable::water(size_t index) const {
