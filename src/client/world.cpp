@@ -49,15 +49,15 @@ mcpp::world::AttributeValues attributes_at(const mcpp::Session& session, int64_t
 // surface, lava or powder snow when the eye is in them.
 template <typename BlockAt>
 mcpp::world::Medium medium_at(const float eye[3], BlockAt&& block_at,
-                              const mcpp::world::FluidTable& fluids,
+                              const mcpp::world::RenderTable& fluids,
                               const mcpp::world::BlockTable& table) {
     const int32_t x = static_cast<int32_t>(std::floor(eye[0]));
     const int32_t y = static_cast<int32_t>(std::floor(eye[1]));
     const int32_t z = static_cast<int32_t>(std::floor(eye[2]));
     const int32_t state = block_at(x, y, z);
-    const auto fluid = fluids.at(state);
+    const auto fluid = fluids.fluid(state);
     if (fluid.fluid != mcpp::world::Fluid::None) {
-        const bool same_above = fluids.at(block_at(x, y + 1, z)).fluid == fluid.fluid;
+        const bool same_above = fluids.fluid(block_at(x, y + 1, z)).fluid == fluid.fluid;
         const float height = same_above ? 1.0f : fluid.own_height();
         if (eye[1] < static_cast<float>(y) + height) {
             return fluid.fluid == mcpp::world::Fluid::Water ? mcpp::world::Medium::Water
@@ -249,8 +249,8 @@ void world_start(Game& game) {
         maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
         renderer.set_biome_colours(game.session->biomes().tints(maps));
     }
-    game.world.fluids.open(
-        mcpp::world::FluidTable::default_path(mcpp::protocol::kTargetProtocol));
+    game.world.render.open(
+        mcpp::world::RenderTable::default_path(mcpp::protocol::kTargetProtocol));
     game.world.render_distance = game.options.view_distance;
     game.world.outline.emplace(game.device, renderer.colour_format());
     renderer.set_outline(&*game.world.outline);
@@ -336,7 +336,7 @@ void advance_sky(Game& game) {
         return attributes_at(session, area.day_time, eye, find_chunk, session.weather());
     };
     const auto block_at = [&](int32_t x, int32_t y, int32_t z) { return area.block_at(x, y, z); };
-    const auto medium = medium_at(game.camera.eye, block_at, area.fluids, game.table);
+    const auto medium = medium_at(game.camera.eye, block_at, area.render, game.table);
     if (!area.probed) {
         area.probe.reset(sample());
         area.probed = true;

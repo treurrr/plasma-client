@@ -40,7 +40,7 @@ def read_texture_names(path):
 
     at = HEADER_BYTES
     at = align8(at + (states + 1) * 4)   # quad offsets
-    at = align8(at + quads * 28)         # quads
+    at = align8(at + quads * 36)         # quads
     texture_offsets_at = at
     at = align8(at + textures * 4)
     at = align8(at + blocks * 4)         # block name offsets

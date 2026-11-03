@@ -29,6 +29,9 @@ FLAG_HAS_GEOMETRY = 1 << 1
 FLAG_FULL_CUBE = 1 << 2
 FLAG_OCCLUDES = 1 << 3
 FLAG_FLUID = 1 << 4
+FLUID_TEXTURES = ("minecraft:block/water_still", "minecraft:block/water_flow",
+                  "minecraft:block/water_overlay", "minecraft:block/lava_still",
+                  "minecraft:block/lava_flow")
 FLAG_SELF_CULLS = 1 << 5
 
 # Blocks you see through that still hide the face between two of themselves,
@@ -274,6 +277,11 @@ def main(args):
 
     if problems:
         sys.exit(f"{problems} states could not be resolved; baking nothing")
+
+    # The fluid renderer draws water and lava itself, with textures no block
+    # model names; they get layers like every other texture.
+    for fluid_texture in FLUID_TEXTURES:
+        texture_id(fluid_texture)
 
     header = MAGIC + struct.pack("<7I", VERSION, protocol, len(states),
                                  len(quad_blob) // QUAD.size,

@@ -17,7 +17,7 @@
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/atmosphere.hpp"
 #include "mcpp/world/chunk.hpp"
-#include "mcpp/world/fluids.hpp"
+#include "mcpp/world/render_table.hpp"
 #include "mcpp/world/light.hpp"
 #include "mcpp/world/mesher.hpp"
 #include "mcpp/world/physics.hpp"
@@ -87,7 +87,7 @@ struct WorldArea {
 
     // The world's own clock, run on between the server's set_time packets the
     // way the game runs it, and what the sky and light are at the camera.
-    mcpp::world::FluidTable fluids;
+    mcpp::world::RenderTable render;
     int64_t day_time = 0;
     int64_t game_time = 0;
     bool time_ticking = true;

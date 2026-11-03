@@ -1,9 +1,14 @@
 #include "mcpp/world/mesher.hpp"
 
+#include "mcpp/jmath.hpp"
+#include "mcpp/world/render_table.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <mutex>
 #include <numbers>
+#include <string_view>
 
 namespace mcpp::world {
 namespace {
@@ -122,6 +127,242 @@ int rotate_face(int face, uint8_t rotation_x, uint8_t rotation_y) {
         }
     }
     return face;
+}
+
+// The game's own table of how each state is lit and what fluid it holds,
+// loaded once from what tools/bake_block_render.py asked the game for.
+const RenderTable& render_table() {
+    static const RenderTable table = [] {
+        RenderTable loaded;
+        loaded.open(RenderTable::default_path(774));
+        return loaded;
+    }();
+    return table;
+}
+
+struct FluidTextures {
+    int32_t water_still = -1;
+    int32_t water_flow = -1;
+    int32_t water_overlay = -1;
+    int32_t lava_still = -1;
+    int32_t lava_flow = -1;
+};
+
+FluidTextures fluid_textures(const BlockTable& table) {
+    static const BlockTable* cached_for = nullptr;
+    static FluidTextures cached;
+    static std::mutex guard;
+    std::lock_guard lock(guard);
+    if (cached_for == &table) return cached;
+    FluidTextures found;
+    for (uint16_t i = 0; i < 4096; ++i) {
+        const std::string_view name = table.texture_name(i);
+        if (name.empty()) break;
+        if (name == "minecraft:block/water_still") found.water_still = i;
+        if (name == "minecraft:block/water_flow") found.water_flow = i;
+        if (name == "minecraft:block/water_overlay") found.water_overlay = i;
+        if (name == "minecraft:block/lava_still") found.lava_still = i;
+        if (name == "minecraft:block/lava_flow") found.lava_flow = i;
+    }
+    cached = found;
+    cached_for = &table;
+    return cached;
+}
+
+// One liquid corner as the game's fluid renderer places it, relative to the
+// block's own corner.
+struct LiquidVertex {
+    float x, y, z, u, v;
+};
+
+// LiquidBlockRenderer, step for step: corner heights averaged over the
+// neighbours, the still or flowing texture turned along the flow, sides cut
+// at each corner's height, and the light of the block or the one above,
+// whichever is brighter.
+template <typename StateAt, typename LightAt, typename Emit>
+void mesh_liquid(int32_t state, const FluidTextures& textures, StateAt&& state_at, LightAt&& light_at,
+                 Emit&& emit) {
+    const RenderTable& render = render_table();
+    const FluidState self = render.fluid(state);
+    const Fluid kind = self.fluid;
+    const bool lava = kind == Fluid::Lava;
+    const auto fluid_at = [&](int dx, int dy, int dz) { return render.fluid(state_at(dx, dy, dz)); };
+    const auto same = [&](int dx, int dy, int dz) { return fluid_at(dx, dy, dz).fluid == kind; };
+    const auto info_at = [&](int dx, int dy, int dz) -> const RenderInfo& {
+        return render.at(state_at(dx, dy, dz));
+    };
+    // Whether a full-block occluder on that side hides a face of the given height.
+    const auto occluded_by = [&](int dx, int dy, int dz, bool up, float height) {
+        const int32_t neighbour = state_at(dx, dy, dz);
+        if (neighbour < 0 || !render.at(neighbour).has(RenderInfo::kSolidRender)) return false;
+        return !up || height == 1.0f;
+    };
+    const bool self_full = render.at(state).has(RenderInfo::kSolidRender);
+    const auto should_render = [&](int dx, int dy, int dz) { return !self_full && !same(dx, dy, dz); };
+
+    const bool up = !same(0, 1, 0);
+    const bool down = should_render(0, -1, 0) && !occluded_by(0, -1, 0, false, 0.8888889f);
+    const bool north = should_render(0, 0, -1);
+    const bool south = should_render(0, 0, 1);
+    const bool west = should_render(-1, 0, 0);
+    const bool east = should_render(1, 0, 0);
+    if (!up && !down && !north && !south && !west && !east) return;
+
+    const auto height = [&](int dx, int dz) -> float {
+        if (same(dx, 0, dz)) return same(dx, 1, dz) ? 1.0f : fluid_at(dx, 0, dz).own_height();
+        return info_at(dx, 0, dz).has(RenderInfo::kCollisionFull) ? -1.0f : 0.0f;
+    };
+    const auto weighted = [](float sum[2], float h) {
+        if (h >= 0.8f) {
+            sum[0] += h * 10.0f;
+            sum[1] += 10.0f;
+        } else if (h >= 0.0f) {
+            sum[0] += h;
+            sum[1] += 1.0f;
+        }
+    };
+    const auto average = [&](float own, float a, float b, int dx, int dz) {
+        if (b >= 1.0f || a >= 1.0f) return 1.0f;
+        float sum[2] = {0.0f, 0.0f};
+        if (b > 0.0f || a > 0.0f) {
+            const float corner = height(dx, dz);
+            if (corner >= 1.0f) return 1.0f;
+            weighted(sum, corner);
+        }
+        weighted(sum, own);
+        weighted(sum, b);
+        weighted(sum, a);
+        return sum[0] / sum[1];
+    };
+    const float own = height(0, 0);
+    float ne = 1.0f, nw = 1.0f, se = 1.0f, sw = 1.0f;
+    if (own < 1.0f) {
+        const float hn = height(0, -1);
+        const float hs = height(0, 1);
+        const float he = height(1, 0);
+        const float hw = height(-1, 0);
+        ne = average(own, hn, he, 1, -1);
+        nw = average(own, hn, hw, -1, -1);
+        se = average(own, hs, he, 1, 1);
+        sw = average(own, hs, hw, -1, 1);
+    }
+
+    const uint8_t here = light_at(0, 0, 0);
+    const uint8_t above = light_at(0, 1, 0);
+    const auto brighter = [](uint8_t a, uint8_t b) {
+        return static_cast<uint8_t>(std::max(a & 0x0F, b & 0x0F) | std::max(a & 0xF0, b & 0xF0));
+    };
+    const uint8_t light = brighter(here, above);
+    const int32_t still = lava ? textures.lava_still : textures.water_still;
+    const int32_t flowing = lava ? textures.lava_flow : textures.water_flow;
+    const float bottom = down ? 0.001f : 0.0f;
+
+    if (up && !occluded_by(0, 1, 0, true, std::min(std::min(nw, sw), std::min(se, ne)))) {
+        nw -= 0.001f;
+        sw -= 0.001f;
+        se -= 0.001f;
+        ne -= 0.001f;
+        // FlowingFluid.getFlow: the push towards lower neighbours.
+        double fx = 0.0;
+        double fz = 0.0;
+        constexpr int kSides[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+        for (const auto& side : kSides) {
+            const FluidState next = fluid_at(side[0], 0, side[1]);
+            if (next.fluid != Fluid::None && next.fluid != kind) continue;
+            float h = next.fluid == kind ? next.own_height() : 0.0f;
+            float push = 0.0f;
+            if (h == 0.0f) {
+                if (!info_at(side[0], 0, side[1]).has(RenderInfo::kCollisionFull)) {
+                    const FluidState below = fluid_at(side[0], -1, side[1]);
+                    if (below.fluid == Fluid::None || below.fluid == kind) {
+                        h = below.fluid == kind ? below.own_height() : 0.0f;
+                        if (h > 0.0f) push = self.own_height() - (h - 0.8888889f);
+                    }
+                }
+            } else if (h > 0.0f) {
+                push = self.own_height() - h;
+            }
+            if (push != 0.0f) {
+                fx += side[0] * static_cast<double>(push);
+                fz += side[1] * static_cast<double>(push);
+            }
+        }
+        LiquidVertex top[4];
+        int32_t top_texture = still;
+        if (std::abs(fx) < 1.0e-12 && std::abs(fz) < 1.0e-12) {
+            top[0] = {0, nw, 0, 0, 0};
+            top[1] = {0, sw, 1, 0, 1};
+            top[2] = {1, se, 1, 1, 1};
+            top[3] = {1, ne, 0, 1, 0};
+            emit(top, still, 1, light, !lava);
+        } else {
+            const float angle = static_cast<float>(std::atan2(fz, fx)) - static_cast<float>(std::numbers::pi / 2.0);
+            const float s = jmath::sin(angle) * 0.25f;
+            const float c = jmath::cos(angle) * 0.25f;
+            // Halves of the 32-texel flow sprite, as the game's getU(0.5 + ..) reads it.
+            top[0] = {0, nw, 0, 0.5f + (-c - s), 0.5f + (-c + s)};
+            top[1] = {0, sw, 1, 0.5f + (-c + s), 0.5f + (c + s)};
+            top[2] = {1, se, 1, 0.5f + (c + s), 0.5f + (c - s)};
+            top[3] = {1, ne, 0, 0.5f + (c - s), 0.5f + (-c - s)};
+            top_texture = flowing;
+            emit(top, flowing, 1, light, !lava);
+        }
+        bool backward = false;
+        for (int dx = -1; dx <= 1 && !backward; ++dx) {
+            for (int dz = -1; dz <= 1; ++dz) {
+                if (!same(dx, 1, dz) && !info_at(dx, 1, dz).has(RenderInfo::kSolidRender)) {
+                    backward = true;
+                    break;
+                }
+            }
+        }
+        if (backward) {
+            const LiquidVertex reversed[4] = {top[0], top[3], top[2], top[1]};
+            emit(reversed, top_texture, 1, light, !lava);
+        }
+    }
+
+    if (down) {
+        const LiquidVertex floor[4] = {{0, bottom, 1, 0, 1}, {0, bottom, 0, 0, 0},
+                                       {1, bottom, 0, 1, 0}, {1, bottom, 1, 1, 1}};
+        emit(floor, still, 0, brighter(light_at(0, -1, 0), here), !lava);
+    }
+
+    struct Side {
+        int dx, dz;
+        bool render;
+        int face;
+    };
+    const Side sides[4] = {{0, -1, north, 2}, {0, 1, south, 3}, {-1, 0, west, 4}, {1, 0, east, 5}};
+    for (const auto& side : sides) {
+        if (!side.render) continue;
+        float h0, h1, x0, x1, z0, z1;
+        switch (side.face) {
+        case 2: h0 = nw; h1 = ne; x0 = 0; x1 = 1; z0 = z1 = 0.001f; break;
+        case 3: h0 = se; h1 = sw; x0 = 1; x1 = 0; z0 = z1 = 1.0f - 0.001f; break;
+        case 4: h0 = sw; h1 = nw; x0 = x1 = 0.001f; z0 = 1; z1 = 0; break;
+        default: h0 = ne; h1 = se; x0 = x1 = 1.0f - 0.001f; z0 = 0; z1 = 1; break;
+        }
+        if (occluded_by(side.dx, 0, side.dz, false, std::max(h0, h1))) continue;
+        int32_t texture = flowing;
+        bool overlay = false;
+        if (!lava) {
+            const int32_t neighbour = state_at(side.dx, 0, side.dz);
+            if (neighbour > 0 && render.at(neighbour).has(RenderInfo::kLeaves | RenderInfo::kHalfTransparent)) {
+                texture = textures.water_overlay;
+                overlay = true;
+            }
+        }
+        const float v0 = (1.0f - h0) * 0.5f;
+        const float v1 = (1.0f - h1) * 0.5f;
+        const LiquidVertex wall[4] = {{x0, h0, z0, 0.0f, v0}, {x1, h1, z1, 0.5f, v1},
+                                      {x1, bottom, z1, 0.5f, 0.5f}, {x0, bottom, z0, 0.0f, 0.5f}};
+        emit(wall, texture, side.face, light, !lava);
+        if (!overlay) {
+            const LiquidVertex back[4] = {wall[3], wall[2], wall[1], wall[0]};
+            emit(back, texture, side.face, light, !lava);
+        }
+    }
 }
 
 } // namespace
@@ -283,6 +524,40 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     const int32_t state = padded_state[padded_index(x, local_y, z)];
                     if (state <= 0) continue;
                     const auto quads = table.quads(state);
+                    if (render_table().fluid(state).fluid != Fluid::None) {
+                        const uint16_t biome = padded_biome[padded_index(x, local_y, z)] & 0xFF;
+                        const auto emit = [&](const LiquidVertex corners[4], int32_t texture, int face,
+                                              uint8_t light, bool water) {
+                            if (texture < 0) return;
+                            const auto base = static_cast<uint32_t>(mesh.vertices.size());
+                            for (int i = 0; i < 4; ++i) {
+                                Vertex vertex{};
+                                vertex.position[0] = Vertex::encode(static_cast<float>(x) + corners[i].x);
+                                vertex.position[1] = Vertex::encode(static_cast<float>(local_y) + corners[i].y);
+                                vertex.position[2] = Vertex::encode(static_cast<float>(z) + corners[i].z);
+                                vertex.uv[0] = static_cast<uint16_t>(std::clamp(corners[i].u, 0.0f, 1.0f) * 65535.0f + 0.5f);
+                                vertex.uv[1] = static_cast<uint16_t>(std::clamp(corners[i].v, 0.0f, 1.0f) * 65535.0f + 0.5f);
+                                vertex.texture = static_cast<uint16_t>(texture);
+                                vertex.packed = static_cast<uint16_t>(face | (water ? 3 << 3 : 0) | (3 << 6));
+                                vertex.light = static_cast<uint16_t>(light | (biome << 8));
+                                mesh.vertices.push_back(vertex);
+                            }
+                            // The game winds its faces the other way round from this mesher.
+                            auto& into = water ? blended : mesh.indices;
+                            into.insert(into.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
+                            ++mesh.quads_emitted;
+                        };
+                        mesh_liquid(
+                            state, fluid_textures(table),
+                            [&](int dx, int dy, int dz) {
+                                return padded_state[padded_index(x + dx, local_y + dy, z + dz)];
+                            },
+                            [&](int dx, int dy, int dz) {
+                                return padded_light[padded_index(x + dx, local_y + dy, z + dz)];
+                            },
+                            emit);
+                        if (table.fluid(state)) continue;
+                    }
                     if (quads.empty()) continue;
 
 

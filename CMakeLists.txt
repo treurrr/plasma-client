@@ -106,7 +106,7 @@ add_library(mcpp_net STATIC
     src/world/biomes.cpp
     src/world/environment.cpp
     src/world/atmosphere.cpp
-    src/world/fluids.cpp
+    src/world/render_table.cpp
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
