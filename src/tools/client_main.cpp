@@ -705,6 +705,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
         const float forward[3] = {std::cos(yr) * std::cos(pr), std::sin(pr),
                                   std::sin(yr) * std::cos(pr)};
         const float right[3] = {-std::sin(yr), 0.0f, std::cos(yr)};
+        // The camera measures yaw from +x, the game measures it from -z.
+        // Anything that leaves this loop wants the game's.
+        const float game_yaw = yaw + 90.0f;
 
         if (flying) {
             const float speed = (input.sprint ? 46.0f : 14.0f) * dt;
@@ -720,7 +723,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
             mcpp::world::Intent intent;
             intent.forward = input.forward;
             intent.strafe = input.right;
-            intent.yaw_degrees = yaw;
+            intent.yaw_degrees = game_yaw;
             intent.jump = input.up > 0.0f;
             intent.sprint = input.sprint;
             mcpp::world::step(body, intent, block_at, table, dt);
@@ -794,7 +797,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
                 }
             }
             try {
-                session.send_position(eye[0], eye[1] - 1.62, eye[2], yaw + 90.0f, -pitch, false);
+                session.send_position(eye[0], eye[1] - 1.62, eye[2], game_yaw, -pitch, false);
                 ++ticks_sent;
             } catch (const std::exception& error) {
                 std::cerr << std::format("movement stopped: {}\n", error.what());

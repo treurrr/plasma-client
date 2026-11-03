@@ -8,6 +8,8 @@
 #include "mcpp/world/mesher.hpp"
 #include "mcpp/world/physics.hpp"
 
+#include <cmath>
+#include <numbers>
 #include <cassert>
 #include <filesystem>
 #include <format>
@@ -412,6 +414,29 @@ void test_physics_stands_and_stops() {
     check(body.x < 10.0 && body.x > 9.0,
           std::format("a wall stops the walk at its face: x={:.3f}", body.x));
     check(std::abs(body.y - 64.0) < 0.01, "and the player is still standing on the floor");
+
+    // The camera measures yaw from +x and the game measures it from -z. Walking
+    // has to end up where the camera is pointing, whatever either of them calls
+    // that direction, so the ninety degrees between them is checked here rather
+    // than noticed by walking sideways.
+    const auto open = [](int32_t, int32_t y, int32_t) { return y < 64 ? 1 : 0; };
+    for (const double camera_yaw : {0.0, 37.0, 90.0, 215.0, -140.0}) {
+        const double radians = camera_yaw * std::numbers::pi / 180.0;
+        body = {};
+        body.x = 0.5;
+        body.y = 64.0;
+        body.z = 0.5;
+        mcpp::world::Intent walk;
+        walk.forward = 1.0;
+        walk.yaw_degrees = static_cast<float>(camera_yaw + 90.0);
+        for (int i = 0; i < 120; ++i) mcpp::world::step(body, walk, open, table, 1.0 / 60.0);
+        const double moved = std::hypot(body.x - 0.5, body.z - 0.5);
+        const double along = ((body.x - 0.5) * std::cos(radians) +
+                              (body.z - 0.5) * std::sin(radians)) / moved;
+        check(moved > 1.0 && along > 0.999,
+              std::format("forward at camera yaw {:.0f} walks where the camera looks "
+                          "({:.3f} of the way)", camera_yaw, along));
+    }
 
     // Jumping leaves the ground and comes back to it.
     intent = {};
