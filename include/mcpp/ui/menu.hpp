@@ -46,9 +46,22 @@ struct HudState {
 void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,
               const HudState& state);
 
+// Where the pointer is and whether it was pressed, in window pixels.
+struct Pointer {
+    float x = 0.0f;
+    float y = 0.0f;
+    bool clicked = false;
+};
+
+// Which card the pointer is over, and which one it just switched. -1 for none.
+struct MenuHit {
+    int hovered = -1;
+    int toggled = -1;
+};
+
 // Drawn at a fixed 1600x900 design size and scaled to fit, so the proportions
 // hold at any resolution instead of the text shrinking against the cards.
-void draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,
-               const MenuState& state);
+MenuHit draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,
+                  const MenuState& state, const Pointer& pointer = {});
 
 } // namespace mcpp::ui

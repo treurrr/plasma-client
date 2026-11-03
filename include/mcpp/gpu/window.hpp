@@ -21,6 +21,11 @@ struct FrameInput {
     float pitch_delta = 0.0f;
     bool sprint = false;
     bool quit = false;
+    // Where the pointer is, and whether it was pressed this frame. Only
+    // meaningful while the cursor is free, which is while a menu is up.
+    float cursor_x = 0.0f;
+    float cursor_y = 0.0f;
+    bool click = false;
     // Edge-triggered: true on the frame the key goes down, not while held.
     bool toggle_menu = false;
 };
@@ -43,6 +48,10 @@ public:
 
     bool open() const;
     FrameInput poll();
+    // Captured means the pointer is hidden and locked to the window, which is
+    // what looking around needs and what a menu must undo.
+    void capture_cursor(bool captured);
+    bool cursor_captured() const { return cursor_captured_; }
     // `overlay`, when given, is recorded over the swapchain image after the
     // world, at screen resolution rather than scaled up from the render target.
     using Overlay = std::function<void(VkCommandBuffer, uint32_t, uint32_t)>;
@@ -82,6 +91,8 @@ private:
     double last_y_ = 0.0;
     bool have_cursor_ = false;
     bool menu_key_down_ = false;
+    bool mouse_down_ = false;
+    bool cursor_captured_ = false;
     double last_frame_ms_ = 0.0;
 };
 

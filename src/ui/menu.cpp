@@ -359,12 +359,17 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
                 Style::Mono);
 }
 
-void draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,
-               const MenuState& state) {
+MenuHit draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,
+                  const MenuState& state, const Pointer& pointer) {
+    MenuHit hit;
     Painter paint{quads, text};
     paint.scale = std::min(width / kDesignWidth, height / kDesignHeight);
     paint.origin_x = (width - kDesignWidth * paint.scale) * 0.5f;
     paint.origin_y = (height - kDesignHeight * paint.scale) * 0.5f;
+
+    // Back into design space, which is where every rectangle below lives.
+    const float pointer_x = (pointer.x - paint.origin_x) / paint.scale;
+    const float pointer_y = (pointer.y - paint.origin_y) / paint.scale;
 
     const auto& registry = features::Registry::instance();
     const auto all = registry.all();
@@ -465,7 +470,15 @@ void draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, flo
         const float x = kLeft + static_cast<float>(i % 5) * (card_w + gap);
         const float y = 284.0f + static_cast<float>(i / 5) * (card_h + gap);
 
-        paint.rect(x, y, card_w, card_h, 10.0f, kCard, locked ? 0x2E2E34FFu : kCardEdge, 1.0f);
+        const bool over = !locked && pointer_x >= x && pointer_x <= x + card_w &&
+                          pointer_y >= y && pointer_y <= y + card_h;
+        if (over) {
+            hit.hovered = static_cast<int>(i);
+            if (pointer.clicked) hit.toggled = static_cast<int>(i);
+        }
+
+        paint.rect(x, y, card_w, card_h, 10.0f, over ? 0x17171AFFu : kCard,
+                   locked ? 0x2E2E34FFu : (over ? kAccentLit : kCardEdge), 1.0f);
         paint.middle(feature.label, x + 16.0f, y + 23.0f, 12.5f, kText, Style::Bold);
         if (feature.server_may_object) {
             paint.icon(Icon::Warning, x + 20.0f + paint.measure(feature.label, 12.5f, Style::Bold),
@@ -505,6 +518,7 @@ void draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, flo
                                            state.client_version, state.version);
     paint.tracked(footer, kRight - paint.tracked_width(footer, 9.0f, 0.9f), 884.0f, 9.0f, kFaint,
                   0.9f);
+    return hit;
 }
 
 } // namespace mcpp::ui

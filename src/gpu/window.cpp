@@ -252,14 +252,29 @@ FrameInput Window::poll() {
 
     double x = 0.0, y = 0.0;
     glfwGetCursorPos(window_, &x, &y);
-    if (have_cursor_) {
+    if (have_cursor_ && cursor_captured_) {
         input.yaw_delta = static_cast<float>(x - last_x_);
         input.pitch_delta = static_cast<float>(y - last_y_);
     }
     last_x_ = x;
     last_y_ = y;
     have_cursor_ = true;
+    input.cursor_x = static_cast<float>(x);
+    input.cursor_y = static_cast<float>(y);
+
+    const bool pressed = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+    input.click = pressed && !mouse_down_;
+    mouse_down_ = pressed;
     return input;
+}
+
+void Window::capture_cursor(bool captured) {
+    if (captured == cursor_captured_) return;
+    cursor_captured_ = captured;
+    glfwSetInputMode(window_, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    // The jump from wherever the pointer was to wherever it is now is not a
+    // look, so the next frame starts a fresh delta.
+    have_cursor_ = false;
 }
 
 void Window::present(WorldRenderer& renderer, const Camera& camera,

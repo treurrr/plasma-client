@@ -550,13 +550,17 @@ int do_play(const std::string& target, size_t chunk_limit) {
     float tick_accumulator = 0.0f;
     double gpu_total = 0.0;
 
+    window.capture_cursor(true);
     std::signal(SIGINT, stop_on_signal);
     std::signal(SIGTERM, stop_on_signal);
 
     while (window.open() && !g_stop.load()) {
         const auto input = window.poll();
         if (input.quit) break;
-        if (input.toggle_menu) menu_open = !menu_open;
+        if (input.toggle_menu) {
+            menu_open = !menu_open;
+            window.capture_cursor(!menu_open);
+        }
 
         const auto now = std::chrono::steady_clock::now();
         const float dt = std::chrono::duration<float>(now - previous).count();
@@ -660,6 +664,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
         mcpp::ui::draw_hud(quads, hud, static_cast<float>(window.width()),
                            static_cast<float>(window.height()), state);
         if (menu_open) {
+            mcpp::ui::Pointer pointer{input.cursor_x, input.cursor_y, input.click};
             mcpp::ui::MenuState menu;
             menu.server = address.host;
             menu.fps = state.fps;
@@ -668,8 +673,15 @@ int do_play(const std::string& target, size_t chunk_limit) {
             menu.y = state.y;
             menu.z = state.z;
             menu.yaw = state.yaw;
-            mcpp::ui::draw_menu(quads, hud, static_cast<float>(window.width()),
-                                static_cast<float>(window.height()), menu);
+            const auto hit = mcpp::ui::draw_menu(quads, hud, static_cast<float>(window.width()),
+                                                 static_cast<float>(window.height()), menu,
+                                                 pointer);
+            if (hit.toggled >= 0) {
+                auto& registry = mcpp::features::Registry::instance();
+                const auto id = static_cast<mcpp::features::Id>(hit.toggled);
+                registry.set(id, !registry.wanted(id));
+                registry.save(mcpp::features::Registry::default_config_path());
+            }
         }
 
         window.present(renderer, camera, [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
