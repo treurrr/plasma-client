@@ -2202,6 +2202,12 @@ int do_digtest(const std::string& target) {
                                  entry != nullptr ? entry->name : std::to_string(id),
                                  effect.amplifier + 1, effect.duration);
     }
+    const auto entries = [&](std::string_view name) {
+        const auto* registry = session.registries().find(name);
+        return registry != nullptr ? registry->size() : 0;
+    };
+    std::cout << std::format("- {} damage types from the server, {} built-in mob effects\n",
+                             entries("minecraft:damage_type"), entries("minecraft:mob_effect"));
     std::cout << std::format("- reach {:.2f}, speed {:.4f}, difficulty {}{}, {} tag registries\n",
                              session.attribute(session.entity_id(),
                                                "minecraft:block_interaction_range", -1.0),
