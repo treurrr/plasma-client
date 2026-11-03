@@ -48,6 +48,12 @@ struct Intent {
     float yaw_degrees = 0.0f;
     bool jump = false;
     bool sprint = false;
+    // Flying, as the server allows it: no gravity, a push of the server's own
+    // flying speed, and up and down on keys of their own. Still a body that
+    // runs into walls.
+    bool flying = false;
+    double rise = 0.0;   // -1 to 1
+    double flying_speed = 0.05;
 };
 
 // Block state at a world position, or -1 where the world is not loaded. The

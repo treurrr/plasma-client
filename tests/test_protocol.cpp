@@ -21,6 +21,7 @@
 #include <span>
 #include <iostream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -452,7 +453,7 @@ void test_physics_stands_and_stops() {
     body.z = 8.5;
     mcpp::world::Intent intent;
     intent.forward = 1.0;
-    intent.yaw_degrees = 90.0;    // facing east
+    intent.yaw_degrees = 270.0;   // facing east
     for (int i = 0; i < 200; ++i) {
         mcpp::world::tick(body, intent, walled, table);
     }
@@ -460,7 +461,7 @@ void test_physics_stands_and_stops() {
           std::format("a wall stops the walk at its face: x={:.3f}", body.x));
     check(std::abs(body.y - 64.0) < 0.01, "and the player is still standing on the floor");
 
-    // The camera measures yaw from +x and the game measures it from -z. Walking
+    // The camera measures yaw from +x and the game from +z. Walking
     // has to end up where the camera is pointing, whatever either of them calls
     // that direction, so the ninety degrees between them is checked here rather
     // than noticed by walking sideways.
@@ -473,7 +474,7 @@ void test_physics_stands_and_stops() {
         body.z = 0.5;
         mcpp::world::Intent walk;
         walk.forward = 1.0;
-        walk.yaw_degrees = static_cast<float>(camera_yaw + 90.0);
+        walk.yaw_degrees = static_cast<float>(camera_yaw - 90.0);
         for (int i = 0; i < 120; ++i) mcpp::world::tick(body, walk, open, table);
         const double moved = std::hypot(body.x - 0.5, body.z - 0.5);
         const double along = ((body.x - 0.5) * std::cos(radians) +
@@ -481,6 +482,23 @@ void test_physics_stands_and_stops() {
         check(moved > 1.0 && along > 0.999,
               std::format("forward at camera yaw {:.0f} walks where the camera looks "
                           "({:.3f} of the way)", camera_yaw, along));
+    }
+
+    // The server keeps the game's yaw and every other player draws us by it:
+    // 0 is south, 90 west, 180 north, 270 east.
+    for (const auto& [game_yaw, dx, dz] :
+         {std::tuple{0.0, 0, 1}, std::tuple{90.0, -1, 0}, std::tuple{180.0, 0, -1},
+          std::tuple{270.0, 1, 0}}) {
+        body = {};
+        body.x = 0.5;
+        body.y = 64.0;
+        body.z = 0.5;
+        mcpp::world::Intent walk;
+        walk.forward = 1.0;
+        walk.yaw_degrees = static_cast<float>(game_yaw);
+        for (int i = 0; i < 40; ++i) mcpp::world::tick(body, walk, open, table);
+        check((body.x - 0.5) * dx + (body.z - 0.5) * dz > 1.0,
+              std::format("yaw {:.0f} walks the way the game says it faces", game_yaw));
     }
 
     // Walking is accelerated into, not switched on, so the speed it settles at
@@ -494,7 +512,7 @@ void test_physics_stands_and_stops() {
         mcpp::world::Intent walk;
         walk.forward = 1.0;
         walk.sprint = sprint;
-        walk.yaw_degrees = 90.0f;
+        walk.yaw_degrees = 270.0f;
         for (int i = 0; i < 100; ++i) mcpp::world::tick(body, walk, open, table);
         const double before = body.x;
         for (int i = 0; i < 20; ++i) mcpp::world::tick(body, walk, open, table);
@@ -523,7 +541,7 @@ void test_physics_stands_and_stops() {
     body.z = 0.5;
     mcpp::world::Intent stroll;
     stroll.forward = 1.0;
-    stroll.yaw_degrees = 90.0f;
+    stroll.yaw_degrees = 270.0f;
     for (int i = 0; i < 60; ++i) mcpp::world::tick(body, stroll, open, table);
     check(std::abs(body.sway - 0.1) < 0.005,
           std::format("walking sways at {:.4f} of a block", body.sway));
@@ -532,6 +550,34 @@ void test_physics_stands_and_stops() {
           std::format("one full sway every {:.1f} ticks", 2.0 / swing));
     for (int i = 0; i < 40; ++i) mcpp::world::tick(body, {}, open, table);
     check(body.sway < 0.001, std::format("standing still settles to {:.4f}", body.sway));
+
+    // Flying is a body too: it holds its height with nothing under it, settles
+    // at a speed set by the server's flying speed, and stops at a wall.
+    {
+        const auto sky = [](int32_t, int32_t, int32_t) { return 0; };
+        mcpp::world::Body flier;
+        flier.y = 100.0;
+        mcpp::world::Intent fly;
+        fly.flying = true;
+        fly.forward = 1.0;
+        fly.yaw_degrees = 270.0f;   // east, +x
+        fly.flying_speed = 0.05;
+        for (int i = 0; i < 100; ++i) mcpp::world::tick(flier, fly, sky, table);
+        const double before = flier.x;
+        for (int i = 0; i < 20; ++i) mcpp::world::tick(flier, fly, sky, table);
+        const double speed = flier.x - before;
+        check(std::abs(flier.y - 100.0) < 1e-6,
+              std::format("flying holds its height with nothing under it: y {:.3f}", flier.y));
+        check(speed > 10.0 && speed < 11.5,
+              std::format("and flies at {:.2f} blocks a second from a flying speed of 0.05", speed));
+
+        const auto wall = [](int32_t x, int32_t, int32_t) { return x >= 5 ? 1 : 0; };
+        mcpp::world::Body into;
+        into.y = 100.0;
+        for (int i = 0; i < 60; ++i) mcpp::world::tick(into, fly, wall, table);
+        check(into.x < 5.0 && into.x > 4.0,
+              std::format("and stops at a wall instead of flying through it: x {:.3f}", into.x));
+    }
 
     // Jumping leaves the ground and comes back to it.
     intent = {};

@@ -189,6 +189,18 @@ public:
         int32_t game_mode = 0;
         bool survival_bars() const { return game_mode == 0 || game_mode == 2; }
     };
+    // What the server lets the player do. Whether flying is allowed at all is
+    // its call, not the client's; a survival player who can double tap into
+    // the air is a player who is cheating.
+    struct Abilities {
+        bool invulnerable = false;
+        bool flying = false;
+        bool may_fly = false;
+        bool instant_build = false;
+        float flying_speed = 0.05f;
+        float walking_speed = 0.1f;
+    };
+    const Abilities& abilities() const { return abilities_; }
     const Vitals& vitals() const { return vitals_; }
     // Switches the hand locally and tells the server, the way the wheel does.
     void send_held_slot(int32_t slot);
@@ -220,6 +232,7 @@ private:
     Dimension dimension_;
     void read_spawn_info(ByteBuffer& in);
     Vitals vitals_;
+    Abilities abilities_;
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;
     bool in_bundle_ = false;

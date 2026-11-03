@@ -867,7 +867,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
         eye[2] = centre_z;
         std::cout << "- no teleport from the server; standing at the centre of the chunks\n";
     }
-    float yaw = placed ? spawn_yaw - 90.0f : -90.0f;
+    float yaw = placed ? spawn_yaw + 90.0f : 90.0f;
     float pitch = placed ? -spawn_pitch : -8.0f;
     float physics_accumulator = 0.0f;
     float fov = 70.0f;
@@ -1005,7 +1005,14 @@ int do_play(const std::string& target, size_t chunk_limit) {
             menu_open = !menu_open;
             window.capture_cursor(!menu_open && !inventory_open);
         }
-        if (input.toggle_fly) flying = !flying;
+        // The server decides whether the player may fly and, in spectator,
+        // that the player does; double tapping only asks within that.
+        if (input.toggle_fly && session.abilities().may_fly) flying = !flying;
+        if (!session.abilities().may_fly) flying = false;
+        if (session.abilities().flying && session.abilities().may_fly &&
+            !session.abilities().instant_build) {
+            flying = true;
+        }
         if (input.start_typing && !menu_open) window.begin_typing();
         if (window.typing()) {
             if (input.submit_text) {
@@ -1035,9 +1042,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
         const float forward[3] = {std::cos(yr) * std::cos(pr), std::sin(pr),
                                   std::sin(yr) * std::cos(pr)};
         const float right[3] = {-std::sin(yr), 0.0f, std::cos(yr)};
-        // The camera measures yaw from +x, the game measures it from -z.
-        // Anything that leaves this loop wants the game's.
-        const float game_yaw = yaw + 90.0f;
+        // The camera measures yaw from +x, the game from +z (south) turning
+        // towards -x. Anything that leaves this loop wants the game's.
+        const float game_yaw = yaw - 90.0f;
 
         // Movement runs on the game's own clock, not the frame's, and the eye is
         // drawn between the last two ticks. Without that the same key covers a
@@ -1045,32 +1052,16 @@ int do_play(const std::string& target, size_t chunk_limit) {
         physics_accumulator = std::min(physics_accumulator + dt, 0.25f);
         while (physics_accumulator >= mcpp::world::kTickSeconds) {
             physics_accumulator -= static_cast<float>(mcpp::world::kTickSeconds);
-            if (flying) {
-                // Creative flight is the same drag, a different push: nothing
-                // holds you up, so the vertical key is a speed of its own.
-                constexpr double kFlyAccel = 0.1;
-                constexpr double kFlyDrag = 0.91;
-                const double push = kFlyAccel * (input.sprint ? 2.0 : 1.0);
-                body.previous_x = body.x;
-                body.previous_y = body.y;
-                body.previous_z = body.z;
-                body.vx += (forward[0] * input.forward + right[0] * input.right) * push;
-                body.vz += (forward[2] * input.forward + right[2] * input.right) * push;
-                body.vy += input.up * push;
-                body.x += body.vx;
-                body.y += body.vy;
-                body.z += body.vz;
-                body.vx *= kFlyDrag;
-                body.vy *= 0.6;
-                body.vz *= kFlyDrag;
-                body.on_ground = false;
-            } else {
+            {
                 mcpp::world::Intent intent;
                 intent.forward = input.forward;
                 intent.strafe = input.right;
                 intent.yaw_degrees = game_yaw;
-                intent.jump = input.up > 0.0f;
+                intent.jump = input.up > 0.0f && !flying;
                 intent.sprint = input.sprint;
+                intent.flying = flying;
+                intent.rise = input.up;
+                intent.flying_speed = session.abilities().flying_speed;
                 mcpp::world::tick(body, intent, block_at, table);
             }
         }

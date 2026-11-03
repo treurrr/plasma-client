@@ -38,7 +38,7 @@ struct PacketIds {
             move_entity_pos_rot, move_entity_rot, entity_position_sync, player_info_update,
             player_info_remove, container_set_content, container_set_slot, container_close,
             set_held_slot, set_experience, set_cursor_item, set_player_inventory,
-            block_changed_ack, bundle_delimiter;
+            block_changed_ack, bundle_delimiter, player_abilities;
     } play_cb;
 
     struct PlayServerbound {
@@ -46,7 +46,7 @@ struct PacketIds {
             configuration_acknowledged, custom_payload, accept_teleportation, move_player_pos,
             move_player_pos_rot, client_tick_end, chunk_batch_received, set_carried_item,
             container_click, container_close, player_action, use_item_on, use_item, swing,
-            player_loaded, client_command;
+            player_loaded, client_command, player_abilities;
     } play_sb;
 };
 

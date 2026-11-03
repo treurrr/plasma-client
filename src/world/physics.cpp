@@ -28,6 +28,9 @@ constexpr double kSprintAccel = (5.612 / 20.0) * (1.0 - kGroundDrag);
 constexpr double kAirAccel = 0.02;
 constexpr double kSprintAirAccel = 0.026;
 
+// Flying up or down coasts to a stop much sooner than across.
+constexpr double kFlyingRiseDrag = 0.6;
+
 // The sway stops growing well below walking pace, so sprinting rocks the view
 // no harder than walking does.
 constexpr double kMaxSway = 0.1;
@@ -105,8 +108,9 @@ void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
     const double yaw = intent.yaw_degrees * std::numbers::pi / 180.0;
     const double sin_yaw = std::sin(yaw);
     const double cos_yaw = std::cos(yaw);
-    double wish_x = intent.strafe * cos_yaw + intent.forward * sin_yaw;
-    double wish_z = intent.forward * -cos_yaw + intent.strafe * sin_yaw;
+    // The game's yaw: 0 looks south (+z), 90 west (-x).
+    double wish_x = -intent.forward * sin_yaw - intent.strafe * cos_yaw;
+    double wish_z = intent.forward * cos_yaw - intent.strafe * sin_yaw;
     const double length = std::hypot(wish_x, wish_z);
     if (length > 1.0) {
         wish_x /= length;
@@ -117,7 +121,14 @@ void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
     // drops the moment you stop asking to.
     body.sprinting = intent.sprint && intent.forward > 0.0;
 
-    if (body.on_ground) {
+    if (intent.flying) {
+        // Twice the push sprinting, and three times it going up or down, which
+        // is how creative flight moves; the drag below is the air's.
+        const double push = intent.flying_speed * (body.sprinting ? 2.0 : 1.0);
+        body.vx += wish_x * push;
+        body.vz += wish_z * push;
+        body.vy += intent.rise * intent.flying_speed * 3.0;
+    } else if (body.on_ground) {
         const double accel = body.sprinting ? kSprintAccel : kWalkAccel;
         body.vx += wish_x * accel;
         body.vz += wish_z * accel;
@@ -125,8 +136,8 @@ void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
             body.vy = kJumpSpeed;
             body.on_ground = false;
             if (body.sprinting) {
-                body.vx += sin_yaw * kSprintJumpBoost;
-                body.vz += -cos_yaw * kSprintJumpBoost;
+                body.vx += -sin_yaw * kSprintJumpBoost;
+                body.vz += cos_yaw * kSprintJumpBoost;
             }
         }
     } else {
@@ -135,7 +146,7 @@ void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
         body.vz += wish_z * accel;
     }
 
-    body.vy = std::max((body.vy - kGravity) * kFallDrag, -kTerminalFall);
+    if (!intent.flying) body.vy = std::max((body.vy - kGravity) * kFallDrag, -kTerminalFall);
 
     const auto slide = [&](int axis, double& position, double& velocity) {
         const Box box = around(body);
@@ -187,9 +198,10 @@ void tick(Body& body, const Intent& intent, const BlockAt& at, const BlockTable&
 
     // Drag is applied after the move, so a tick that was stopped by a wall
     // still bleeds its speed off the same way an open one does.
-    const double drag = body.on_ground ? kGroundDrag : kAirDrag;
+    const double drag = body.on_ground && !intent.flying ? kGroundDrag : kAirDrag;
     body.vx *= drag;
     body.vz *= drag;
+    if (intent.flying) body.vy *= kFlyingRiseDrag;
 
     // Both of these follow the distance actually covered, not the distance
     // asked for, so walking into a wall stops the sway instead of marching on

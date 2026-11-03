@@ -552,6 +552,17 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         send(ids_->play_sb.pong, out);
         return true;
     }
+    if (packet.id == cb.player_abilities) {
+        // Measured per game mode: survival 0x00, creative 0x0d, spectator 0x07.
+        const uint8_t flags = in.read_u8();
+        abilities_.invulnerable = (flags & 0x01) != 0;
+        abilities_.flying = (flags & 0x02) != 0;
+        abilities_.may_fly = (flags & 0x04) != 0;
+        abilities_.instant_build = (flags & 0x08) != 0;
+        abilities_.flying_speed = in.read_f32();
+        abilities_.walking_speed = in.read_f32();
+        return true;
+    }
     if (packet.id == cb.respawn) {
         // The same spawn info as login, then a byte saying what of the player
         // to keep across it. A new dimension has its own height and its own
