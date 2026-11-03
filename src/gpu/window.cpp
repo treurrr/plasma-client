@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <string_view>
 #include <format>
 #include <stdexcept>
 
@@ -125,6 +127,7 @@ Window::Window(Device& device, uint32_t width, uint32_t height, const std::strin
         check(vkCreateFence(device_.handle(), &fence, nullptr, &frame.in_flight), "vkCreateFence");
     }
 
+    if (const char* vsync = std::getenv("PLASMA_VSYNC")) vsync_ = std::string_view(vsync) != "0";
     create_swapchain();
 
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -191,9 +194,26 @@ void Window::create_swapchain() {
     create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     create.preTransform = caps.currentTransform;
     create.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    // FIFO is the only mode every driver must offer, and it is also the honest
-    // default: tearing would flatter the frame counter without helping anyone.
-    create.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    // FIFO is the only mode every driver must offer. Without vsync, mailbox
+    // replaces a waiting frame with a newer one instead of tearing; immediate
+    // is the last resort.
+    VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
+    if (!vsync_) {
+        uint32_t mode_count = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device_.physical(), surface_, &mode_count,
+                                                  nullptr);
+        std::vector<VkPresentModeKHR> modes(mode_count);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device_.physical(), surface_, &mode_count,
+                                                  modes.data());
+        for (const VkPresentModeKHR wanted :
+             {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR}) {
+            if (std::ranges::find(modes, wanted) != modes.end()) {
+                mode = wanted;
+                break;
+            }
+        }
+    }
+    create.presentMode = mode;
     create.clipped = VK_TRUE;
     check(vkCreateSwapchainKHR(device_.handle(), &create, nullptr, &swapchain_),
           "vkCreateSwapchainKHR");
@@ -357,6 +377,12 @@ FrameInput Window::poll() {
     return input;
 }
 
+void Window::set_vsync(bool on) {
+    if (on == vsync_) return;
+    vsync_ = on;
+    swapchain_stale_ = true;
+}
+
 void Window::begin_typing() {
     typing_ = true;
     typed_.clear();
@@ -385,6 +411,12 @@ void Window::capture_cursor(bool captured) {
 void Window::present(WorldRenderer& renderer, const Camera& camera,
                      const Overlay& overlay) {
     const auto started = std::chrono::steady_clock::now();
+    if (swapchain_stale_) {
+        swapchain_stale_ = false;
+        vkDeviceWaitIdle(device_.handle());
+        destroy_swapchain();
+        create_swapchain();
+    }
     Frame& frame = frames_[frame_index_];
 
     check(vkWaitForFences(device_.handle(), 1, &frame.in_flight, VK_TRUE, UINT64_MAX),
