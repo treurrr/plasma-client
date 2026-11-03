@@ -52,6 +52,9 @@ public:
     // compacted: one block change costs a section's worth of buffer, which is
     // cheap next to stalling the frame to shuffle everything down.
     bool replace(const std::vector<world::SectionMesh>& sections);
+    // Stops drawing every section of a chunk. The room it held is not handed
+    // back yet; that needs an allocator, not a flag.
+    void forget(int32_t chunk_x, int32_t chunk_z);
     size_t vertex_capacity() const { return vertex_capacity_; }
     size_t appended_sections() const { return sections_.size(); }
     bool out_of_vertex_room() const { return out_of_vertex_room_; }

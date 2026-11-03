@@ -539,14 +539,12 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         }
         return true;
     }
-    if (packet.id == cb.light_update) {
-        // Breaking a block changes what the sky reaches, and the server
-        // recomputes it and sends it on its own. Without this the geometry is
-        // meshed again against the light from before the hole was there, and
-        // everything around it goes dark.
-        const int32_t chunk_x = in.read_varint();
-        const int32_t chunk_z = in.read_varint();
-        if (events_.on_light) events_.on_light(chunk_x, chunk_z, in);
+    if (packet.id == cb.forget_level_chunk) {
+        // One long, z in the high half and x in the low, which on the wire
+        // reads as two ints with z first.
+        const int32_t chunk_z = in.read_i32();
+        const int32_t chunk_x = in.read_i32();
+        if (events_.on_chunk_forget) events_.on_chunk_forget(chunk_x, chunk_z);
         return true;
     }
     if (packet.id == cb.light_update) {

@@ -61,9 +61,10 @@ struct SessionEvents {
     // what the sky reaches, and a chunk meshed against the old light is a
     // chunk with a shadow where there is nothing to cast one.
     std::function<void(int32_t, int32_t, ByteBuffer&)> on_light_update;
-    // New light for a chunk, straight from the packet, because only the chunk
-    // itself knows how many sections it has.
-    std::function<void(int32_t, int32_t, ByteBuffer&)> on_light;
+    // The server has stopped tracking this chunk for us. Without honouring it
+    // nothing is ever let go: every chunk ever seen stays in memory and on the
+    // gpu until the reservation is full.
+    std::function<void(int32_t, int32_t)> on_chunk_forget;
 };
 
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false

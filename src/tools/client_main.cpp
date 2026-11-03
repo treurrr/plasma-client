@@ -571,6 +571,30 @@ int do_play(const std::string& target, size_t chunk_limit) {
         if ((z & 15) == 15) dirty.insert({chunk_x, chunk_z + 1});
     };
 
+    std::vector<std::pair<int32_t, int32_t>> forgotten;
+    // Chunks let go while the mesher may still be holding them. It checks this
+    // after meshing, so a chunk forgotten mid-flight does not come back.
+    std::set<std::pair<int32_t, int32_t>> gone;
+    events.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
+        {
+            std::lock_guard lock(world_guard);
+            world.erase({chunk_x, chunk_z});
+        }
+        {
+            // Out of the seen set too, or walking back into it would never
+            // load it again.
+            std::lock_guard lock(guard);
+            seen.erase({chunk_x, chunk_z});
+            gone.insert({chunk_x, chunk_z});
+            std::erase_if(pending, [&](const mcpp::world::Chunk& chunk) {
+                return chunk.x == chunk_x && chunk.z == chunk_z;
+            });
+        }
+        std::lock_guard lock(dirty_guard);
+        dirty.erase({chunk_x, chunk_z});
+        forgotten.push_back({chunk_x, chunk_z});
+    };
+
     events.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
         {
             std::lock_guard lock(world_guard);
@@ -587,6 +611,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
         // A server re-sends a chunk whenever it changes. Without this the same
         // geometry is appended again and again until the buffer is full.
         if (!seen.insert({chunk.x, chunk.z}).second) return;
+        gone.erase({chunk.x, chunk.z});
         if (!enough.load()) {
             chunks.push_back(chunk);
             if (chunks.size() >= chunk_limit) enough.store(true);
@@ -716,6 +741,17 @@ int do_play(const std::string& target, size_t chunk_limit) {
             double batch_ms = 0.0;
             auto pieces = mesh_world(arrived, table, &batch_ms);
             const size_t count = arrived.size();
+            {
+                std::lock_guard lock(guard);
+                if (!gone.empty()) {
+                    std::erase_if(arrived, [&](const mcpp::world::Chunk& chunk) {
+                        return gone.contains({chunk.x, chunk.z});
+                    });
+                    std::erase_if(pieces, [&](const mcpp::world::SectionMesh& piece) {
+                        return gone.contains({piece.origin[0] >> 4, piece.origin[2] >> 4});
+                    });
+                }
+            }
             {
                 std::lock_guard lock(world_guard);
                 for (auto& chunk : arrived) {
@@ -996,6 +1032,12 @@ int do_play(const std::string& target, size_t chunk_limit) {
                 const int32_t slots = static_cast<int32_t>(mcpp::Inventory::kHotbarSlots);
                 session.send_held_slot((session.inventory().held - input.wheel + slots) % slots);
             }
+        }
+
+        {
+            std::lock_guard lock(dirty_guard);
+            for (const auto& [chunk_x, chunk_z] : forgotten) renderer.forget(chunk_x, chunk_z);
+            forgotten.clear();
         }
 
         // Anything the server changed under us is meshed again here, at most a
@@ -1719,6 +1761,10 @@ int do_digtest(const std::string& target) {
         if (world.size() >= 25 && placed) ready.store(true);
     };
     mcpp::world::LightEngine light(table);
+    std::function<void(int32_t, int32_t)> events_forget_hook;
+    events.on_chunk_forget = [&](int32_t chunk_x, int32_t chunk_z) {
+        if (events_forget_hook) events_forget_hook(chunk_x, chunk_z);
+    };
     events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
         const auto found = world.find({x >> 4, z >> 4});
         if (found != world.end() && found->second.set_block_state(x & 15, y + 64, z & 15, state)) {
@@ -1829,6 +1875,20 @@ int do_digtest(const std::string& target) {
     std::cout << std::format("- after placing: {} ({})\n", rebuilt, table.block_name(rebuilt));
 
     std::cout << std::format("- {} light updates arrived\n", relit);
+
+    // Go far away; every chunk around the old spot should be forgotten, and
+    // each one forgotten should be one we were actually holding.
+    size_t forgotten = 0;
+    size_t matched = 0;
+    events_forget_hook = [&](int32_t chunk_x, int32_t chunk_z) {
+        ++forgotten;
+        if (world.erase({chunk_x, chunk_z}) != 0) ++matched;
+    };
+    const size_t held = world.size();
+    session.send_command("tp @s 4000 120 4000");
+    pump_for(3.0);
+    std::cout << std::format("- far away: {} chunks forgotten, {} of them ones we held (of {})\n",
+                             forgotten, matched, held);
     for (const auto& line : changes) std::cout << "    " << line << '\n';
     session.close();
 

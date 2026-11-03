@@ -779,6 +779,17 @@ void WorldRenderer::reserve(size_t vertex_capacity, size_t index_capacity) {
     index_memory_ = index.memory;
 }
 
+void WorldRenderer::forget(int32_t chunk_x, int32_t chunk_z) {
+    const auto x = static_cast<float>(chunk_x * 16);
+    const auto z = static_cast<float>(chunk_z * 16);
+    for (auto& entry : sections_) {
+        if (entry.origin[0] == x && entry.origin[2] == z) {
+            entry.index_count = 0;
+            entry.opaque_count = 0;
+        }
+    }
+}
+
 bool WorldRenderer::replace(const std::vector<world::SectionMesh>& sections) {
     // Whatever stood at these origins stops being drawn first, so a section
     // that meshes to nothing - the last block in it broken - disappears.

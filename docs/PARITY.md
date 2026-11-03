@@ -218,7 +218,7 @@ sent. Appendix A is the full table.
 
 **Two outright bugs found while writing this:**
 
-1. `src/session.cpp` has the `light_update` branch **twice** (lines 540 and 552).
+1. `src/session.cpp` has the `light_update` branch **twice** (lines 542 and 552).
    The second is unreachable. The first calls `events_.on_light`, which nothing
    in `client_main.cpp` ever sets; `client_main.cpp` sets `on_light_update`,
    which is only called from the dead branch. **Light updates are silently
@@ -280,7 +280,7 @@ Plasma-styled feature menu.
 
 **The number that matters:** `tools/bake_gui.py` already bakes **every** sprite
 under `textures/gui/sprites/` plus all 23 legacy container sheets plus the font,
-into a 16.8 MB atlas. The HUD uses **13 of them**. The assets are there; the
+into a 16.8 MB atlas. The HUD uses **15 of them**: eleven from `sprites/hud/`, three hearts, and one of the 23 legacy container sheets. The assets are there; the
 screens are not. That makes Phase 2 and Phase 7 much cheaper than they look,
 and it is the single most encouraging fact in this document.
 
@@ -345,7 +345,7 @@ divergences bypass it entirely.
 | Coordinates overlay | `menu.cpp:571` | gated ✓ (vanilla shows coordinates only in F3) |
 | Keystroke display | `menu.cpp:578` | gated ✓ |
 | Plasma hotbar styling | `menu.cpp:327` | gated, but falls back to the Plasma look when `!quads.has_sprites()`. In vanilla, a missing sprite atlas is a fatal error, not a restyle. |
-| GPU-ms and CPU-ms readouts | `client_main.cpp:1060-1062` into `HudState` | **ungated** as state; only drawn under gated features, but remove from the vanilla build's HUD state entirely. |
+| GPU-ms and CPU-ms readouts | `client_main.cpp:1069-1070` into `HudState` | **ungated** as state; only drawn under gated features, but remove from the vanilla build's HUD state entirely. |
 | Rounded-rectangle SDF widgets | `src/gpu/ui.cpp`, `shaders/ui.frag` | Vanilla has no rounded corners and no glow anywhere. The `Quad` struct's `radius`, `border`, `glow`, `glow_rgba` and the gradient `fill_top`/`fill_bottom` are all non-vanilla. Keep the renderer, forbid the parameters in the vanilla profile. |
 | The 1600x900 fixed design space | `menu.hpp`, `draw_menu` | Vanilla scales the GUI by integer steps (see P2.2). A fixed design space scaled to fit is a different thing and gives non-integer sprite scales, which is why the HUD looks soft. **This has to come out of the vanilla path, not be gated** - the HUD shares it. |
 
@@ -354,19 +354,19 @@ different game behaviour):
 
 | Divergence | Now | Vanilla | Fixed by |
 |---|---|---|---|
-| Auto-respawn on death | `session.cpp:594`, sends `client_command` 0 the moment health hits 0 | Death screen, waits for the player | P2.11 |
+| Auto-respawn on death | `session.cpp:604`, sends `client_command` 0 the moment health hits 0 | Death screen, waits for the player | P2.21 |
 | `f` toggles creative flight locally | `client_main.cpp`, `input.toggle_fly` | Double-tap jump, and only if `player_abilities` granted it | P1.11, P4.2 |
 | Flight physics are invented | `client_main.cpp:836-857`, `kFlyAccel 0.1`, `kFlyDrag 0.91`, vertical drag `0.6` | Vanilla's own flying drag and the fly-speed attribute | P1.11 |
-| Flat 0.25 s dig time | `client_main.cpp:938` | Hardness, tool, efficiency, haste, fatigue, water, ground | P4.6 |
-| Reach is a constant 4.5 | `client_main.cpp:81` `kReach` | The `block_interaction_range` attribute (4.5 survival, 5.0 creative) and `entity_interaction_range` 3.0 | P1.10 |
-| Sprint FOV hardcoded 1.15x | `client_main.cpp:889` | Driven by the movement-speed attribute and scaled by the `fovEffectScale` option | P1.10, P9.x |
-| View bobbing always on | `client_main.cpp:872-881` | An option, and it is suppressed in third person and while flying | P9.x |
-| Face always 1 (up) for dig and place | `client_main.cpp:933`, `send_place(..., 1, 0.5f, 1.0f, 0.5f)` | The face the ray actually entered, and the real cursor position on it | P4.5 |
-| `client_information` is hardcoded | `session.cpp:272-283`: `en_us`, view distance 8, chat enabled, all skin parts, right hand, no filtering, listings on, particles all | The player's own options, and re-sent when they change | P9.3 |
-| Zero known packs reported | `session.cpp:300` | The client's own built-in pack versions | P10.2 |
-| Resource packs declined outright | `session.cpp:347`, always sends "declined" | Prompt, download, verify, apply | P10.3 |
-| Chat sent unsigned | `session.cpp:816`, salt 0, no signature | Signed with the session key when the server has secure chat on. An unsigned client is kicked by `enforce-secure-chat=true` servers, which is most of them. | P8.9 |
-| Code of conduct auto-accepted | `session.cpp:356` | A screen the player reads and accepts | P2.12 |
+| Flat 0.25 s dig time | `client_main.cpp:967` | Hardness, tool, efficiency, haste, fatigue, water, ground | P4.6 |
+| Reach is a constant 4.5 | `client_main.cpp:87` `kReach` | The `block_interaction_range` attribute (4.5 survival, 5.0 creative) and `entity_interaction_range` 3.0 | P1.10 |
+| Sprint FOV hardcoded 1.15x | `client_main.cpp:914` | Driven by the movement-speed attribute and scaled by the `fovEffectScale` option | P1.10, P9.x |
+| View bobbing always on | `client_main.cpp:892-904` | An option, and it is suppressed in third person and while flying | P9.x |
+| Face always 1 (up) for dig and place | `client_main.cpp:976`, `send_place(..., 1, 0.5f, 1.0f, 0.5f)` | The face the ray actually entered, and the real cursor position on it | P4.5 |
+| `client_information` is hardcoded | `session.cpp:278-286`: `en_us`, view distance 8, chat enabled, all skin parts, right hand, no filtering, listings on, particles all | The player's own options, and re-sent when they change | P9.3 |
+| Zero known packs reported | `session.cpp:312` | The client's own built-in pack versions | P10.2 |
+| Resource packs declined outright | `session.cpp:372`, always sends "declined" | Prompt, download, verify, apply | P10.3 |
+| Chat sent unsigned | `session.cpp:838`, salt 0, no signature | Signed with the session key when the server has secure chat on. An unsigned client is kicked by `enforce-secure-chat=true` servers, which is most of them. | P8.9 |
+| Code of conduct auto-accepted | `session.cpp:376` | A screen the player reads and accepts | P2.22 |
 | Telemetry screen | absent | Present in vanilla | **Defended divergence**: replaced by a statement that this client sends none. |
 
 **Development tooling that is fine to keep but is not a vanilla client.** These
@@ -836,7 +836,7 @@ particles when it breaks.
 | P4.10 | `interact` packet | Attacking and interacting with an *entity*, which Plasma cannot do at all: the entity raycast against the P1.20 bounding boxes within the `entity_interaction_range` attribute, then interact, interact-at or attack, with the sneaking flag. **Without this the client cannot hit anything that moves.** | none | P1.20, P1.10 | 1 d | **!** | pvp |
 | P4.11 | **Item model selector** | `assets/minecraft/items/` is 1505 JSON files and is a layer Plasma does not have at all. Each file picks a model by type: `model`, `composite`, `condition`, `select`, `range_dispatch`, `dye`, `special`, driven by 16 runtime properties - `display_context`, `trim_material`, `block_state`, `using_item`, `bundle/has_selected_item`, `compass`, `local_time`, `crossbow/pull`, `fishing_rod/cast`, `custom_model_data`, `damage`, `count`, `keybind_down`, `selected`, `view_entity`, `charge_type`. This replaces the pre-rendered cube icons. | none | P1.5, P1.6 | **1 w** | **!** | both |
 | P4.12 | Live item rendering | Render an item model, not a picture of one: the `gui` display context's orthographic projection with its fixed rotation, two directional lights, into the slot or the hand. The 419 baked cube icons go away. **This is pasted-in picture number one.** | none | P4.11 | 2 d | **!** | both |
-| P4.13 | Code-only item models | `items/*.json` names 11 items whose model is `minecraft:special`, meaning vanilla hand-builds it: chest, bed, banner, shulker_box, copper_golem_statue, head, player_head, trident, shield, conduit, decorated_pot. **This is Mojang's own list of models a client has to hand-build just for item rendering**, and it overlaps exactly with the block-entity models in Phase 6, so build them once and use them twice. | none | P4.12, P3.12 | 2 d | both |
+| P4.13 | Code-only item models | `items/*.json` names 11 items whose model is `minecraft:special`, meaning vanilla hand-builds it: chest, bed, banner, shulker_box, copper_golem_statue, head, player_head, trident, shield, conduit, decorated_pot. **This is Mojang's own list of models a client has to hand-build just for item rendering**, and it overlaps exactly with the block-entity models in Phase 6, so build them once and use them twice. | none | P4.12, P3.12 | 2 d | | both |
 | P4.14 | Particle engine | A particle pool with position, velocity, age, lifetime, size, colour and a sprite, gravity, drag, block collision, and the five render types (billboard, terrain-sheet, lit, unlit, and the "sheet" types that face the camera versus the ones that do not). | none | P1.21 | 2 d | **!** | both |
 | P4.15 | Particle sprite atlas | `assets/minecraft/particles/` is 104 JSON files, each just a list of texture frames. 255 textures under `textures/particle/`. Baked. | none | P4.14 | 4 h | | both |
 | P4.16 | Block-breaking particles | The burst when a block breaks: 4x4x4 particles per block, each taking a 4x4 crop of a random spot on the block's own texture. The single most-seen particle in the game. | none | P4.14, P4.15 | 4 h | **!** | both |
@@ -1614,7 +1614,7 @@ It worked. Walking it turned up `sprites/hud/locator_bar_*` and
 `sprites/dialog/`, the server-defined dialog screen system (now P7.25).
 
 **The encouraging half.** `tools/bake_gui.py` already bakes every one of these
-into a 16.8 MB atlas with the names kept. The sprites are on the GPU. 13 of them
+into a 16.8 MB atlas with the names kept. The sprites are on the GPU. 15 of them
 are drawn.
 
 **565 files in 53 directories** under `assets/minecraft/textures/gui/` (523 `.png` + 42 `.png.mcmeta`). 27 belong to deliberately excluded features (Realms, singleplayer world list, superflat presets). Every directory has an owner.
@@ -1653,7 +1653,7 @@ are drawn.
 | `sprites/container/villager/` | 9 | P7.16 | Villager trading: offer arrows, out-of-stock, xp bar, scroller |
 | `sprites/dialog/` | 3 | P7.25 | The server-defined dialog system |
 | `sprites/gamemode_switcher/` | 2 | P8.24 | F4 game-mode switcher |
-| `sprites/hud/` | 35 | P8.1-P8.21 | The HUD. 13 of 35 are used today; see the per-sprite list below |
+| `sprites/hud/` | 35 | P8.1-P8.21 | The HUD. 11 of 35 are used today; see the per-sprite list below |
 | `sprites/hud/heart/` | 47 | P8.2 | Health. 3 of 47 are used today |
 | `sprites/hud/locator_bar_dot/` | 5 | P8.19 | Locator bar player dots |
 | `sprites/icon/` | 25 | P2.14, P8.18 | Server-list and toast icons: ping bars, lock, chat state, music notes, trial |
@@ -1675,7 +1675,7 @@ are drawn.
 | `title/` | 5 | P2.13 | Title screen: the logo, the edition line, the Mojang Studios splash |
 | `title/background/` | 7 | P2.13 | The 6 panorama faces and the overlay. NOTE: 1x1 stubs in the jar; the real faces are object-store only (P2.1) |
 
-### `sprites/hud/` per sprite — 13 used of 35
+### `sprites/hud/` per sprite — 11 used of 35
 
 | sprite | used today | owner |
 |---|---|---|
@@ -1869,3 +1869,260 @@ checklist for those phases.
 | `sign.` | 1 | P7.20 | The sign editing screen. |
 | `stats.` | 1 | P11.3 | The statistics screen title. |
 | `upgrade.` | 1 | P7.18 | The smithing table upgrade strings. |
+
+---
+
+## Appendix D — what cannot be read out of the jar
+
+Everything else in this plan comes from a file. These seven things do not, and
+each one needs a decision about where the numbers come from. This is the
+appendix to read before Phase 3 starts, because P3.11 blocks eleven weeks of
+work behind it.
+
+### D1. Entity geometry — the big one
+
+**The fact.** `assets/minecraft/models/` contains exactly two subdirectories,
+`block/` and `item/`. **`models/entity/` does not exist.** Zero entries.
+Confirmed by listing the jar. Every one of the ~90 mob models, every block-entity
+model (chest, sign, bed, conduit, shulker, bell, banner, decorated pot, boat,
+dragon), every armour layer model and every animation is compiled Java in the
+client jar.
+
+The 631 textures under `textures/entity/` are present, so the *skins* are
+readable. Only the geometry is not.
+
+`assets/minecraft/items/` also names 11 items whose model is
+`minecraft:special`, meaning Mojang hand-builds it rather than reading JSON:
+chest, bed, banner, shulker_box, copper_golem_statue, head, player_head,
+trident, shield, conduit, decorated_pot. **That is Mojang's own published list of
+models a client has to hand-build just to draw items in a slot**, and it
+overlaps exactly with the block-entity list, which is why P4.13 and P6.8 share
+the work.
+
+**Route A — hand-measure from the UV layout.** Mojang's cube unwrap is
+deterministic: a box of size (w, h, d) occupies a texture island of exactly
+(2w + 2d) by (h + d) pixels, laid out in a fixed arrangement. So **the box
+dimensions are recoverable from the texture, not guessed at.** A 64x64 player
+skin's head island is 32x16, which is the only (w,h,d) = (8,8,8) solution; the
+body island is 24x16, which is (8,12,4). That recovers every box's size for
+every entity, from a file the player owns, with no reference to Mojang's code.
+
+What the UV layout does *not* give you is each part's **pivot and offset** — the
+position of the shoulder joint, the hip, the neck — because those are not
+encoded in the texture. Those have to be measured by eye against the vanilla
+client and iterated: render, screenshot, overlay, adjust. For the humanoid
+model that is defensible (there is one, everyone knows what it looks like, and
+`plasma-client entityshot` from P3.14 is exactly the tool for it). For 90 mobs it
+is weeks of eyeballing and it will never be exact.
+
+- **Cost:** 3 d for the player model, about 6 w for the rest, and the result is
+  approximate for everything but the player.
+- **Clean-room:** unimpeachable.
+
+**Route B — an install-time exporter.** Compile a small Java class against the
+player's own client jar, run it under a JDK at install time, have it walk the
+baked model tree and serialise every part's pivot, rotation, visibility and
+boxes to JSON. Bake that into P3.10's format. The exporter never ships; its
+output never ships; it runs on the player's machine against the jar they own.
+
+This is **exactly the same category as `--reports`**, which this project already
+depends on and which `docs/ARCHITECTURE.md` already defends: *"That is observable
+output of the game, not decompiled code."* An exporter that asks the game what
+its own model tree is, at install time, on the player's machine, is observable
+output of the game by the same argument. It reads data, not source. Nothing from
+Mojang enters the repository or the download.
+
+- **Cost:** 2 d for the exporter and the bake step, and the result is **exact**
+  for all ~90 mobs, all block entities, all armour layers and the keyframe
+  animation definitions P3.62 needs.
+- **Clean-room:** defensible on the same grounds as `--reports`, but it is a
+  wider door than `--reports` and the decision should be made deliberately and
+  written down, not drifted into. The honest distinction: `--reports` is a
+  documented, supported Mojang feature invoked by a documented flag; an exporter
+  is code you wrote that reflects into private fields of a jar you did not
+  write. Both read only data. The second is not a supported interface.
+- **Precedent:** this is what Horizon does, and their own documentation states
+  the reason in one line — *"vanilla's own entity models are code in 26.3"*.
+  Their exporter is 74 lines. They do not port the model builders; they ask the
+  game and serialise the answer.
+
+**Recommendation: Route B, with Route A's UV derivation kept as the
+verification.** Build the exporter, and separately derive each box's dimensions
+from its texture island. Where the two disagree, you have found a bug in one of
+them. That gives exact geometry *and* an independent check on it, for 2 days
+instead of 6 weeks, and the check is the part that makes the exporter trustworthy
+rather than magic.
+
+**Whichever route: build `plasma-client entityshot` (P3.14) first.**
+`docs/ARCHITECTURE.md` already records that the missing-top-face bug survived a
+passing test, a rendered frame and good timings, and was found only by looking at
+a single block from a known angle. A 20-part skeletal model has twenty times the
+surface for that mistake.
+
+### D2. Entity dimensions
+
+157 entity types, each with a width, a height and an eye height. **Not in
+`registries.json`** — the registry gives the id and the name and nothing else.
+Needed for hitboxes, the entity raycast, nametag placement and shadow size.
+Hand-authored table of 157 rows (1 d), or the same exporter as D1 (free, since
+`EntityType` carries its dimensions).
+
+### D3. Collision shapes
+
+Covered in P1.9. Not in any report; the block *models* give visual geometry which
+coincides with collision for about 80% of blocks and not for the ones players
+notice. Hand-authored over about 40 shape families: 3 d, and checkable by
+standing in a doorway and walking a staircase beside the vanilla client.
+
+### D4. Block hardness and tool tiers
+
+Covered in P1.14. Destroy time per block and which tool tier is correct for it.
+Public data, published in many places, not in any report. A hand-entered table of
+1,166 rows most of which take a family default: 1 d. The multipliers that act on
+it (Efficiency `level² + 1`, Haste `0.2·level + 1`, Mining Fatigue `÷5`, in-water
+`÷5`, off-ground `÷5`, correct-tool `÷30` versus `÷100`) are also public.
+
+### D5. Block sound groups
+
+Covered in P5.10. Which of about 60 sound groups each block belongs to — stone,
+wood, gravel, grass, metal, glass, wool, sand, snow, slime, honey, netherrack,
+nylium, bamboo, deepslate, tuff, copper, amethyst, sculk, cherry wood, pale moss,
+resin and the rest — plus each group's step, break, place, hit and fall events
+with their volume and pitch. The 1838 sound *events* are in the registry; the
+mapping from block to group is not. Hand table, 1 d.
+
+### D6. Particle behaviour
+
+`assets/minecraft/particles/` is 104 JSON files and each one contains only
+`{"textures": [...]}`. **All particle physics — lifetime, gravity, drag, size
+curve, colour curve, collision, the sprite-frame progression — is code.** The
+texture frame lists are readable; nothing else is. P4.14 implements vanilla's
+general particle behaviour from observation and public documentation, and
+individual providers will be approximate. This is the one place in the plan where
+"approximate" is the honest answer and the error is invisible: nobody can tell
+whether a smoke particle's drag coefficient is right.
+
+### D7. Entity animation
+
+Two systems. The older one is per-mob `setupAnim` code, which is pure code and
+has no data form. The newer one, from 1.19, is a declarative keyframe system
+(bone channels, timestamps, values, interpolation modes) and **its definitions
+are also compiled in**, not in the jar — which is why P3.62 is listed as needing
+the same decision as D1. Route B's exporter gets the keyframe definitions as
+data; Route A does not, and the keyframe-animated mobs (warden, breeze, camel,
+armadillo, sniffer, creaking, copper golem, happy ghast, bogged) would have to be
+animated by eye.
+
+**The summary.** Of the seven, one (D1) is a decision worth taking seriously and
+worth writing down once, and it unblocks D2 and D7 for free. Three (D3, D4, D5)
+are hand-entered data tables totalling five days, all of them public data and all
+of them checkable against the vanilla client by standing in the same place. One
+(D6) is honestly approximate and the approximation does not matter. None of them
+requires reading a line of Mojang's source.
+
+---
+
+## Appendix E — what the Horizon study is good for
+
+`~/horizon-eigen` is a checkout of a Rust/wgpu from-scratch client solving the
+same problem, targeting MC 26.3. It was read for this plan for **approach and
+coverage only**; none of its code is reproduced here or anywhere in this project,
+and nothing below is a transliteration. What follows is prose description of
+method, which is what it is legitimate to take.
+
+**Calibration first, because it changes how you read my estimates.** Horizon is
+1,082,104 lines of Rust across 2,069 files, plus 108,518 lines of Python test
+drivers, 46,110 lines of Java verification oracles and about 23,500 lines of
+documentation. That is roughly 65 times Plasma's Rust-equivalent line count. It
+includes a dedicated server and full world generation, both out of scope here, so
+the right comparison is not the total. The right comparisons are these two:
+
+1. **About 14% of its code is verification infrastructure.** Roughly one line of
+   oracle and harness for every seven lines of game code. If you want its
+   confidence level, that is the tax.
+2. **Its own port ledger reports 833 player-visible gaps still open**, and the
+   two largest buckets are 197 in "screens, HUD and client packets" and 129 in
+   "entity and block rendering". At a million lines with 379 differential
+   harnesses all passing. Those are exactly the areas Phases 2, 3, 7 and 8 cover,
+   and that is the strongest available evidence that my estimates for those
+   phases are low rather than high.
+
+Do not calibrate the *schedule* against Horizon's calendar — every dated artifact
+in that tree falls between 3 October and 2 November 2026, with a 22 KB agent
+house-rules file, a supervisor that runs one git worktree per work area and a
+harness runner that farms tests across four machines over ssh. It is an
+agent-fleet project, not a human-year project. Calibrate against its ratios, not
+its clock.
+
+**Three methods worth borrowing, described in prose.**
+
+*Install-time exporters.* Rather than porting Mojang's code for anything that is
+code-not-data, they compile small Java classes against the player's own jars, run
+them under a JDK at install time, and load the serialised output as data. Content
+hashes over the exporter sources invalidate the bundle when the jar or the
+exporter changes. This is D1's Route B and it is the single most consequential
+idea in that repository for this project. Their entity-model exporter is 74 lines;
+it bootstraps the game's shared constants and walks the baked model tree.
+
+*Differential oracles.* For each subsystem, a driver runs the real vanilla class
+on a set of inputs and runs their own implementation on the same inputs, and
+demands identical traces. The two instances of this most applicable here: for
+GUI, they discovered that 26.3 ships a graphics extractor that emits a *draw-call
+list* instead of drawing, and compared ordered lists of blits, fills and text
+calls against their layout code. For sound, they ran the real sound engine
+against OpenAL Soft's "No Output" device and compared each voice's gain, pitch,
+position, looping and distance model after each scripted step. Both are cheap
+ways to be exact about something that otherwise has to be eyeballed. Both depend
+on being able to run the game's own code at test time, which is the same decision
+as D1.
+
+*A coverage ledger rather than TODO comments.* They have essentially no TODO
+markers in a million lines; the backlog lives in a tool that matches every
+vanilla method to the function that ports it and reports the unmatched ones by
+category. This document is the low-tech version of the same instinct, and the
+three appendices are its enumerations.
+
+**What they admit they have not done, which is the most useful part of the
+survey**, because it marks where parity work is genuinely hard rather than merely
+long. Their own documentation states, in their words:
+
+- *"Real skins are not downloaded: every head uses its default skin"* and
+  *"Skins served over https show the default skin unless already cached"*. At a
+  million lines. **Test P3.21 against a real server with a real skin before
+  calling it done.**
+- *"worn trims aren't drawn yet"* (P3.43) and, on villagers, *"the type layer's
+  hat is always drawn; vanilla hides it under a profession hat marked full or
+  partial"* — which is the `villager` mcmeta flag P3.51 covers, and they got it
+  wrong.
+- On their meshing oracle: *"Not compared: block entities and their renderers,
+  animated sprite frames, translucent sorting, chunk-border light outside loaded
+  chunks and GPU pixels."* Four of those five are Phase 0 and Phase 6 items here.
+- *"Horizon has no credits screen yet"*, *"the locator bar isn't drawn yet"*,
+  *"Fonts: ttf — no — no TrueType rasteriser yet"*, *"a pack that changes the
+  blur/clamp flags is ignored"*, *"the border is taken in texels, so HD GUI
+  sprites get thin borders; stretch_inner and tile aren't read"* — that last one
+  is the nine-slice detail P0.13 has to get right and they did not.
+- *"Shader packs have been removed for now. They will come back later, written
+  again from scratch."* And of the core shaders: *"core/text draws the GUI's
+  text; the other core shaders aren't run."* P10.10 is correctly placed as the
+  most deferrable item in this plan.
+- *"item tooltips lack attribute lines"* — P7.4, and it is why I priced it at
+  two days rather than four hours.
+- On their own honesty framing, which is worth adopting verbatim as a policy:
+  *"100% means 100% of what the harnesses compare, not that nothing else
+  differs."* And: *"No finite corpus proves every vanilla behavior."*
+
+**The one thing not to borrow.** They maintain a Vineflower decompilation of both
+jars as a reading aid. That is outside this project's rule and there is no reason
+to go near it: every gap in this document is sourced from `--reports`, from the
+jar's data files, from the object store, from the public protocol documentation
+or from bytes off a real server. The exporter question in D1 is the only place
+where the line needs thinking about at all, and it is a question about reading
+*data* out of a running jar, not about reading source.
+
+---
+
+*Written 3 November 2026 against protocol 774 (Minecraft 1.21.11). The reports
+this is checked against were generated for it and are reproducible with the
+command in section 1. When the target version moves, regenerate them and
+re-run the three appendix enumerations before trusting any of this.*
