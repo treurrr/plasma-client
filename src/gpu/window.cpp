@@ -265,7 +265,20 @@ FrameInput Window::poll() {
     const bool pressed = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     input.click = pressed && !mouse_down_;
     mouse_down_ = pressed;
+
+    const bool right = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    const auto now = std::chrono::steady_clock::now();
+    if (input.click) left_clicks_.push_back(now);
+    if (right && !right_down_) right_clicks_.push_back(now);
+    right_down_ = right;
+    const auto second_ago = now - std::chrono::seconds(1);
+    while (!left_clicks_.empty() && left_clicks_.front() < second_ago) left_clicks_.pop_front();
+    while (!right_clicks_.empty() && right_clicks_.front() < second_ago) right_clicks_.pop_front();
     return input;
+}
+
+int Window::clicks_per_second(bool right_button) const {
+    return static_cast<int>(right_button ? right_clicks_.size() : left_clicks_.size());
 }
 
 void Window::capture_cursor(bool captured) {

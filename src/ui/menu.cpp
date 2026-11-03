@@ -423,18 +423,24 @@ MenuHit draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, 
     paint.tracked(summary, kRight - paint.tracked_width(summary, 9.5f, 0.9f), 134.0f, 9.5f, kMute,
                   0.9f);
 
-    // Filters.
-    constexpr std::string_view filters[6] = {"All", "New", "HUD", "Input", "Visual", "PvP"};
+    // Filters, which are the categories the registry already groups by.
+    constexpr std::string_view filters[4] = {"All", "HUD", "Input", "Visual"};
     float filter_x = kLeft;
-    for (size_t i = 0; i < 6; ++i) {
+    for (size_t i = 0; i < 4; ++i) {
+        const int which = static_cast<int>(i) - 1;
         const float pill_w = paint.measure(filters[i], 11.5f, Style::Bold) + 26.0f;
-        if (i == 0) {
+        const bool on = state.filter == which;
+        const bool over = pointer_x >= filter_x && pointer_x <= filter_x + pill_w &&
+                          pointer_y >= 179.0f && pointer_y <= 207.0f;
+        if (over && pointer.clicked) hit.filter_clicked = which;
+        if (on) {
             paint.rect(filter_x, 179.0f, pill_w, 28.0f, 7.0f, kAccent);
         } else {
-            paint.rect(filter_x, 179.0f, pill_w, 28.0f, 7.0f, kChip, kCardEdge, 1.0f);
+            paint.rect(filter_x, 179.0f, pill_w, 28.0f, 7.0f, over ? 0x1C1C20FFu : kChip,
+                       over ? kAccentLit : kCardEdge, 1.0f);
         }
         paint.centred(filters[i], filter_x + pill_w * 0.5f, 193.0f, 11.5f,
-                      i == 0 ? 0xFFFFFFFFu : kDim, Style::Bold);
+                      on ? 0xFFFFFFFFu : kDim, Style::Bold);
         filter_x += pill_w + 8.0f;
     }
 
@@ -462,13 +468,16 @@ MenuHit draw_menu(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, 
     constexpr float gap = 14.0f;
     constexpr float card_h = 178.0f;
     const float card_w = (kRight - kLeft - gap * 4.0f) / 5.0f;
+    size_t slot = 0;
     for (size_t i = 0; i < all.size(); ++i) {
         const auto& feature = all[i];
+        if (state.filter >= 0 && static_cast<int>(feature.category) != state.filter) continue;
         const auto id = static_cast<features::Id>(i);
         const bool locked = registry.locked(id);
         const bool on = registry.enabled(id);
-        const float x = kLeft + static_cast<float>(i % 5) * (card_w + gap);
-        const float y = 284.0f + static_cast<float>(i / 5) * (card_h + gap);
+        const float x = kLeft + static_cast<float>(slot % 5) * (card_w + gap);
+        const float y = 284.0f + static_cast<float>(slot / 5) * (card_h + gap);
+        ++slot;
 
         const bool over = !locked && pointer_x >= x && pointer_x <= x + card_w &&
                           pointer_y >= y && pointer_y <= y + card_h;

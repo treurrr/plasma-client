@@ -19,6 +19,8 @@ struct MenuState {
     float yaw = 0.0f;
     std::string version = "1.21.11";
     std::string client_version = "0.1.0";
+    // Which category the player is looking at; -1 is all of them.
+    int filter = -1;
 };
 
 // What the heads-up display shows while playing. Every number here is
@@ -57,6 +59,7 @@ struct Pointer {
 struct MenuHit {
     int hovered = -1;
     int toggled = -1;
+    int filter_clicked = -2;   // -1 means the All pill, -2 means none
 };
 
 // Drawn at a fixed 1600x900 design size and scaled to fit, so the proportions

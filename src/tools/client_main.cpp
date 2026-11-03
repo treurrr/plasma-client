@@ -590,6 +590,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
     mcpp::gpu::UiRenderer quads(device, window.colour_format());
     double fps = 0.0;
     bool menu_open = false;
+    int menu_filter = -1;
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
                  "  left control to sprint, m for the feature menu, escape to leave\n";
@@ -701,6 +702,8 @@ int do_play(const std::string& target, size_t chunk_limit) {
         state.gpu_ms = renderer.last_gpu_ms();
         state.cpu_ms = window.last_frame_ms();
         state.ping_ms = session.ping_ms();
+        state.cps_left = window.clicks_per_second(false);
+        state.cps_right = window.clicks_per_second(true);
         state.x = eye[0];
         state.y = eye[1] - 1.62;
         state.z = eye[2];
@@ -727,9 +730,11 @@ int do_play(const std::string& target, size_t chunk_limit) {
             menu.y = state.y;
             menu.z = state.z;
             menu.yaw = state.yaw;
+            menu.filter = menu_filter;
             const auto hit = mcpp::ui::draw_menu(quads, hud, static_cast<float>(window.width()),
                                                  static_cast<float>(window.height()), menu,
                                                  pointer);
+            if (hit.filter_clicked > -2) menu_filter = hit.filter_clicked;
             if (hit.toggled >= 0) {
                 auto& registry = mcpp::features::Registry::instance();
                 const auto id = static_cast<mcpp::features::Id>(hit.toggled);

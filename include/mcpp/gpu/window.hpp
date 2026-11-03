@@ -3,7 +3,9 @@
 #include "mcpp/gpu/text.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 
+#include <chrono>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <string>
 #include <vector>
@@ -52,6 +54,8 @@ public:
     // what looking around needs and what a menu must undo.
     void capture_cursor(bool captured);
     bool cursor_captured() const { return cursor_captured_; }
+    // Clicks in the last second, which is what every pvp client calls cps.
+    int clicks_per_second(bool right_button) const;
     // `overlay`, when given, is recorded over the swapchain image after the
     // world, at screen resolution rather than scaled up from the render target.
     using Overlay = std::function<void(VkCommandBuffer, uint32_t, uint32_t)>;
@@ -92,6 +96,9 @@ private:
     bool have_cursor_ = false;
     bool menu_key_down_ = false;
     bool mouse_down_ = false;
+    bool right_down_ = false;
+    std::deque<std::chrono::steady_clock::time_point> left_clicks_;
+    std::deque<std::chrono::steady_clock::time_point> right_clicks_;
     bool cursor_captured_ = false;
     double last_frame_ms_ = 0.0;
 };
