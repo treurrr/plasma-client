@@ -80,6 +80,16 @@ struct Node {
     // Fields of a record, cases of a oneof or a switch; the one element of a list or option.
     std::vector<std::pair<std::string_view, const Node*>> parts;
     std::vector<std::pair<int64_t, std::string_view>> labels;
+    // Resolved once the table is built, so decoding looks nothing up by name:
+    // what a reference names, and per protocol which case each registry entry
+    // of a switch picks (-1 for one that carries nothing).
+    const Node* target = nullptr;
+    struct Cases {
+        int32_t protocol = 0;
+        const std::vector<std::string_view>* entries = nullptr;
+        std::vector<int16_t> part;
+    };
+    std::vector<Cases> cases;
 };
 
 class Parser {
@@ -237,6 +247,33 @@ struct Table {
     std::string problem;
 };
 
+constexpr int32_t kProtocols[] = {774, 776};
+
+// Fills in what a node refers to; the first problem, or an empty string.
+std::string link(Node& node, const std::map<std::string_view, const Node*, std::less<>>& types) {
+    if (node.kind == Node::Kind::Ref) {
+        const auto found = types.find(node.argument);
+        if (found == types.end()) return std::format("no type @{}", node.argument);
+        node.target = found->second;
+    }
+    if (node.kind == Node::Kind::Switch) {
+        for (const int32_t protocol : kProtocols) {
+            const auto* entries = generated::registry_entries(node.argument, protocol);
+            if (entries == nullptr) continue;
+            Node::Cases cases{protocol, entries, std::vector<int16_t>(entries->size(), -1)};
+            for (size_t e = 0; e < entries->size(); ++e) {
+                std::string_view bare = (*entries)[e];
+                if (bare.starts_with("minecraft:")) bare.remove_prefix(10);
+                for (size_t k = 0; k < node.parts.size(); ++k) {
+                    if (node.parts[k].first == bare) cases.part[e] = static_cast<int16_t>(k);
+                }
+            }
+            node.cases.push_back(std::move(cases));
+        }
+    }
+    return {};
+}
+
 const Table& table() {
     static const Table built = [] {
         Table t;
@@ -247,10 +284,9 @@ const Table& table() {
             for (const auto& [name, layout] : generated::component_layouts()) {
                 t.components.emplace(name, Parser(layout, t.nodes).parse());
             }
-            for (const Node& node : t.nodes) {
-                if (node.kind == Node::Kind::Ref && !t.types.contains(node.argument)) {
-                    t.problem = std::format("no type @{}", node.argument);
-                }
+            for (Node& node : t.nodes) {
+                std::string problem = link(node, t.types);
+                if (!problem.empty()) t.problem = std::move(problem);
             }
         } catch (const ProtocolError& error) {
             t.problem = error.what();
@@ -330,10 +366,8 @@ Value decode(const Node& node, ByteBuffer& in, int32_t protocol, int depth) {
         return Value{std::move(record)};
     }
     case K::Ref: {
-        const auto& types = table().types;
-        const auto found = types.find(node.argument);
-        if (found == types.end()) throw ProtocolError(std::format("no type @{}", node.argument));
-        return decode(*found->second, in, protocol, depth + 1);
+        if (node.target == nullptr) throw ProtocolError(std::format("no type @{}", node.argument));
+        return decode(*node.target, in, protocol, depth + 1);
     }
     case K::List: {
         const int32_t count = read_count(in);
@@ -389,26 +423,27 @@ Value decode(const Node& node, ByteBuffer& in, int32_t protocol, int depth) {
     }
     case K::Switch: {
         const int32_t id = in.read_varint();
-        const auto* entries = generated::registry_entries(node.argument, protocol);
-        if (entries == nullptr || id < 0 || static_cast<size_t>(id) >= entries->size()) {
+        const Node::Cases* cases = nullptr;
+        for (const auto& c : node.cases) {
+            if (c.protocol == protocol) cases = &c;
+        }
+        if (cases == nullptr || id < 0 || static_cast<size_t>(id) >= cases->entries->size()) {
             throw ProtocolError(std::format("{} has no entry {} in protocol {}", node.argument, id,
                                             protocol));
         }
-        const std::string_view entry = (*entries)[static_cast<size_t>(id)];
-        std::string_view bare = entry;
-        if (bare.starts_with("minecraft:")) bare.remove_prefix(10);
         Value::Record record;
-        record.push_back({"type", Value{int64_t{id}, Value::Note::Label, entry}});
-        for (const auto& [name, part] : node.parts) {
-            if (name != bare) continue;
-            if (part->kind == K::Record) {
-                for (const auto& [field, inner] : part->parts) {
-                    record.push_back({field, decode(*inner, in, protocol, depth + 1)});
-                }
-            } else {
-                record.push_back({"value", decode(*part, in, protocol, depth + 1)});
+        record.push_back(
+            {"type", Value{int64_t{id}, Value::Note::Label, (*cases->entries)[static_cast<size_t>(id)]}});
+        const int16_t which = cases->part[static_cast<size_t>(id)];
+        if (which < 0) return Value{std::move(record)};
+        const Node* part = node.parts[static_cast<size_t>(which)].second;
+        if (part->kind == K::Record) {
+            record.reserve(1 + part->parts.size());
+            for (const auto& [field, inner] : part->parts) {
+                record.push_back({field, decode(*inner, in, protocol, depth + 1)});
             }
-            break;
+        } else {
+            record.push_back({"value", decode(*part, in, protocol, depth + 1)});
         }
         return Value{std::move(record)};
     }
@@ -457,7 +492,14 @@ Value read_layout(ByteBuffer& in, std::string_view layout, int32_t protocol) {
     {
         std::lock_guard lock(guard);
         auto& slot = parsed[layout.data()];
-        if (slot == nullptr) slot = Parser(layout, nodes).parse();
+        if (slot == nullptr) {
+            const size_t first = nodes.size();
+            slot = Parser(layout, nodes).parse();
+            for (size_t k = first; k < nodes.size(); ++k) {
+                const std::string problem = link(nodes[k], table().types);
+                if (!problem.empty()) throw ProtocolError(problem);
+            }
+        }
         node = slot;
     }
     return decode(*node, in, protocol, 0);
