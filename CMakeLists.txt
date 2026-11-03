@@ -124,7 +124,19 @@ else()
 endif()
 mcpp_defaults(mcpp_net)
 
-add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp)
+# The interactive client needs a window; the subcommands in client_main.cpp do not.
+if(glfw3_FOUND)
+    set(MCPP_PLAY_SOURCES
+        src/client/play.cpp
+        src/client/world.cpp
+        src/client/entities.cpp
+        src/client/player.cpp
+        src/client/screens.cpp
+        src/client/sound.cpp)
+endif()
+add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
+    src/client/common.cpp ${MCPP_PLAY_SOURCES})
+target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
 
