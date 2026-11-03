@@ -682,6 +682,27 @@ void WorldRenderer::create_targets() {
     readback_memory_ = readback.memory;
 }
 
+void WorldRenderer::destroy_targets() {
+    vkDestroyBuffer(device_.handle(), readback_, nullptr);
+    vkFreeMemory(device_.handle(), readback_memory_, nullptr);
+    vkDestroyImageView(device_.handle(), depth_view_, nullptr);
+    vkDestroyImage(device_.handle(), depth_, nullptr);
+    vkFreeMemory(device_.handle(), depth_memory_, nullptr);
+    vkDestroyImageView(device_.handle(), color_view_, nullptr);
+    vkDestroyImage(device_.handle(), color_, nullptr);
+    vkFreeMemory(device_.handle(), color_memory_, nullptr);
+}
+
+void WorldRenderer::resize(uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0 || (width == width_ && height == height_)) return;
+    // The window may still be presenting a frame that reads the old colour image.
+    vkDeviceWaitIdle(device_.handle());
+    destroy_targets();
+    width_ = width;
+    height_ = height;
+    create_targets();
+}
+
 void WorldRenderer::create_pipeline() {
     VkPushConstantRange push{};
     push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1793,14 +1814,7 @@ WorldRenderer::~WorldRenderer() {
     vkDestroyImageView(device_.handle(), atlas_view_, nullptr);
     vkDestroyImage(device_.handle(), atlas_image_, nullptr);
     vkFreeMemory(device_.handle(), atlas_memory_, nullptr);
-    vkDestroyBuffer(device_.handle(), readback_, nullptr);
-    vkFreeMemory(device_.handle(), readback_memory_, nullptr);
-    vkDestroyImageView(device_.handle(), depth_view_, nullptr);
-    vkDestroyImage(device_.handle(), depth_, nullptr);
-    vkFreeMemory(device_.handle(), depth_memory_, nullptr);
-    vkDestroyImageView(device_.handle(), color_view_, nullptr);
-    vkDestroyImage(device_.handle(), color_, nullptr);
-    vkFreeMemory(device_.handle(), color_memory_, nullptr);
+    destroy_targets();
     vkDestroyQueryPool(device_.handle(), timestamps_, nullptr);
     vkDestroyFence(device_.handle(), frame_fence_, nullptr);
     vkDestroyCommandPool(device_.handle(), pool_, nullptr);

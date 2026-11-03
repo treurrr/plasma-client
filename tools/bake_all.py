@@ -70,6 +70,7 @@ def main(args):
     ask_the_game("oracle/bake_shapes.py", out / f"collision_shapes-{protocol}.txt")
     ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")
     ask_the_game("gen_block_sounds.py", out / f"block_sounds-{protocol}.txt")
+    ask_the_game("bake_creative.py", out / f"creative-{protocol}.txt")
     models = out / f"entity_models-{protocol}.txt"
     if ask_the_game("export/export_models.py", models):
         run("bake_entities.py", jar, models, out / f"entities-{protocol}.plen")

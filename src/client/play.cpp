@@ -147,6 +147,11 @@ int play(const std::string& target, size_t chunk_limit) {
         // gpu from the timestamps the frame itself wrote.
         game.fps = game.fps == 0.0 ? 1.0 / game.dt : game.fps * 0.92 + (1.0 / game.dt) * 0.08;
 
+        // A tiling compositor sizes the window after it opens.
+        if (window.width() != 0 && window.height() != 0 &&
+            (window.width() != renderer.width() || window.height() != renderer.height())) {
+            renderer.resize(window.width(), window.height());
+        }
         world_draw(game);
         entities_draw(game);
         player_draw(game);

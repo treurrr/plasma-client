@@ -120,6 +120,8 @@ public:
     VkFormat colour_format() const;
     VkFormat depth_format() const;
     VkImage color_image() const { return color_; }
+    // A new size for the images drawn into; meshes, pipelines and the atlas stay.
+    void resize(uint32_t width, uint32_t height);
     uint32_t width() const { return width_; }
     uint32_t height() const { return height_; }
     void read_timestamps();
@@ -144,6 +146,7 @@ private:
     void upload_sections(const std::vector<world::SectionMesh>& sections,
                          const std::vector<size_t>& order);
     void create_targets();
+    void destroy_targets();
     void create_atlas(const world::Atlas& atlas);
     void create_pipeline();
     void draw_geometry(VkCommandBuffer command, struct PushConstants& push, const Camera& camera);
