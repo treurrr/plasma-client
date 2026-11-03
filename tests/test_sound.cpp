@@ -1,3 +1,4 @@
+#include "audio/ambience.hpp"
 #include "audio/attenuation.hpp"
 #include "audio/block_sounds.hpp"
 #include "audio/categories.hpp"
@@ -610,6 +611,46 @@ void test_engine_on_assets() {
     check(engine.active() == 1, "a sound on an entity plays while it is there");
     engine.update([](int32_t) -> std::optional<std::array<double, 3>> { return std::nullopt; });
     check(engine.active() == 0 && lines.back().what == "stop", "and stops when it goes");
+
+    // Music: on the title screen the menu music comes within its 20 to 600
+    // ticks, never sooner than the first 100; in a world with nothing to
+    // play, nothing starts.
+    {
+        MusicManager music(5);
+        int started_at = -1;
+        for (int tick = 1; tick <= 700 && started_at < 0; ++tick) {
+            music.tick(engine, situational_music({}), 1.0f);
+            engine.update();
+            if (music.playing()) started_at = tick;
+        }
+        check(started_at >= 20 && started_at <= 101, std::format("menu music after {} ticks", started_at));
+        MusicSituation nether;
+        nether.in_world = true;
+        check(!situational_music(nether), "no background music, no music");
+        MusicSituation water;
+        water.in_world = true;
+        water.background = BackgroundMusic::overworld();
+        water.creative = true;
+        check(situational_music(water)->event == "music.creative", "creative music in creative");
+        music.stop(engine);
+        engine.update();
+    }
+
+    // The cave mood: in the dark it builds by one over the tick delay per
+    // tick, and plays ambient.cave once it reaches one.
+    {
+        Ambience ambience;
+        AmbientPlayer player{0.5, 10.0, 0.5, 11.62};
+        AmbientSounds cave = AmbientSounds::legacy_cave();
+        cave.mood->tick_delay = 10;
+        int played = 0;
+        engine.on_log = [&](const VoiceLog& line) { played += line.event == "ambient.cave" && line.what == "start"; };
+        jmath::LegacyRandom level(3);
+        const auto dark = [](int32_t, int32_t, int32_t) { return 0; };
+        for (int tick = 0; tick < 11; ++tick) ambience.tick(engine, cave, player, dark, dark, level);
+        check(played == 1, std::format("a cave sound after ten dark ticks, {} played", played));
+        engine.on_log = [&](const VoiceLog& line) { lines.push_back(line); };
+    }
     std::cout << std::format("engine: {} sounds decoded in {:.1f} ms, worst {:.2f} ms ({}), cache {} KiB\n",
                              engine.stats().decodes, engine.stats().decode_ms,
                              engine.stats().worst_decode_ms, engine.stats().worst_decode,

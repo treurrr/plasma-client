@@ -118,6 +118,16 @@ public:
     bool playing(uint64_t id) const { return voices_.contains(id); }
     size_t active() const { return voices_.size(); }
 
+    // A sound that changes as it plays: a loop fading in or out, a voice
+    // that moves. The range stays what it was when it started.
+    void set_volume(uint64_t id, float volume);
+    void set_position(uint64_t id, double x, double y, double z);
+    // A gain on top of a category's slider, 0 to 1: how music fades.
+    void set_category_gain(Category category, float gain);
+    // What a voice of this category at volume one is heard at: its slider
+    // times master times the gain above. Zero means a sound would not start.
+    float category_volume(Category category) const;
+
     void set_listener(const Listener& listener) { listener_ = listener; }
     const Listener& listener() const { return listener_; }
     // Once a frame: decoded sounds start, finished voices are let go, and every
@@ -184,6 +194,7 @@ private:
     std::vector<uint32_t> released_;
     size_t streams_ = 0;
     std::vector<Delayed> delayed_;
+    std::array<float, kCategoryCount> category_gain_{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     int64_t ticks_ = 0;
     uint64_t next_id_ = 1;
     double time_ = 0.0;

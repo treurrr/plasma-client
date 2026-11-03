@@ -65,6 +65,7 @@ void SoundEngine::close() {
     cache_.clear();
     streams_ = 0;
     stats_ = {};
+    category_gain_.fill(1.0f);
 }
 
 uint64_t SoundEngine::play(const PlayRequest& request) { return play(request, own_random_); }
@@ -96,7 +97,7 @@ uint64_t SoundEngine::start(const PlayRequest& request, jmath::LegacyRandom& ran
     voice.pitch = clamp_pitch(request.pitch * sound->pitch);
     voice.range = audible_range(voice.volume, sound->attenuation_distance);
 
-    const float gain = clamp_volume(voice.volume) * std::clamp(volumes.gain(request.category), 0.0f, 1.0f);
+    const float gain = clamp_volume(voice.volume) * category_volume(request.category);
     if (gain == 0.0f && !request.start_silent && request.category != Category::Music) {
         log("silent", 0, voice, gains_of(voice));
         return 0;
@@ -270,6 +271,29 @@ void SoundEngine::stop_voice(uint64_t id) {
     if (found != voices_.end()) finish(id, "stop");
 }
 
+float SoundEngine::category_volume(Category category) const {
+    return std::clamp(volumes.gain(category), 0.0f, 1.0f) * category_gain_[static_cast<size_t>(category)];
+}
+
+void SoundEngine::set_category_gain(Category category, float gain) {
+    category_gain_[static_cast<size_t>(category)] = std::clamp(gain, 0.0f, 1.0f);
+}
+
+void SoundEngine::set_volume(uint64_t id, float volume) {
+    const auto found = voices_.find(id);
+    if (found == voices_.end()) return;
+    found->second.request.volume = volume;
+    found->second.volume = volume * found->second.sound.volume;
+}
+
+void SoundEngine::set_position(uint64_t id, double x, double y, double z) {
+    const auto found = voices_.find(id);
+    if (found == voices_.end()) return;
+    found->second.request.x = x;
+    found->second.request.y = y;
+    found->second.request.z = z;
+}
+
 void SoundEngine::preload() {
     if (!decoder_) return;
     for (const auto& file : index_.preload_files()) {
@@ -281,7 +305,7 @@ void SoundEngine::preload() {
 
 SoundEngine::Gains SoundEngine::gains_of(const Active& voice) const {
     Gains gains;
-    const float slider = std::clamp(volumes.gain(voice.request.category), 0.0f, 1.0f);
+    const float slider = category_volume(voice.request.category);
     gains.flat = clamp_volume(voice.volume) * slider;
 
     double dx = voice.request.x;

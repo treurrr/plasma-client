@@ -25,6 +25,7 @@ add_library(mcpp_audio STATIC
     engine.cpp
     footsteps.cpp
     level_events.cpp
+    ambience.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/block_sounds_data.cpp)
 target_include_directories(mcpp_audio PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(mcpp_audio PUBLIC mcpp_net mcpp_audio_vendor)
