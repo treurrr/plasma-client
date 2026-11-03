@@ -91,6 +91,7 @@ add_library(mcpp_net STATIC
     src/session_sound.cpp
     src/session_data.cpp
     src/status.cpp
+    src/assets/object_store.cpp
     src/registries.cpp
     src/translations.cpp
     src/auth.cpp
@@ -142,3 +143,4 @@ endfunction()
 
 mcpp_test(protocol)
 mcpp_test(packet_ids)
+mcpp_test(assets)
