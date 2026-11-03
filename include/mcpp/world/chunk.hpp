@@ -16,12 +16,21 @@ public:
     static PalettedContainer read(ByteBuffer& in, size_t entry_count, uint8_t max_indirect_bits);
 
     int32_t at(size_t index) const;
+    // Writes one entry, growing the palette or leaving it behind for direct
+    // storage when the value will not fit what is there.
+    void set(size_t index, int32_t value, uint8_t max_indirect_bits);
     size_t size() const { return entry_count_; }
     uint8_t bits() const { return bits_; }
     bool uniform() const { return bits_ == 0; }
     const std::vector<int32_t>& palette() const { return palette_; }
 
 private:
+    // Where a palette stops paying for itself and the state is stored outright.
+    static constexpr uint8_t kDirectBits = 15;
+
+    void write_raw(size_t index, uint32_t raw);
+    void rewrite(uint8_t bits);
+
     uint8_t bits_ = 0;
     size_t entry_count_ = 0;
     std::vector<int32_t> palette_;
@@ -59,6 +68,8 @@ struct Chunk {
 
     size_t non_empty_sections() const;
     int32_t block_state(int32_t local_x, int32_t y_index, int32_t local_z) const;
+    // True when the write landed; false when the position is outside the chunk.
+    bool set_block_state(int32_t local_x, int32_t y_index, int32_t local_z, int32_t state);
     // Biomes are stored one per 4x4x4 cell, so this is the cell the block
     // falls in rather than the block itself.
     int32_t biome_at(int32_t local_x, int32_t y_index, int32_t local_z) const;
@@ -71,5 +82,8 @@ struct Chunk {
 
 // Reads a level_chunk_with_light payload, light included.
 Chunk read_chunk(ByteBuffer& in);
+// The light half of a chunk packet on its own, which is what the server sends
+// after a block changes. The chunk keeps its blocks and takes the new light.
+void read_light_into(ByteBuffer& in, Chunk& chunk);
 
 } // namespace mcpp::world

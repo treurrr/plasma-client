@@ -63,10 +63,14 @@ struct HudState {
     float experience = 0.0f;
     int32_t level = 0;
     bool in_world = false;
+    // Creative and spectator show no health, food, armour or experience at
+    // all; the hotbar sits on the bottom of the screen on its own.
+    bool survival_bars = true;
     // All 46 slots and the stack on the cursor, for when the inventory is open.
     bool inventory_open = false;
     std::array<int32_t, 46> slots{};
     std::array<int32_t, 46> slot_counts{};
+    std::array<std::string, 46> slot_names{};
     int32_t cursor_item = 0;
     int32_t cursor_count = 0;
     float pointer_x = 0.0f;

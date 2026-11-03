@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "mcpp/world/chunk.hpp"
 
 #include "mcpp/nbt.hpp"
@@ -20,10 +21,17 @@ std::vector<uint64_t> read_prefixed_longs(ByteBuffer& in) {
 
 // A paletted container's data is not length-prefixed: the long count follows
 // from the entry count and the bits per entry.
+// Entries never straddle a long, so the count follows from how many fit in
+// one, not from the total number of bits.
+size_t longs_needed(size_t entry_count, uint8_t bits) {
+    if (bits == 0) return 0;
+    const size_t per_long = 64 / bits;
+    return (entry_count + per_long - 1) / per_long;
+}
+
 std::vector<uint64_t> read_packed_longs(ByteBuffer& in, size_t entry_count, uint8_t bits) {
     if (bits == 0) return {};
-    const size_t per_long = 64 / bits;
-    const size_t count = (entry_count + per_long - 1) / per_long;
+    const size_t count = longs_needed(entry_count, bits);
     std::vector<uint64_t> data(count);
     for (auto& value : data) value = static_cast<uint64_t>(in.read_i64());
     return data;
@@ -66,12 +74,95 @@ int32_t PalettedContainer::at(size_t index) const {
     return palette_[static_cast<size_t>(raw)];
 }
 
+void PalettedContainer::set(size_t index, int32_t value, uint8_t max_indirect_bits) {
+    if (index >= entry_count_) return;
+    if (at(index) == value) return;
+
+    // A section of one block becomes a section of two, which is the smallest
+    // palette the format allows.
+    if (bits_ == 0) {
+        const int32_t only = palette_.empty() ? 0 : palette_.front();
+        bits_ = 4;
+        palette_ = {only, value};
+        data_.assign(longs_needed(entry_count_, bits_), 0);
+        write_raw(index, 1);
+        return;
+    }
+
+    if (palette_.empty()) {   // direct storage: the value is its own index
+        write_raw(index, static_cast<uint32_t>(value));
+        return;
+    }
+
+    auto found = std::find(palette_.begin(), palette_.end(), value);
+    if (found == palette_.end()) {
+        const size_t wanted = palette_.size() + 1;
+        if (wanted > (size_t{1} << bits_)) {
+            uint8_t grown = bits_;
+            while (wanted > (size_t{1} << grown) && grown < max_indirect_bits) ++grown;
+            if (wanted > (size_t{1} << grown)) {
+                // Out of room for a palette at all; every entry becomes the
+                // block state itself, which is what the server would send.
+                std::vector<int32_t> states(entry_count_);
+                for (size_t i = 0; i < entry_count_; ++i) states[i] = at(i);
+                states[index] = value;
+                palette_.clear();
+                bits_ = kDirectBits;
+                data_.assign(longs_needed(entry_count_, bits_), 0);
+                for (size_t i = 0; i < entry_count_; ++i) {
+                    write_raw(i, static_cast<uint32_t>(states[i]));
+                }
+                return;
+            }
+            rewrite(grown);
+        }
+        palette_.push_back(value);
+        found = palette_.end() - 1;
+    }
+    write_raw(index, static_cast<uint32_t>(found - palette_.begin()));
+}
+
+void PalettedContainer::write_raw(size_t index, uint32_t raw) {
+    const size_t per_long = 64 / bits_;
+    const uint64_t mask = (uint64_t{1} << bits_) - 1;
+    const size_t shift = index % per_long * bits_;
+    uint64_t& packed = data_[index / per_long];
+    packed = (packed & ~(mask << shift)) | ((static_cast<uint64_t>(raw) & mask) << shift);
+}
+
+void PalettedContainer::rewrite(uint8_t bits) {
+    std::vector<uint32_t> raw(entry_count_);
+    const size_t per_long = 64 / bits_;
+    const uint64_t mask = (uint64_t{1} << bits_) - 1;
+    for (size_t i = 0; i < entry_count_; ++i) {
+        raw[i] = static_cast<uint32_t>((data_[i / per_long] >> (i % per_long * bits_)) & mask);
+    }
+    bits_ = bits;
+    data_.assign(longs_needed(entry_count_, bits_), 0);
+    for (size_t i = 0; i < entry_count_; ++i) write_raw(i, raw[i]);
+}
+
 size_t Chunk::non_empty_sections() const {
     size_t count = 0;
     for (const auto& section : sections) {
         if (section.non_air_count > 0) ++count;
     }
     return count;
+}
+
+bool Chunk::set_block_state(int32_t local_x, int32_t y_index, int32_t local_z, int32_t state) {
+    const auto section = static_cast<size_t>(y_index / 16);
+    if (y_index < 0 || section >= sections.size()) return false;
+    const size_t index = static_cast<size_t>(y_index % 16) * 256 +
+                         static_cast<size_t>(local_z) * 16 + static_cast<size_t>(local_x);
+    const int32_t was = sections[section].blocks.at(index);
+    if (was == state) return true;
+    sections[section].blocks.set(index, state, 8);
+    // The count decides whether the section is drawn at all, so it has to
+    // follow, or breaking the last block in a section leaves it on screen.
+    if (was == 0 && state != 0) ++sections[section].non_air_count;
+    if (was != 0 && state == 0) --sections[section].non_air_count;
+    return true;
 }
 
 int32_t Chunk::block_state(int32_t local_x, int32_t y_index, int32_t local_z) const {
@@ -194,6 +285,11 @@ Chunk read_chunk(ByteBuffer& in) {
         chunk.block_entities.push_back(entity);
     }
 
+    read_light_into(in, chunk);
+    return chunk;
+}
+
+void read_light_into(ByteBuffer& in, Chunk& chunk) {
     const auto sky_mask = read_bitset(in);
     const auto block_mask = read_bitset(in);
     read_bitset(in);   // empty sky sections, which are zero anyway
@@ -201,7 +297,6 @@ Chunk read_chunk(ByteBuffer& in) {
     const size_t slots = chunk.sections.size() + 2;
     chunk.sky_light = read_light_layer(in, sky_mask, slots);
     chunk.block_light = read_light_layer(in, block_mask, slots);
-    return chunk;
 }
 
 } // namespace mcpp::world

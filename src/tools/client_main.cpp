@@ -519,6 +519,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
     mcpp::SessionEvents events;
     events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+
     events.on_chat = [&](std::string_view line) {
         std::lock_guard lock(chat_guard);
         chat.emplace_back(line);
@@ -542,6 +543,40 @@ int do_play(const std::string& target, size_t chunk_limit) {
     events.on_entity_remove = [&](int32_t id) {
         std::cout << std::format("- entity {} gone\n", id);
     };
+    // Chunks whose geometry stopped matching the world. A set, because a wall
+    // of changes in one chunk is still one remesh.
+    std::set<std::pair<int32_t, int32_t>> dirty;
+    std::mutex dirty_guard;
+    events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
+        const int32_t chunk_x = x >> 4;
+        const int32_t chunk_z = z >> 4;
+        {
+            std::lock_guard lock(world_guard);
+            const auto found = world.find({chunk_x, chunk_z});
+            if (found == world.end()) return;
+            if (!found->second.set_block_state(x & 15, y + 64, z & 15, state)) return;
+        }
+        std::lock_guard lock(dirty_guard);
+        dirty.insert({chunk_x, chunk_z});
+        // A block on a seam changes what its neighbour may cull, so the chunk
+        // on the other side has to be meshed again too.
+        if ((x & 15) == 0) dirty.insert({chunk_x - 1, chunk_z});
+        if ((x & 15) == 15) dirty.insert({chunk_x + 1, chunk_z});
+        if ((z & 15) == 0) dirty.insert({chunk_x, chunk_z - 1});
+        if ((z & 15) == 15) dirty.insert({chunk_x, chunk_z + 1});
+    };
+
+    events.on_light_update = [&](int32_t chunk_x, int32_t chunk_z, mcpp::ByteBuffer& in) {
+        {
+            std::lock_guard lock(world_guard);
+            const auto found = world.find({chunk_x, chunk_z});
+            if (found == world.end()) return;
+            mcpp::world::read_light_into(in, found->second);
+        }
+        std::lock_guard lock(dirty_guard);
+        dirty.insert({chunk_x, chunk_z});
+    };
+
     events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
         std::lock_guard lock(guard);
         // A server re-sends a chunk whenever it changes. Without this the same
@@ -615,6 +650,8 @@ int do_play(const std::string& target, size_t chunk_limit) {
     }
     mcpp::gpu::Outline outline(device, renderer.colour_format());
     renderer.set_outline(&outline);
+    std::cout << std::format("- health {:.1f}, food {}, level {}\n", session.vitals().health,
+                             session.vitals().food, session.vitals().level);
     std::cout << std::format("- {:.0f} MB reserved on the gpu, {:.1f} MB used by the first {} chunks\n",
                              renderer.vertex_capacity() / 1e6, vertex_bytes / 1e6, chunks.size());
 
@@ -641,6 +678,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
     float physics_accumulator = 0.0f;
     float fov = 70.0f;
     bool inventory_open = false;
+    bool attacking = false;
+    bool using_item = false;
+    auto dig_started = std::chrono::steady_clock::now();
 
     // Meshing runs here, never in the frame. The frame only ever does the copy.
     struct Batch {
@@ -714,6 +754,25 @@ int do_play(const std::string& target, size_t chunk_limit) {
         return found->second.block_state(x & 15, index, z & 15);
     };
 
+    // Same bookkeeping as a change from the server, so a guess and a fact are
+    // drawn by the same path and a wrong guess is simply overwritten.
+    const auto predict_block = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
+        const int32_t chunk_x = x >> 4;
+        const int32_t chunk_z = z >> 4;
+        {
+            std::lock_guard lock(world_guard);
+            const auto found = world.find({chunk_x, chunk_z});
+            if (found == world.end()) return;
+            if (!found->second.set_block_state(x & 15, y + 64, z & 15, state)) return;
+        }
+        std::lock_guard lock(dirty_guard);
+        dirty.insert({chunk_x, chunk_z});
+        if ((x & 15) == 0) dirty.insert({chunk_x - 1, chunk_z});
+        if ((x & 15) == 15) dirty.insert({chunk_x + 1, chunk_z});
+        if ((z & 15) == 0) dirty.insert({chunk_x, chunk_z - 1});
+        if ((z & 15) == 15) dirty.insert({chunk_x, chunk_z + 1});
+    };
+
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
     size_t ticks_sent = 0;
@@ -730,15 +789,9 @@ int do_play(const std::string& target, size_t chunk_limit) {
     while (window.open() && !g_stop.load()) {
         const auto input = window.poll();
         if (input.quit) {
-            if (inventory_open) {
-                inventory_open = false;
-                window.capture_cursor(!menu_open);
-            } else if (menu_open) {
-                menu_open = false;
-                window.capture_cursor(true);
-            } else {
-                break;
-            }
+            inventory_open = false;
+            menu_open = false;
+            window.capture_cursor(true);
         }
         if (input.toggle_menu) {
             menu_open = !menu_open;
@@ -893,9 +946,39 @@ int do_play(const std::string& target, size_t chunk_limit) {
             }
         }
 
+        // Mining and building. The game sends a start and a finish for a dig
+        // and leaves the block standing until the server says otherwise, which
+        // is what keeps a client honest about what it may break.
+        if (aiming && !menu_open && !inventory_open && !window.typing()) {
+            if (input.attack && !attacking) {
+                session.send_dig(aimed[0], aimed[1], aimed[2], 1, false);
+                session.send_swing();
+                dig_started = now;
+            }
+            if (input.attack && attacking &&
+                std::chrono::duration<float>(now - dig_started).count() > 0.25f) {
+                session.send_dig(aimed[0], aimed[1], aimed[2], 1, true);
+                dig_started = now;
+                // The game takes the block out straight away and lets the
+                // server put it back if it disagrees, which is the only way
+                // mining feels immediate over a network.
+                predict_block(aimed[0], aimed[1], aimed[2], 0);
+            }
+            if (input.use && !using_item) {
+                session.send_place(aimed[0], aimed[1], aimed[2], 1, 0.5f, 1.0f, 0.5f);
+                session.send_swing();
+            }
+        }
+        attacking = input.attack;
+        using_item = input.use;
+
         if (input.toggle_inventory && !window.typing()) {
             inventory_open = !inventory_open;
             window.capture_cursor(!inventory_open && !menu_open);
+        }
+        if (input.toggle_menu && inventory_open) {
+            inventory_open = false;
+            window.capture_cursor(!menu_open);
         }
 
         if (!window.typing() && !inventory_open) {
@@ -904,6 +987,41 @@ int do_play(const std::string& target, size_t chunk_limit) {
             } else if (input.wheel != 0) {
                 const int32_t slots = static_cast<int32_t>(mcpp::Inventory::kHotbarSlots);
                 session.send_held_slot((session.inventory().held - input.wheel + slots) % slots);
+            }
+        }
+
+        // Anything the server changed under us is meshed again here, at most a
+        // couple of chunks a frame so a wall of changes cannot stall one.
+        {
+            std::vector<std::pair<int32_t, int32_t>> remesh;
+            {
+                std::lock_guard lock(dirty_guard);
+                while (!dirty.empty() && remesh.size() < 2) {
+                    remesh.push_back(*dirty.begin());
+                    dirty.erase(dirty.begin());
+                }
+            }
+            for (const auto& [chunk_x, chunk_z] : remesh) {
+                std::lock_guard lock(world_guard);
+                const auto found = world.find({chunk_x, chunk_z});
+                if (found == world.end()) continue;
+                const auto blocks = std::make_unique<mcpp::world::ChunkBlocks>(found->second);
+                mcpp::world::Neighbours neighbours;
+                std::vector<std::unique_ptr<mcpp::world::ChunkBlocks>> around;
+                const auto side = [&](int32_t dx, int32_t dz)
+                    -> const mcpp::world::ChunkBlocks* {
+                    const auto side_chunk = world.find({chunk_x + dx, chunk_z + dz});
+                    if (side_chunk == world.end()) return nullptr;
+                    around.push_back(
+                        std::make_unique<mcpp::world::ChunkBlocks>(side_chunk->second));
+                    return around.back().get();
+                };
+                neighbours.west = side(-1, 0);
+                neighbours.east = side(1, 0);
+                neighbours.north = side(0, -1);
+                neighbours.south = side(0, 1);
+                renderer.replace(
+                    mcpp::world::mesh_sections(found->second, *blocks, table, neighbours));
             }
         }
 
@@ -971,12 +1089,16 @@ int do_play(const std::string& target, size_t chunk_limit) {
             state.experience = vitals.experience;
             state.level = vitals.level;
             state.in_world = true;
+            state.survival_bars = session.vitals().survival_bars();
             state.inventory_open = inventory_open;
             state.pointer_x = input.cursor_x;
             state.pointer_y = input.cursor_y;
             for (size_t i = 0; i < mcpp::Inventory::kSlots; ++i) {
                 state.slots[i] = inventory.slots[i].id;
                 state.slot_counts[i] = inventory.slots[i].count;
+                state.slot_names[i] = inventory.slots[i].count > 0
+                                          ? pretty_item(quads.item_name(inventory.slots[i].id))
+                                          : std::string{};
             }
             state.cursor_item = inventory.carried.id;
             state.cursor_count = inventory.carried.count;
@@ -1552,6 +1674,131 @@ mcpp::world::ChunkSection section_from_states(const std::vector<int32_t>& states
 
 // Joins, loads the world around spawn, and walks a body through it without
 // opening a window. A screenshot cannot show whether the ground holds.
+// Breaks a block and puts one back, without a window, and says what the server
+// did about it. A client that can walk but not change anything is half a
+// client, and this is the half that is hard to see in a screenshot.
+int do_digtest(const std::string& target) {
+    const auto address = parse_address(target);
+    mcpp::world::BlockTable table;
+    if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "no block table; bake one with tools/bake_all.py\n";
+        return 1;
+    }
+
+    std::map<std::pair<int32_t, int32_t>, mcpp::world::Chunk> world;
+    double spawn[3] = {0.0, 80.0, 0.0};
+    bool placed = false;
+    std::atomic<bool> ready{false};
+    std::vector<std::string> changes;
+
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    std::string username = "PlasmaDig";
+    options.profile = signed_in_profile(username);
+    options.username = username;
+
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.on_position = [&](double x, double y, double z, float, float) {
+        spawn[0] = x;
+        spawn[1] = y;
+        spawn[2] = z;
+        placed = true;
+    };
+    events.on_chunk = [&](const mcpp::world::Chunk& chunk) {
+        world.insert_or_assign({chunk.x, chunk.z}, chunk);
+        if (world.size() >= 25 && placed) ready.store(true);
+    };
+    events.on_block_change = [&](int32_t x, int32_t y, int32_t z, int32_t state) {
+        const auto found = world.find({x >> 4, z >> 4});
+        if (found != world.end()) found->second.set_block_state(x & 15, y + 64, z & 15, state);
+        changes.push_back(std::format("{} {} {} is now {} ({})", x, y, z, state,
+                                      table.block_name(state)));
+    };
+
+    mcpp::Session session(options, events);
+    session.connect();
+    const auto pump_for = [&](double seconds) {
+        const auto until = std::chrono::steady_clock::now() +
+                           std::chrono::duration<double>(seconds);
+        while (std::chrono::steady_clock::now() < until) {
+            try {
+                if (!session.pump()) return false;
+            } catch (const mcpp::TimeoutError&) {
+                return false;
+            }
+        }
+        return true;
+    };
+    while (!ready.load()) {
+        try {
+            if (!session.pump()) break;
+        } catch (const mcpp::TimeoutError&) {
+            break;
+        }
+    }
+    if (!ready.load()) {
+        std::cerr << "never got into the world\n";
+        return 1;
+    }
+
+    std::cout << std::format("- vitals: health {:.1f}, food {}, xp {:.2f}, level {}\n",
+                             session.vitals().health, session.vitals().food,
+                             session.vitals().experience, session.vitals().level);
+
+    const auto block_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
+        const auto found = world.find({x >> 4, z >> 4});
+        if (found == world.end()) return -1;
+        const int32_t index = y + 64;
+        if (index < 0 || index >= static_cast<int32_t>(found->second.sections.size()) * 16) {
+            return 0;
+        }
+        return found->second.block_state(x & 15, index, z & 15);
+    };
+
+    // The highest solid block under the spawn, which is what the player would
+    // be standing on and the one thing certain to be there.
+    const auto foot_x = static_cast<int32_t>(std::floor(spawn[0]));
+    const auto foot_z = static_cast<int32_t>(std::floor(spawn[2]));
+    int32_t target_y = static_cast<int32_t>(std::floor(spawn[1])) - 1;
+    while (target_y > -64 && block_at(foot_x, target_y, foot_z) == 0) --target_y;
+    const int32_t before = block_at(foot_x, target_y, foot_z);
+    std::cout << std::format("- standing on {} {} {}: {} ({})\n", foot_x, target_y, foot_z,
+                             before, table.block_name(before));
+
+    session.send_position(spawn[0], spawn[1], spawn[2], 0.0f, 90.0f, true);
+    session.send_dig(foot_x, target_y, foot_z, 1, false);
+    session.send_swing();
+    // The server times the dig itself and ignores a finish that comes too
+    // early, so this waits the way a player holding the button would: stone
+    // with bare hands is about seven and a half seconds.
+    for (int tick = 0; tick < 200; ++tick) {
+        if (!pump_for(0.05)) break;
+        if (tick % 4 == 0) session.send_swing();
+        session.send_position(spawn[0], spawn[1], spawn[2], 0.0f, 90.0f, true);
+    }
+    session.send_dig(foot_x, target_y, foot_z, 1, true);
+    pump_for(1.5);
+    const int32_t after = block_at(foot_x, target_y, foot_z);
+    std::cout << std::format("- after digging: {} ({})\n", after, table.block_name(after));
+
+    session.send_place(foot_x, target_y - 1, foot_z, 1, 0.5f, 1.0f, 0.5f);
+    session.send_swing();
+    pump_for(1.5);
+    const int32_t rebuilt = block_at(foot_x, target_y, foot_z);
+    std::cout << std::format("- after placing: {} ({})\n", rebuilt, table.block_name(rebuilt));
+
+    for (const auto& line : changes) std::cout << "    " << line << '\n';
+    session.close();
+
+    if (changes.empty()) {
+        std::cerr << "the server reported no block changes at all\n";
+        return 1;
+    }
+    return 0;
+}
+
 int do_walktest(const std::string& target, double seconds) {
     const auto address = parse_address(target);
     mcpp::world::BlockTable table;
@@ -2083,6 +2330,9 @@ int main(int argc, char** argv) {
             const uint32_t width = argc > 3 ? static_cast<uint32_t>(std::stoul(argv[3])) : 1280;
             const uint32_t height = argc > 4 ? static_cast<uint32_t>(std::stoul(argv[4])) : 720;
             return do_render(out, width, height);
+        }
+        if (command == "digtest" && argc > 2) {
+            return do_digtest(argv[2]);
         }
         if (command == "walktest" && argc > 2) {
             return do_walktest(argv[2], argc > 3 ? std::stod(argv[3]) : 10.0);

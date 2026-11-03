@@ -60,6 +60,7 @@ CURATED = {
         "container_set_slot": "container_set_slot", "container_close": "container_close",
         "set_held_slot": "set_held_slot", "set_experience": "set_experience",
         "set_cursor_item": "set_cursor_item", "set_player_inventory": "set_player_inventory",
+        "block_changed_ack": "block_changed_ack",
     }),
     "play_sb": ("play", "serverbound", {
         "keep_alive": "keep_alive", "pong": "pong", "chat": "chat",
@@ -71,7 +72,9 @@ CURATED = {
         "client_tick_end": "client_tick_end",
         "chunk_batch_received": "chunk_batch_received",
         "set_carried_item": "set_carried_item", "container_click": "container_click",
-        "container_close": "container_close",
+        "container_close": "container_close", "player_action": "player_action",
+        "use_item_on": "use_item_on", "use_item": "use_item", "swing": "swing",
+        "player_loaded": "player_loaded", "client_command": "client_command",
     }),
 }
 

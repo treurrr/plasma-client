@@ -278,27 +278,36 @@ FrameInput Window::poll() {
     if (down(GLFW_KEY_S)) input.forward -= 1.0f;
     if (down(GLFW_KEY_D)) input.right += 1.0f;
     if (down(GLFW_KEY_A)) input.right -= 1.0f;
-    if (down(GLFW_KEY_SPACE)) input.up += 1.0f;
-    if (down(GLFW_KEY_LEFT_SHIFT)) input.up -= 1.0f;
+    const bool jump_now = down(GLFW_KEY_SPACE);
+    if (jump_now) input.up += 1.0f;
+    input.sneak = down(GLFW_KEY_LEFT_SHIFT);
+    if (input.sneak) input.up -= 1.0f;
 
     // Forwards twice in quick succession sprints until forwards comes up, which
     // is how most people sprint; the key is there for the rest.
-    constexpr double kDoubleTapSeconds = 0.3;
     const double seconds_now = glfwGetTime();
     if (forward_now && !forward_key_down_) {
-        double_tap_sprint_ = seconds_now - last_forward_press_ < kDoubleTapSeconds;
+        double_tap_sprint_ = seconds_now - last_forward_press_ < 0.3;
         last_forward_press_ = seconds_now;
     }
     if (!forward_now) double_tap_sprint_ = false;
     forward_key_down_ = forward_now;
     input.sprint = down(GLFW_KEY_LEFT_CONTROL) || double_tap_sprint_;
-    // Edge-triggered, or leaving a chat line with escape would also leave the
-    // game on the very next frame.
-    input.quit = escape_edge;
+    // Escape opens and closes the menu, the way it does in the game; leaving
+    // is what the window's own close button is for.
+    input.toggle_menu = escape_edge;
 
-    const bool fly_now = down(GLFW_KEY_F);
-    input.toggle_fly = fly_now && !fly_key_down_;
-    fly_key_down_ = fly_now;
+    // Jump twice quickly to fly, the way the game does it in creative.
+    constexpr double kDoubleTapSeconds = 0.3;
+    if (jump_now && !jump_key_down_) {
+        input.toggle_fly = seconds_now - last_jump_press_ < kDoubleTapSeconds;
+        last_jump_press_ = input.toggle_fly ? -1.0 : seconds_now;
+    }
+    jump_key_down_ = jump_now;
+
+    const bool drop_now = down(GLFW_KEY_Q);
+    input.drop = drop_now && !drop_key_down_;
+    drop_key_down_ = drop_now;
 
     // The wheel steps one slot at a time whatever the mouse reports, and the
     // number row picks a slot outright, the way the game does both.
@@ -310,12 +319,15 @@ FrameInput Window::poll() {
         slot_key_down_[i] = pressed;
     }
 
+    input.attack = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+    input.use = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+
     const bool inventory_now = down(GLFW_KEY_E);
     input.toggle_inventory = inventory_now && !inventory_key_down_;
     inventory_key_down_ = inventory_now;
 
     const bool menu_now = down(GLFW_KEY_M);
-    input.toggle_menu = menu_now && !menu_key_down_;
+    input.toggle_menu = input.toggle_menu || (menu_now && !menu_key_down_);
     menu_key_down_ = menu_now;
 
     double x = 0.0, y = 0.0;

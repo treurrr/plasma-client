@@ -384,7 +384,7 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
         // Health, armour, food and the experience bar, at the offsets the game
         // uses: the bar ten above the hotbar, the rows ten above that, counted
         // out from the same left edge the hotbar starts at.
-        if (!plasma && state.in_world) {
+        if (!plasma && state.in_world && state.survival_bars) {
             const float bar_top = height - 29.0f * gui;
             quads.sprite("hud/experience_bar_background", left, bar_top, 182.0f * gui,
                          5.0f * gui);
@@ -449,8 +449,9 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
         // The name of what is in hand sits clear above everything else, which
         // is where the game puts it once the bars are in the way.
         if (!state.held_name.empty()) {
-            const float name_y = (plasma || !state.in_world) ? top - 13.0f * gui
-                                                             : height - 59.0f * gui;
+            const float name_y = (plasma || !state.in_world || !state.survival_bars)
+                                     ? height - 36.0f * gui
+                                     : height - 59.0f * gui;
             quads.text(state.held_name,
                        std::round(width * 0.5f - quads.text_width(state.held_name, gui) * 0.5f),
                        name_y, gui, 0xFFFFFFFFu);
@@ -508,6 +509,35 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
                                y + 9.0f * gui, gui, 0xFFFFFFFFu);
                 }
             }
+            // The slot under the pointer lights up, and its name follows the
+            // pointer, which is most of what makes a screen feel handled
+            // rather than printed.
+            std::string hovered;
+            for (size_t i = 0; i < state.slots.size(); ++i) {
+                float sx = 0.0f;
+                float sy = 0.0f;
+                if (i == 45) {
+                    sx = 77.0f;
+                    sy = 62.0f;
+                } else {
+                    slot_at(i, sx, sy);
+                }
+                const float x = window_x + sx * gui;
+                const float y = window_y + sy * gui;
+                if (state.pointer_x < x || state.pointer_x >= x + 16.0f * gui) continue;
+                if (state.pointer_y < y || state.pointer_y >= y + 16.0f * gui) continue;
+                quads.panel(x, y, 16.0f * gui, 16.0f * gui, 0.0f, 0x80808080u);
+                if (state.slots[i] > 0) hovered = state.slot_names[i];
+            }
+            if (!hovered.empty()) {
+                const float text_width = quads.text_width(hovered, gui);
+                const float box_x = state.pointer_x + 8.0f * gui;
+                const float box_y = state.pointer_y - 16.0f * gui;
+                quads.panel(box_x - 3.0f * gui, box_y - 3.0f * gui, text_width + 6.0f * gui,
+                            14.0f * gui, 0.0f, 0x100010F0u, 0x2D0A63F0u, gui);
+                quads.text(hovered, box_x, box_y, gui, 0xFFFFFFFFu, false);
+            }
+
             // Whatever is on the cursor follows the pointer rather than a slot.
             if (state.cursor_item > 0) {
                 quads.icon(state.cursor_item, state.pointer_x - 8.0f * gui,

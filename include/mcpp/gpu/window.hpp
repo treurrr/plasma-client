@@ -28,6 +28,9 @@ struct FrameInput {
     float cursor_x = 0.0f;
     float cursor_y = 0.0f;
     bool click = false;
+    // Held, not edge-triggered: mining is something you keep doing.
+    bool attack = false;
+    bool use = false;
     // Edge-triggered: true on the frame the key goes down, not while held.
     bool toggle_menu = false;
     bool start_typing = false;
@@ -35,6 +38,8 @@ struct FrameInput {
     bool cancel_text = false;
     bool toggle_fly = false;
     bool toggle_inventory = false;
+    bool sneak = false;
+    bool drop = false;
     // -1, 0 or 1 for the wheel this frame, and 0..8 for a number key, or -1.
     int32_t wheel = 0;
     int32_t pick_slot = -1;
@@ -117,6 +122,9 @@ private:
     bool chat_key_down_ = false;
     bool fly_key_down_ = false;
     bool inventory_key_down_ = false;
+    bool drop_key_down_ = false;
+    bool jump_key_down_ = false;
+    double last_jump_press_ = -1.0;
     double wheel_ = 0.0;
     bool slot_key_down_[9]{};
     bool forward_key_down_ = false;

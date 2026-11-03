@@ -54,6 +54,16 @@ struct SessionEvents {
     std::function<void(int32_t, int32_t, double, double, double)> on_entity_add;
     std::function<void(int32_t, double, double, double)> on_entity_move;
     std::function<void(int32_t)> on_entity_remove;
+    // A block changed under us. The renderer has to remesh the section it is
+    // in, and the sections next to it when it sits on a seam.
+    std::function<void(int32_t, int32_t, int32_t, int32_t)> on_block_change;
+    // New light for a chunk that is already loaded. Breaking a block changes
+    // what the sky reaches, and a chunk meshed against the old light is a
+    // chunk with a shadow where there is nothing to cast one.
+    std::function<void(int32_t, int32_t, ByteBuffer&)> on_light_update;
+    // New light for a chunk, straight from the packet, because only the chunk
+    // itself knows how many sections it has.
+    std::function<void(int32_t, int32_t, ByteBuffer&)> on_light;
 };
 
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false
@@ -112,6 +122,10 @@ public:
         float saturation = 5.0f;
         float experience = 0.0f;   // 0 to 1 across the bar
         int32_t level = 0;
+        // Survival, creative, adventure, spectator, in the game's own order.
+        // Creative and spectator show no health, food or armour at all.
+        int32_t game_mode = 0;
+        bool survival_bars() const { return game_mode == 0 || game_mode == 2; }
     };
     const Vitals& vitals() const { return vitals_; }
     // Switches the hand locally and tells the server, the way the wheel does.
@@ -119,6 +133,14 @@ public:
     // One tick of being a player rather than a viewer. Vanilla wants the tick
     // marker before the position, or it ignores the movement entirely.
     void send_position(double x, double y, double z, float yaw, float pitch, bool on_ground);
+
+    // Mining and building. The game numbers every one of these and the server
+    // acknowledges the number, which is how it undoes a block the player was
+    // not allowed to change without the client having to guess.
+    void send_dig(int32_t x, int32_t y, int32_t z, int32_t face, bool finished);
+    void send_place(int32_t x, int32_t y, int32_t z, int32_t face, float cursor_x,
+                    float cursor_y, float cursor_z);
+    void send_swing();
 
     void send_chat(std::string_view message);
     void send_command(std::string_view command);
@@ -133,6 +155,8 @@ private:
     bool slot_format_warned_ = false;
     Inventory inventory_;
     Vitals vitals_;
+    int32_t sequence_ = 0;
+    bool announced_loaded_ = false;
     bool player_list_broken_ = false;
     int32_t ping_ms_ = -1;
 

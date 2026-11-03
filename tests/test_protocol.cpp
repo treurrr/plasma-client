@@ -254,6 +254,49 @@ void test_paletted_container() {
         threw = true;
     }
     check(threw, "reading past the end is rejected");
+
+    // Writing. A block change has to survive every shape the container takes,
+    // because a section that is all stone and a section with two hundred kinds
+    // of block are stored completely differently.
+    single.set(7, 99, 8);
+    check(single.at(7) == 99 && single.at(6) == 1234 && single.at(4095) == 1234,
+          "a uniform section splits when one block in it changes");
+
+    container.set(3, 777, 8);
+    check(container.at(3) == 777, "a new value joins the palette");
+    bool untouched = true;
+    for (size_t i = 0; i < kEntries; ++i) {
+        if (i != 3 && container.at(i) != static_cast<int32_t>(100 + i % 8)) untouched = false;
+    }
+    check(untouched, "and leaves every other entry where it was");
+
+    // Past what five bits can index, the container has to widen on its own.
+    for (int32_t i = 0; i < 40; ++i) container.set(static_cast<size_t>(i % kEntries), 500 + i, 8);
+    bool kept = true;
+    for (int32_t i = 16; i < 40; ++i) {
+        const size_t at = static_cast<size_t>(i % kEntries);
+        int32_t last = 0;
+        for (int32_t j = i; j < 40; ++j) {
+            if (static_cast<size_t>(j % kEntries) == at) last = 500 + j;
+        }
+        if (container.at(at) != last) kept = false;
+    }
+    check(kept, std::format("a palette that outgrows its width is rewritten ({} bits now)",
+                            container.bits()));
+
+    // And past what a palette is worth at all, every entry stores its own
+    // state, which is what the server would have sent in the first place.
+    mcpp::ByteBuffer small;
+    small.write_u8(0);
+    small.write_varint(5);
+    auto wide = mcpp::world::PalettedContainer::read(small, 64, 4);
+    for (int32_t i = 0; i < 64; ++i) wide.set(static_cast<size_t>(i), 1000 + i, 4);
+    bool direct = true;
+    for (int32_t i = 0; i < 64; ++i) {
+        if (wide.at(static_cast<size_t>(i)) != 1000 + i) direct = false;
+    }
+    check(direct && wide.palette().empty(),
+          "a section with more kinds of block than a palette holds goes direct");
 }
 
 // The reader indexes a mapping in place, so its section alignment has to match

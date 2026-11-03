@@ -36,6 +36,24 @@ ItemStack read_slot(ByteBuffer& in, bool& readable) {
     return stack;
 }
 
+// A block position is one long: 26 bits of x, 26 of z and 12 of y, all signed,
+// which is why each one is sign extended on the way out.
+void unpack_position(int64_t packed, int32_t& x, int32_t& y, int32_t& z) {
+    const auto extend = [](int64_t value, int bits) {
+        const int64_t sign = int64_t{1} << (bits - 1);
+        return static_cast<int32_t>((value ^ sign) - sign);
+    };
+    x = extend((packed >> 38) & 0x3FFFFFF, 26);
+    z = extend((packed >> 12) & 0x3FFFFFF, 26);
+    y = extend(packed & 0xFFF, 12);
+}
+
+int64_t pack_position(int32_t x, int32_t y, int32_t z) {
+    return ((static_cast<int64_t>(x) & 0x3FFFFFF) << 38) |
+           ((static_cast<int64_t>(z) & 0x3FFFFFF) << 12) |
+           (static_cast<int64_t>(y) & 0xFFF);
+}
+
 // A colour in the biome registry arrives either as a packed int or as the text
 // "#rrggbb", depending on how the server's datapack was written.
 std::optional<uint32_t> read_colour(const nbt::Value& value) {
@@ -421,6 +439,15 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         ByteBuffer out;
         out.write_varint(teleport);
         send(ids_->play_sb.accept_teleportation, out);
+        // Since 1.21.2 the server keeps the player hidden from everyone else
+        // until the client says it has finished loading. Without this you are
+        // in the world, you can walk and chat, and nobody can see you.
+        if (!announced_loaded_) {
+            announced_loaded_ = true;
+            ByteBuffer loaded;
+            send(ids_->play_sb.player_loaded, loaded);
+            status("told the server we are loaded");
+        }
         return true;
     }
     if (packet.id == cb.level_chunk_with_light) {
@@ -512,10 +539,74 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         }
         return true;
     }
+    if (packet.id == cb.light_update) {
+        // Breaking a block changes what the sky reaches, and the server
+        // recomputes it and sends it on its own. Without this the geometry is
+        // meshed again against the light from before the hole was there, and
+        // everything around it goes dark.
+        const int32_t chunk_x = in.read_varint();
+        const int32_t chunk_z = in.read_varint();
+        if (events_.on_light) events_.on_light(chunk_x, chunk_z, in);
+        return true;
+    }
+    if (packet.id == cb.light_update) {
+        const int32_t chunk_x = in.read_varint();
+        const int32_t chunk_z = in.read_varint();
+        if (events_.on_light_update) events_.on_light_update(chunk_x, chunk_z, in);
+        return true;
+    }
+    if (packet.id == cb.block_update) {
+        int32_t x = 0;
+        int32_t y = 0;
+        int32_t z = 0;
+        unpack_position(in.read_i64(), x, y, z);
+        const int32_t state = in.read_varint();
+        if (events_.on_block_change) events_.on_block_change(x, y, z, state);
+        return true;
+    }
+    if (packet.id == cb.section_blocks_update) {
+        // One long names the section, then every change in it is a varlong:
+        // the state, then four bits each of x, z and y inside the section.
+        const int64_t section = in.read_i64();
+        const int32_t base_x = static_cast<int32_t>(section >> 42) * 16;
+        const int32_t base_z = static_cast<int32_t>((section << 22) >> 42) * 16;
+        const int32_t base_y = static_cast<int32_t>((section << 44) >> 44) * 16;
+        const int32_t count = in.read_varint();
+        for (int32_t i = 0; i < count; ++i) {
+            const int64_t entry = in.read_varlong();
+            const int32_t state = static_cast<int32_t>(entry >> 12);
+            if (!events_.on_block_change) continue;
+            events_.on_block_change(base_x + static_cast<int32_t>((entry >> 8) & 0xF),
+                                    base_y + static_cast<int32_t>(entry & 0xF),
+                                    base_z + static_cast<int32_t>((entry >> 4) & 0xF), state);
+        }
+        return true;
+    }
+    if (packet.id == cb.block_changed_ack) {
+        in.read_varint();   // the sequence we sent; nothing to undo yet
+        return true;
+    }
+    if (packet.id == cb.game_event) {
+        const auto event = in.read_u8();
+        const float value = in.read_f32();
+        // Three is the one that says the game mode changed, and the value is
+        // the mode itself.
+        if (event == 3) vitals_.game_mode = static_cast<int32_t>(value);
+        return true;
+    }
     if (packet.id == cb.set_health) {
         vitals_.health = in.read_f32();
         vitals_.food = in.read_varint();
         vitals_.saturation = in.read_f32();
+        // The game shows a death screen and waits for the player to press
+        // respawn. Until there is one, a dead player would stay dead forever:
+        // invisible to everyone, selected by nothing, on zero hearts.
+        if (vitals_.health <= 0.0f) {
+            ByteBuffer out;
+            out.write_varint(0);   // perform respawn
+            send(ids_->play_sb.client_command, out);
+            status("died; asked the server to respawn");
+        }
         return true;
     }
     if (packet.id == cb.set_experience) {
@@ -705,6 +796,36 @@ void Session::send_held_slot(int32_t slot) {
     ByteBuffer out;
     out.write_u16(static_cast<uint16_t>(slot));
     send(ids_->play_sb.set_carried_item, out);
+}
+
+void Session::send_dig(int32_t x, int32_t y, int32_t z, int32_t face, bool finished) {
+    ByteBuffer out;
+    out.write_varint(finished ? 2 : 0);   // finished digging, or started
+    out.write_i64(pack_position(x, y, z));
+    out.write_u8(static_cast<uint8_t>(face));
+    out.write_varint(++sequence_);
+    send(ids_->play_sb.player_action, out);
+}
+
+void Session::send_place(int32_t x, int32_t y, int32_t z, int32_t face, float cursor_x,
+                         float cursor_y, float cursor_z) {
+    ByteBuffer out;
+    out.write_varint(0);   // the main hand
+    out.write_i64(pack_position(x, y, z));
+    out.write_varint(face);
+    out.write_f32(cursor_x);
+    out.write_f32(cursor_y);
+    out.write_f32(cursor_z);
+    out.write_bool(false);   // not standing inside the block
+    out.write_bool(false);   // the world border was not in the way
+    out.write_varint(++sequence_);
+    send(ids_->play_sb.use_item_on, out);
+}
+
+void Session::send_swing() {
+    ByteBuffer out;
+    out.write_varint(0);   // the main hand
+    send(ids_->play_sb.swing, out);
 }
 
 void Session::send_chat(std::string_view message) {

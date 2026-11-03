@@ -48,6 +48,10 @@ public:
     // the frame the way a full re-upload would.
     void reserve(size_t vertex_capacity, size_t index_capacity);
     bool append(const std::vector<world::SectionMesh>& sections);
+    // Re-meshes one section in place. The old room is left behind rather than
+    // compacted: one block change costs a section's worth of buffer, which is
+    // cheap next to stalling the frame to shuffle everything down.
+    bool replace(const std::vector<world::SectionMesh>& sections);
     size_t vertex_capacity() const { return vertex_capacity_; }
     size_t appended_sections() const { return sections_.size(); }
     bool out_of_vertex_room() const { return out_of_vertex_room_; }
