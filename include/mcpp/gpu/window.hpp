@@ -119,6 +119,11 @@ public:
     // coordinates on a high density screen.
     double content_scale() const;
 
+    // Vanilla's VSync option. Off, the frame rate is the renderer's own:
+    // mailbox where the driver has it, so a faster frame never tears.
+    void set_vsync(bool on);
+    bool vsync() const { return vsync_; }
+
     uint32_t width() const { return extent_.width; }
     uint32_t height() const { return extent_.height; }
     double last_frame_ms() const { return last_frame_ms_; }
@@ -147,6 +152,8 @@ private:
     std::vector<Frame> frames_;
     size_t frame_index_ = 0;
     bool presented_once_ = false;
+    bool vsync_ = true;
+    bool swapchain_stale_ = false;
 
     double last_x_ = 0.0;
     double last_y_ = 0.0;
