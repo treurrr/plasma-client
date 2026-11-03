@@ -15,7 +15,9 @@
 #include "mcpp/session.hpp"
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/block_table.hpp"
+#include "mcpp/world/atmosphere.hpp"
 #include "mcpp/world/chunk.hpp"
+#include "mcpp/world/fluids.hpp"
 #include "mcpp/world/light.hpp"
 #include "mcpp/world/mesher.hpp"
 #include "mcpp/world/physics.hpp"
@@ -29,6 +31,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -81,6 +84,23 @@ struct WorldArea {
     // Unloaded counts as solid, so nobody falls out of the world while a chunk
     // is still on its way.
     mcpp::world::BlockAt block_at;
+
+    // The world's own clock, run on between the server's set_time packets the
+    // way the game runs it, and what the sky and light are at the camera.
+    mcpp::world::FluidTable fluids;
+    int64_t day_time = 0;
+    int64_t game_time = 0;
+    bool time_ticking = true;
+    uint32_t time_updates = 0;
+    double ticks = 0.0;
+    float partial = 0.0f;
+    bool probed = false;
+    mcpp::world::AttributeProbe probe;
+    mcpp::world::RainFog rain_fog;
+    float flicker = 0.0f;
+    uint64_t flicker_seed = 0x5DEECE66Dull;
+    int32_t water_vision_time = 0;
+    int32_t render_distance = 12;
 };
 
 struct EntitiesArea {
@@ -208,6 +228,12 @@ void player_move(Game& game);
 bool player_send(Game& game);
 // Screens: records the interface over the finished world.
 void screens_record(Game& game, VkCommandBuffer command, uint32_t width, uint32_t height);
+// World: the sky, fog and lightmap a worldshot of a recorded world is drawn
+// with. Options after an '@' in the view: t=<day time>, rain=, thunder=, rd=.
+mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
+                                             const std::vector<mcpp::world::Chunk>& chunks,
+                                             const mcpp::gpu::Camera& camera,
+                                             std::string_view options);
 // World: a block the player changed, drawn before the server confirms it.
 void world_predict_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t state);
 

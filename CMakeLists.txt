@@ -66,6 +66,8 @@ mcpp_shader(text.vert TextVert)
 mcpp_shader(text.frag TextFrag)
 mcpp_shader(sky.vert SkyVert)
 mcpp_shader(sky.frag SkyFrag)
+mcpp_shader(clouds.vert CloudsVert)
+mcpp_shader(clouds.frag CloudsFrag)
 mcpp_shader(outline.vert OutlineVert)
 mcpp_shader(outline.frag OutlineFrag)
 mcpp_shader(ui.vert UiVert)
@@ -103,10 +105,13 @@ add_library(mcpp_net STATIC
     src/world/atlas.cpp
     src/world/biomes.cpp
     src/world/environment.cpp
+    src/world/atmosphere.cpp
+    src/world/fluids.cpp
     src/gpu/device.cpp
     src/gpu/offscreen.cpp
     src/gpu/world_renderer.cpp
     src/gpu/sky.cpp
+    src/gpu/vk_util.cpp
     src/gpu/outline.cpp
     src/gpu/text.cpp
     src/gpu/ui.cpp

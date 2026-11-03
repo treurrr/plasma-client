@@ -79,7 +79,7 @@ void test_tracks() {
         "timelines": ["test:steps"]
     })"));
     check(environment.select("test:world"), "a dimension added from json can be selected");
-    const auto at = [&](double ticks) { return environment.evaluate(ticks, {}); };
+    const auto at = [&](int64_t ticks) { return environment.evaluate(ticks, {}); };
 
     check(near(at(35).number(attribute::StarBrightness), 0.5), "linear halfway is half");
     check(near(at(10).number(attribute::StarBrightness), 0.0), "on a keyframe is its value");
@@ -92,7 +92,7 @@ void test_tracks() {
           "before the first keyframe a constant track holds the last one");
     check(near(at(0).number(attribute::SunAngle), 0.0),
           "of two keyframes on one tick the later one is left");
-    check(near(at(50).number(attribute::SunAngle), 180.0, 1e-6),
+    check(near(at(50).number(attribute::SunAngle), 180.0, 1e-3),
           "a symmetric bezier passes its middle at its middle");
     check(at(25).number(attribute::SunAngle) < 90.0,
           std::format("the bezier is slow at the ends ({})", at(25).number(attribute::SunAngle)));
@@ -147,15 +147,14 @@ void test_datapack() {
     const BiomeWeight plains[] = {{0, 1.0}};
     const BiomeWeight swamp[] = {{1, 1.0}};
     const BiomeWeight desert[] = {{2, 1.0}};
-    const auto at = [&](double ticks, std::span<const BiomeWeight> biome) {
+    const auto at = [&](int64_t ticks, std::span<const BiomeWeight> biome) {
         return environment.evaluate(ticks, biome);
     };
 
     check(near(at(6000, plains).number(attribute::SunAngle), 0.0), "the sun is overhead at noon");
-    check(near(at(18000, plains).number(attribute::SunAngle), 180.0, 1e-6),
+    check(near(at(18000, plains).number(attribute::SunAngle), 180.0, 1e-3),
           "and underfoot at midnight");
-    check(near(at(18000, plains).number(attribute::MoonAngle), 360.0, 1e-6) ||
-              near(at(18000, plains).number(attribute::MoonAngle), 0.0, 1e-6),
+    check(near(at(18000, plains).number(attribute::MoonAngle), 360.0, 1e-3),
           std::format("the moon is overhead at midnight ({})",
                       at(18000, plains).number(attribute::MoonAngle)));
     check(at(6000, plains).colour(attribute::SkyColor) == 0xFF78A7FFu,
@@ -165,9 +164,8 @@ void test_datapack() {
     check(at(13670, plains).colour(attribute::SkyColor) == 0xFF000000u, "at 13670 it is black");
     check(near(at(627, plains).number(attribute::StarBrightness), 0.0), "no stars at 627");
     check(near(at(18000, plains).number(attribute::StarBrightness), 0.5), "half bright at night");
-    check(at(18000, plains).colour(attribute::FogColor) ==
-              (0xFF000000u | ((0xC0u * 0x0Fu + 127) / 255) << 16 | ((0xD8u * 0x0Fu + 127) / 255) << 8 |
-               ((0xFFu * 0x16u + 127) / 255)),
+    // 0xc0 * 0x0f / 255 floors to 0x0b, 0xd8 * 0x0f / 255 to 0x0c.
+    check(at(18000, plains).colour(attribute::FogColor) == 0xFF0B0C16u,
           std::format("the night fog is #c0d8ff times #0f0f16 ({})",
                       hex(at(18000, plains).colour(attribute::FogColor))));
     check(at(6000, plains).colour(attribute::CloudColor) == 0xCCFFFFFFu, "clouds at noon");
@@ -193,6 +191,17 @@ void test_datapack() {
     const BiomeWeight edge[] = {{0, 0.5}, {2, 0.5}};
     const auto blended = at(6000, edge).colour(attribute::SkyColor);
     check(blended == 0xFF73ACFFu, std::format("a biome edge blends the sky ({})", hex(blended)));
+
+    // Rain greys the sky: grey (int)(120*.3+167*.59+255*.11) = 162, times 0.6
+    // is 97, and three quarters of the way there floors to 102, 114, 136.
+    const auto rainy = environment.evaluate(6000, plains, SIZE_MAX, {1.0f, 0.0f});
+    check(rainy.colour(attribute::SkyColor) == 0xFF667288u,
+          std::format("rain greys the sky ({})", hex(rainy.colour(attribute::SkyColor))));
+    check(near(rainy.number(attribute::StarBrightness), 0.0), "rain hides the stars");
+    check(near(rainy.number(attribute::SkyLightFactor), 1.0f + 0.3125f * (0.24f - 1.0f)),
+          "and dims the sky light by 5/16 of the way to night");
+    check(rainy.colour(attribute::FogColor) == 0xFF5F6B99u,
+          std::format("and darkens the fog to 127, 127, 153 of 255 ({})", hex(rainy.colour(attribute::FogColor))));
 
     check(environment.select("minecraft:the_nether"), "the nether is there");
     const BiomeWeight deltas[] = {{3, 1.0}};

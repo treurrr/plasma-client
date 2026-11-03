@@ -425,7 +425,12 @@ int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint3
 }
 
 int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
-                 const std::string& view, const std::string& overlay_kind) {
+                 const std::string& view_argument, const std::string& overlay_kind) {
+    // view@t=13000,rain=1,rd=12 sets the sky the shot is taken under.
+    const std::string view = view_argument.substr(0, view_argument.find('@'));
+    const std::string sky_options = view_argument.find('@') == std::string::npos
+                                        ? std::string()
+                                        : view_argument.substr(view_argument.find('@') + 1);
     const auto address = parse_address(target.starts_with("replay:") ? "localhost" : target);
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
@@ -586,7 +591,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     std::optional<mcpp::gpu::Sky> sky;
     const auto sky_path = mcpp::gpu::Sky::default_path(mcpp::protocol::kTargetProtocol);
     if (std::filesystem::exists(sky_path)) {
-        sky.emplace(device, renderer.colour_format(), sky_path);
+        sky.emplace(device, renderer.colour_format(), renderer.depth_format(), sky_path);
         renderer.set_sky(&*sky);
     } else {
         std::cout << "- no sky textures; bake them with tools/bake_sky.py\n";
@@ -727,10 +732,9 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         mcpp::world::Colormaps maps;
         maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
         renderer.set_biome_colours(session.biomes().tints(maps));
-        const auto& here = chunks.front();
-        const int32_t biome = here.biome_at(8, here.index_of(64), 8);
-        renderer.set_sky_colours(session.biomes().sky(static_cast<size_t>(std::max(biome, 0))),
-                                 0xC0D8FFu);
+    }
+    if (!session.environment().selected().empty()) {
+        renderer.set_atmosphere(client::world_shot_atmosphere(session, chunks, camera, sky_options));
     }
 
     mcpp::gpu::WorldRenderer::Overlay overlay;

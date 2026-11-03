@@ -31,11 +31,11 @@ constexpr float kChunksPerTick = 32.0f;    // the server throttles to what we cl
 void Session::read_spawn_info(ByteBuffer& in) {
     const int32_t type = in.read_varint();
     world_.dimension.name = in.read_string();
-    in.read_i64();   // hashed seed
+    world_.dimension.hashed_seed = in.read_i64();
     player_.vitals.game_mode = static_cast<int8_t>(in.read_u8());
     in.read_u8();    // previous game mode
     in.read_bool();  // debug world
-    in.read_bool();  // flat world
+    world_.dimension.flat_world = in.read_bool();
     if (in.read_bool()) {   // where the player last died
         in.read_string();
         in.read_i64();
@@ -93,7 +93,9 @@ void Session::read_spawn_info(ByteBuffer& in) {
         world_.environment_loaded = true;
         read_biome_extras();
     }
-    if (!world_.environment.select(world_.dimension.type)) {
+    const bool has_weather = world_.dimension.has_skylight && !world_.dimension.has_ceiling &&
+                             world_.dimension.name != "minecraft:the_end";
+    if (!world_.environment.select(world_.dimension.type, has_weather)) {
         status(std::format("no environment for dimension type {}", world_.dimension.type));
     }
 }
@@ -106,6 +108,9 @@ void Session::read_biome_extras() {
     for (size_t i = 0; i < world_.biomes.size(); ++i) {
         world::Biome biome = *world_.biomes.at(i);
         if (i < entries->size() && (*entries)[i].data) {
+            if (const auto* rain = (*entries)[i].data->find("has_precipitation")) {
+                biome.has_precipitation = rain->as_int().value_or(1) != 0;
+            }
             if (const auto* effects = (*entries)[i].data->find("effects")) {
                 if (const auto* value = effects->find("dry_foliage_color")) {
                     if (const auto rgb = world::parse_colour(*value, false)) {
@@ -252,8 +257,14 @@ bool Session::handle_world(PacketConnection::Packet& packet) {
         // thunder are, sent every tick while either changes. 3 is a new game
         // mode, the value being the mode itself. The rest are for other areas.
         switch (event) {
-        case 1: world_.weather.raining = true; break;
-        case 2: world_.weather.raining = false; break;
+        case 1:
+            world_.weather.raining = true;
+            world_.weather.rain_level = 0.0f;
+            break;
+        case 2:
+            world_.weather.raining = false;
+            world_.weather.rain_level = 1.0f;
+            break;
         case 3: player_.vitals.game_mode = static_cast<int32_t>(value); break;
         case 7: world_.weather.rain_level = std::clamp(value, 0.0f, 1.0f); break;
         case 8: world_.weather.thunder_level = std::clamp(value, 0.0f, 1.0f); break;

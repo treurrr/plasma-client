@@ -2,6 +2,7 @@
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/span_allocator.hpp"
 #include "mcpp/world/atlas.hpp"
+#include "mcpp/world/atmosphere.hpp"
 #include "mcpp/world/mesher.hpp"
 
 #include <cstdint>
@@ -32,6 +33,16 @@ struct Camera {
     float fog_start = 0.0f;
     float fog_end = 0.0f;
 };
+
+// Column-major, Vulkan clip space: y points down and depth is reversed.
+struct Matrix4 {
+    float m[16];
+};
+Matrix4 operator*(const Matrix4& a, const Matrix4& b);
+Matrix4 camera_projection(const Camera& camera, float aspect);
+// The camera's turn alone, without where it stands: the sky is drawn around
+// the eye.
+Matrix4 camera_rotation(const Camera& camera);
 
 // Draws a meshed world into an image we read back. The window path will reuse
 // the same pipeline, buffers and recording.
@@ -79,7 +90,7 @@ public:
     // window can blit it into a swapchain image in the same submission.
     // Drawn inside the world's own pass, before the terrain, so it needs no
     // second attachment and no second clear.
-    void set_sky(const Sky* sky) { sky_ = sky; }
+    void set_sky(Sky* sky) { sky_ = sky; }
     // The block to draw a box around, or nothing when the crosshair is on sky.
     void set_outline(const Outline* outline) { outline_ = outline; }
     void set_outlined_block(const int32_t block[3], bool present) {
@@ -94,12 +105,12 @@ public:
     // 0xRRGGBB, in the order the server listed the biomes.
     static constexpr uint32_t kBiomeSlots = 256;
     void set_biome_colours(std::span<const uint32_t> colours);
-    // The blue straight up and the pale blue the land fades into, both
-    // 0xRRGGBB. The game works them out from the biome rather than picking
-    // them, so the client does the same.
-    void set_sky_colours(uint32_t zenith, uint32_t fog);
+    // This frame's sky, fog and lightmap.
+    void set_atmosphere(const world::Atmosphere& atmosphere);
+    const world::Atmosphere& atmosphere() const { return atmosphere_; }
     void record_present(VkCommandBuffer command, const Camera& camera);
     VkFormat colour_format() const;
+    VkFormat depth_format() const;
     VkImage color_image() const { return color_; }
     uint32_t width() const { return width_; }
     uint32_t height() const { return height_; }
@@ -131,12 +142,38 @@ private:
     void destroy_mesh();
 
     Device& device_;
-    const Sky* sky_ = nullptr;
+    Sky* sky_ = nullptr;
     const Outline* outline_ = nullptr;
     int32_t outlined_[3]{};
     bool outlined_present_ = false;
-    float zenith_[3] = {0.4745f, 0.6549f, 1.0f};
-    float fog_[3] = {0.7529f, 0.8471f, 1.0f};
+    world::Atmosphere atmosphere_ = [] {
+        world::Atmosphere noon;
+        noon.fog_colour[0] = 0.7529f;
+        noon.fog_colour[1] = 0.8471f;
+        noon.fog_colour[2] = 1.0f;
+        noon.sky_colour = 0xFF78A7FFu;
+        noon.cloud_colour = 0xCCFFFFFFu;
+        world::fill_lightmap(noon);
+        return noon;
+    }();
+    // Fog and lightmap per frame in flight, and the lightmap image they fill.
+    struct MappedBuffer {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        void* mapped = nullptr;
+        VkDeviceSize size = 0;
+        void destroy(VkDevice device);
+    } frame_data_;
+    struct OwnedImage {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        void destroy(VkDevice device);
+    } lightmap_;
+    VkImageView lightmap_view_ = VK_NULL_HANDLE;
+    VkSampler lightmap_sampler_ = VK_NULL_HANDLE;
+    bool lightmap_ready_ = false;
+    uint32_t frame_offset_ = 0;
     uint32_t width_;
     uint32_t height_;
 

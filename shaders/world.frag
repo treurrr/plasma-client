@@ -2,31 +2,34 @@
 
 layout(set = 0, binding = 0) uniform sampler2DArray atlas;
 
-layout(location = 0) in vec3 in_uv;
-layout(location = 1) in float in_shade;
-layout(location = 2) in vec3 in_tint;
-layout(location = 3) in float in_distance;
-layout(location = 4) in vec3 in_light;
-layout(location = 0) out vec4 out_color;
+layout(set = 0, binding = 2) uniform Fog {
+    vec4 colour;
+    vec4 distances;   // environmental start and end, render distance start and end
+} fog;
 
 layout(push_constant) uniform Push {
     mat4 view_projection;
     vec4 origin;
     vec4 eye;
-    vec4 sky;
+    vec4 extra;
 } push;
 
+layout(location = 0) in vec3 in_uv;
+layout(location = 1) in vec4 in_colour;
+layout(location = 2) in float in_spherical;
+layout(location = 3) in float in_cylindrical;
+layout(location = 0) out vec4 out_color;
+
+float linear_fog(float distance, float start, float end) {
+    if (distance <= start) return 0.0;
+    if (distance >= end) return 1.0;
+    return (distance - start) / (end - start);
+}
+
 void main() {
-    vec4 texel = texture(atlas, in_uv);
-    // The game's own cutout threshold; 0.5 eats thin geometry at a distance.
-    if (texel.a < 0.1) discard;
-    vec3 colour = texel.rgb * in_tint * in_shade * in_light;
-    if (push.sky.w > 0.0) {
-        // Linear, the way the game fades, and starting far out rather than
-        // halfway: a squared curve pulls the middle distance into the haze.
-        float fog = clamp((in_distance - push.eye.w) / max(push.sky.w - push.eye.w, 1.0),
-                          0.0, 1.0);
-        colour = mix(colour, push.sky.rgb, fog);
-    }
-    out_color = vec4(colour, texel.a);
+    vec4 colour = texture(atlas, in_uv) * in_colour;
+    if (colour.a < push.eye.w) discard;
+    float amount = max(linear_fog(in_spherical, fog.distances.x, fog.distances.y),
+                       linear_fog(in_cylindrical, fog.distances.z, fog.distances.w));
+    out_color = vec4(mix(colour.rgb, fog.colour.rgb, amount * fog.colour.a), colour.a);
 }

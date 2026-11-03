@@ -73,6 +73,9 @@ struct Dimension {
     std::string cardinal_light = "default";      // default or nether
     std::string infiniburn;
     int32_t monster_spawn_block_light_limit = 0;
+    // A superflat world puts its horizon and its void darkness at the bottom.
+    bool flat_world = false;
+    int64_t hashed_seed = 0;
 };
 
 // The two clocks the server keeps: how long the world has existed, which only

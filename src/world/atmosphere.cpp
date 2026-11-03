@@ -1,213 +1,232 @@
 #include "mcpp/world/atmosphere.hpp"
 
+#include "mcpp/jmath.hpp"
+
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <numbers>
 
 namespace mcpp::world {
 namespace {
 
-void unpack_rgb(uint32_t argb, float out[3]) {
-    out[0] = static_cast<float>((argb >> 16) & 0xFFu) / 255.0f;
-    out[1] = static_cast<float>((argb >> 8) & 0xFFu) / 255.0f;
-    out[2] = static_cast<float>(argb & 0xFFu) / 255.0f;
+constexpr float kDegreesToRadians = static_cast<float>(std::numbers::pi / 180.0);
+
+float lerp(float t, float from, float to) { return from + t * (to - from); }
+
+uint32_t weather_darken(uint32_t colour, float rain, float thunder) {
+    if (rain > 0.0f) {
+        const float rg = 1.0f - rain * 0.5f;
+        const float b = 1.0f - rain * 0.4f;
+        colour = argb::scale_rgb(colour, rg, rg, b);
+    }
+    if (thunder > 0.0f) {
+        const float all = 1.0f - thunder * 0.5f;
+        colour = argb::scale_rgb(colour, all, all, all);
+    }
+    return colour;
 }
 
-float luminance(const float c[3]) { return c[0] * 0.3f + c[1] * 0.59f + c[2] * 0.11f; }
-
-// Rain and thunder wash a colour towards a grey of its own brightness.
-void weather_grey(float c[3], float level, float grey_scale, float strength) {
-    if (level <= 0.0f) return;
-    const float grey = luminance(c) * grey_scale;
-    const float keep = 1.0f - level * strength;
-    for (int i = 0; i < 3; ++i) c[i] = c[i] * keep + grey * (1.0f - keep);
+// AtmosphericFogEnvironment's colour: the fog, pulled towards a rising or
+// setting sun when looking at it, then towards the sky by how little of the
+// world the sky fog leaves visible.
+uint32_t atmospheric_colour(const AttributeProbe& probe, float partial, const AtmosphereInputs& in) {
+    using namespace attribute;
+    uint32_t fog = probe.colour(FogColor, partial);
+    if (in.render_distance >= 4) {
+        const float sun = probe.number(SunAngle, partial) * kDegreesToRadians;
+        const float side = jmath::sin(sun) > 0.0f ? -1.0f : 1.0f;
+        const float towards = in.forward[0] * side + in.forward[1] * 0.0f + in.forward[2] * 0.0f;
+        if (towards > 0.0f) {
+            const uint32_t glow = probe.colour(SunriseSunsetColor, partial);
+            const float alpha = argb::alpha_float(glow);
+            if (alpha > 0.0f) fog = argb::srgb_lerp(towards * alpha, fog, argb::opaque(glow));
+        }
+    }
+    uint32_t sky = probe.colour(SkyColor, partial);
+    sky = weather_darken(sky, in.rain, in.thunder);
+    const float reach = std::min(probe.number(SkyFogEndDistance, partial) / 16.0f,
+                                 static_cast<float>(in.render_distance));
+    const float d = reach / 32.0f;
+    float mix = d < 0.0f ? 0.25f : d > 1.0f ? 1.0f : lerp(d, 0.25f, 1.0f);
+    mix = 1.0f - static_cast<float>(std::pow(mix, 0.25));
+    return argb::srgb_lerp(mix, fog, sky);
 }
-
-constexpr float kGaussian[7] = {0.0f, 1.0f, 4.0f, 6.0f, 4.0f, 1.0f, 0.0f};
 
 } // namespace
 
-int32_t moon_phase_index(std::string_view name) {
-    static constexpr std::string_view kPhases[8] = {
-        "full_moon", "waning_gibbous", "third_quarter", "waning_crescent",
-        "new_moon", "waxing_crescent", "first_quarter", "waxing_gibbous",
-    };
-    for (int32_t i = 0; i < 8; ++i) {
-        if (kPhases[i] == name) return i;
-    }
-    return 0;
+Skybox skybox_named(std::string_view name) {
+    if (name.starts_with("minecraft:")) name.remove_prefix(10);
+    if (name == "end") return Skybox::End;
+    if (name == "none") return Skybox::None;
+    return Skybox::Overworld;
 }
 
-Atmosphere atmosphere(const AttributeValues& values, const AtmosphereInputs& in) {
+void RainFog::update(float rain, int32_t sky_light, bool precipitation, float delta_ticks) {
+    const float open = std::clamp((static_cast<float>(sky_light) - 8.0f) / 7.0f, 0.0f, 1.0f);
+    const float target = rain * open * (precipitation ? 1.0f : 0.5f);
+    multiplier += (target - multiplier) * delta_ticks * 0.2f;
+}
+
+Atmosphere atmosphere(const AttributeProbe& probe, float partial, const AtmosphereInputs& in) {
     using namespace attribute;
     Atmosphere out;
-    out.skybox = in.skybox == "end" ? Skybox::End
-               : in.skybox == "none" ? Skybox::None
-                                     : Skybox::Overworld;
-    const float render = static_cast<float>(in.render_chunks) * 16.0f;
-    const float rain = std::clamp(in.rain, 0.0f, 1.0f);
-    const float thunder = std::clamp(in.thunder, 0.0f, 1.0f) * rain;
+    out.skybox = in.skybox;
+    const float render = static_cast<float>(in.render_distance * 16);
 
-    unpack_rgb(values.colour(SkyColor), out.sky);
-    weather_grey(out.sky, rain, 0.6f, 0.75f);
-    weather_grey(out.sky, thunder, 0.2f, 0.75f);
+    uint32_t base = 0;
+    switch (in.medium) {
+    case Medium::Water: base = probe.colour(WaterFogColor, partial); break;
+    case Medium::Lava: base = 0xFF991A00u; break;
+    case Medium::PowderSnow: base = 0xFF9FBACCu; break;
+    case Medium::Air: base = atmospheric_colour(probe, partial, in); break;
+    }
 
-    out.sun_angle = values.number(SunAngle);
-    out.moon_angle = values.number(MoonAngle);
-    out.star_angle = values.number(StarAngle);
-    out.moon_phase = moon_phase_index(values.text(MoonPhase));
-    out.celestial_alpha = 1.0f - rain;
-    out.star_brightness = values.number(StarBrightness) * (1.0f - rain);
-    const uint32_t sunrise = values.colour(SunriseSunsetColor);
-    unpack_rgb(sunrise, out.sunrise);
-    out.sunrise[3] = static_cast<float>(sunrise >> 24) / 255.0f * (1.0f - rain);
+    // Towards the bottom of the world the fog fades to black.
+    const float onset = in.flat_world ? 1.0f : 32.0f;
+    const float void_dark = std::clamp(
+        (onset + static_cast<float>(in.min_y) - static_cast<float>(in.eye[1])) / onset, 0.0f, 1.0f);
+    float r = argb::red_float(base);
+    float g = argb::green_float(base);
+    float b = argb::blue_float(base);
+    if (void_dark > 0.0f && in.medium != Medium::Lava && in.medium != Medium::PowderSnow) {
+        const float keep = (1.0f - void_dark) * (1.0f - void_dark);
+        r *= keep;
+        g *= keep;
+        b *= keep;
+    }
+    if (in.darken_world > 0.0f) {
+        r = lerp(in.darken_world, r, r * 0.7f);
+        g = lerp(in.darken_world, g, g * 0.6f);
+        b = lerp(in.darken_world, b, b * 0.6f);
+    }
+    const float brighten = in.medium == Medium::Water ? in.water_vision : in.night_vision;
+    if (r != 0.0f && g != 0.0f && b != 0.0f) {
+        const float scale = 1.0f / std::max(r, std::max(g, b));
+        r = lerp(brighten, r, r * scale);
+        g = lerp(brighten, g, g * scale);
+        b = lerp(brighten, b, b * scale);
+    }
+    out.fog_colour[0] = r;
+    out.fog_colour[1] = g;
+    out.fog_colour[2] = b;
+    out.fog_colour[3] = 1.0f;
 
-    const uint32_t cloud = values.colour(CloudColor);
-    unpack_rgb(cloud, out.cloud);
-    out.cloud[3] = static_cast<float>(cloud >> 24) / 255.0f;
-    weather_grey(out.cloud, rain, 0.6f, 0.95f);
-    weather_grey(out.cloud, thunder, 0.2f, 0.95f);
-    out.cloud_height = values.number(CloudHeight);
-    out.cloud_fog_end = std::min(values.number(CloudFogEndDistance),
-                                 static_cast<float>(in.cloud_chunks) * 16.0f);
-
-    // The view distance's fog closes the last stretch, never less than four
-    // blocks of it and never more than 64.
+    switch (in.medium) {
+    case Medium::Water:
+        out.fog_start = probe.number(WaterFogStartDistance, partial);
+        out.fog_end = probe.number(WaterFogEndDistance, partial) * std::max(0.25f, in.water_vision);
+        out.sky_fog_end = out.fog_end;
+        out.cloud_fog_end = out.fog_end;
+        break;
+    case Medium::Lava:
+    case Medium::PowderSnow:
+        if (in.spectator) {
+            out.fog_start = -8.0f;
+            out.fog_end = render * 0.5f;
+        } else if (in.medium == Medium::Lava) {
+            out.fog_start = 0.25f;
+            out.fog_end = 1.0f;
+        } else {
+            out.fog_start = 0.0f;
+            out.fog_end = 2.0f;
+        }
+        out.sky_fog_end = out.fog_end;
+        out.cloud_fog_end = out.fog_end;
+        break;
+    case Medium::Air: {
+        out.fog_start = probe.number(FogStartDistance, partial) + -160.0f * in.rain_fog;
+        const float end = probe.number(FogEndDistance, partial);
+        out.fog_end = std::max(std::min(96.0f, end), end + -256.0f * in.rain_fog);
+        out.sky_fog_end = std::min(render, probe.number(SkyFogEndDistance, partial));
+        out.cloud_fog_end = std::min(static_cast<float>(in.cloud_range * 16),
+                                     probe.number(CloudFogEndDistance, partial));
+        break;
+    }
+    }
+    const float last_stretch = std::clamp(render / 10.0f, 4.0f, 64.0f);
+    out.render_fog_start = render - last_stretch;
     out.render_fog_end = render;
-    out.render_fog_start = render - std::clamp(render / 10.0f, 4.0f, 64.0f);
-    out.sky_fog_end = std::min(values.number(SkyFogEndDistance), render);
 
-    if (in.medium == Medium::Water) {
-        unpack_rgb(values.colour(WaterFogColor), out.fog);
-        out.fog_start = values.number(WaterFogStartDistance);
-        out.fog_end = values.number(WaterFogEndDistance) * std::max(0.25f, in.water_vision);
-        out.draw_sky = false;
-    } else if (in.medium == Medium::Lava) {
-        out.fog[0] = 0.6f;
-        out.fog[1] = 0.1f;
-        out.fog[2] = 0.0f;
-        out.fog_start = 0.25f;
-        out.fog_end = 1.0f;
-        out.draw_sky = false;
-    } else if (in.medium == Medium::PowderSnow) {
-        out.fog[0] = 0.623f;
-        out.fog[1] = 0.734f;
-        out.fog[2] = 0.785f;
-        out.fog_start = 0.0f;
-        out.fog_end = 2.0f;
-        out.draw_sky = false;
-    } else {
-        unpack_rgb(values.colour(FogColor), out.fog);
-        out.fog_start = values.number(FogStartDistance);
-        out.fog_end = values.number(FogEndDistance);
-        // Looking towards a rising or setting sun pulls the fog towards its glow.
-        if (in.render_chunks >= 4 && out.sunrise[3] > 0.0f) {
-            const float side =
-                std::sin(out.sun_angle * std::numbers::pi_v<float> / 180.0f) > 0.0f ? -1.0f : 1.0f;
-            float towards = in.look[0] * side;
-            if (towards > 0.0f) {
-                towards *= out.sunrise[3];
-                for (int i = 0; i < 3; ++i) out.fog[i] += (out.sunrise[i] - out.fog[i]) * towards;
-            }
-        }
-        // A short view distance shows more of the sky's own colour in the fog.
-        const float reach = 1.0f - std::pow(0.25f + 0.75f * static_cast<float>(in.render_chunks) /
-                                                        32.0f, 0.25f);
-        for (int i = 0; i < 3; ++i) out.fog[i] += (out.sky[i] - out.fog[i]) * reach;
-        if (rain > 0.0f) {
-            out.fog[0] *= 1.0f - rain * 0.5f;
-            out.fog[1] *= 1.0f - rain * 0.5f;
-            out.fog[2] *= 1.0f - rain * 0.4f;
-        }
-        if (thunder > 0.0f) {
-            for (float& c : out.fog) c *= 1.0f - thunder * 0.5f;
-        }
+    out.draw_sky = in.medium != Medium::PowderSnow && in.medium != Medium::Lava &&
+                   in.skybox != Skybox::None;
+    if (in.skybox == Skybox::Overworld) {
+        out.sun_angle = probe.number(SunAngle, partial) * kDegreesToRadians;
+        out.moon_angle = probe.number(MoonAngle, partial) * kDegreesToRadians;
+        out.star_angle = probe.number(StarAngle, partial) * kDegreesToRadians;
+        out.rain_brightness = 1.0f - in.rain;
+        out.star_brightness = probe.number(StarBrightness, partial);
+        out.sunrise_colour = probe.colour(SunriseSunsetColor, partial);
+        out.moon_phase = moon_phase_index(probe.value(MoonPhase).text);
+        out.sky_colour = probe.colour(SkyColor, partial);
+        const double horizon = in.flat_world ? static_cast<double>(in.min_y) : 63.0;
+        out.dark_disc = in.eye[1] - horizon < 0.0;
     }
 
-    // Towards the bottom of the world the fog darkens to black.
-    if (in.medium != Medium::Lava) {
-        double fade = (in.eye_y - static_cast<double>(in.min_y)) * (in.flat_world ? 1.0 : 1.0 / 32.0);
-        if (fade < 1.0) {
-            fade = std::max(fade, 0.0);
-            fade *= fade;
-            for (float& c : out.fog) c *= static_cast<float>(fade);
-        }
-    }
+    out.cloud_colour = probe.colour(CloudColor, partial);
+    out.cloud_height = probe.number(CloudHeight, partial);
 
-    const double horizon = in.flat_world ? static_cast<double>(in.min_y) : in.sea_level;
-    out.dark_disc = in.eye_y - horizon < 0.0;
-
-    // Rain dims the sky's share of the light the way it dims the day, down
-    // to the night's floor and no further.
-    const float factor = values.number(SkyLightFactor);
-    constexpr float kNightFloor = 0.24f;
-    if (factor > kNightFloor) {
-        const float dim = (1.0f - rain * 5.0f / 16.0f) * (1.0f - thunder * 5.0f / 16.0f);
-        out.sky_factor = kNightFloor + (factor - kNightFloor) * dim;
-    } else {
-        out.sky_factor = factor;
-    }
-    unpack_rgb(values.colour(SkyLightColor), out.sky_light_colour);
-    out.ambient_factor = in.ambient_light;
-    out.brightness = in.gamma;
+    const uint32_t sky_light = probe.colour(SkyLightColor, partial);
+    out.ambient_light_factor = in.ambient_light;
+    out.sky_factor = probe.number(SkyLightFactor, partial);
+    out.block_factor = in.block_flicker + 1.5f;
+    out.night_vision_factor = in.night_vision;
+    out.darkness_scale = 0.0f;
+    out.darken_world_factor = in.darken_world;
+    out.brightness_factor = std::max(0.0f, in.gamma);
+    out.sky_light_colour[0] = argb::red_float(sky_light);
+    out.sky_light_colour[1] = argb::green_float(sky_light);
+    out.sky_light_colour[2] = argb::blue_float(sky_light);
+    fill_lightmap(out);
     return out;
 }
 
-void lightmap(const Atmosphere& a, float sky_level, float block_level, float out[3]) {
+void lightmap_texel(const Atmosphere& a, int32_t block_level, int32_t sky_level, float out[3]) {
     const auto brightness = [](float level) { return level / (4.0f - 3.0f * level); };
-    const float block = brightness(std::floor(block_level) / 15.0f) * a.block_factor;
-    const float sky = brightness(std::floor(sky_level) / 15.0f) * a.sky_factor;
+    const float block = brightness(static_cast<float>(block_level) / 15.0f) * a.block_factor;
+    const float sky = brightness(static_cast<float>(sky_level) / 15.0f) * a.sky_factor;
     float c[3] = {block, block * ((block * 0.6f + 0.4f) * 0.6f + 0.4f),
                   block * (block * block * 0.6f + 0.4f)};
     for (int i = 0; i < 3; ++i) {
-        c[i] = c[i] + (1.0f - c[i]) * a.ambient_factor;
+        c[i] = lerp(a.ambient_light_factor, c[i], a.ambient_colour[i]);
         c[i] += a.sky_light_colour[i] * sky;
-        c[i] = c[i] + (0.75f - c[i]) * 0.04f;
-        c[i] = std::clamp(c[i], 0.0f, 1.0f);
+        c[i] = lerp(0.04f, c[i], 0.75f);
     }
-    const float top = std::max({c[0], c[1], c[2]});
+    if (a.ambient_light_factor == 0.0f) {
+        const float darkened[3] = {c[0] * 0.7f, c[1] * 0.6f, c[2] * 0.6f};
+        for (int i = 0; i < 3; ++i) c[i] = lerp(a.darken_world_factor, c[i], darkened[i]);
+    }
+    if (a.night_vision_factor > 0.0f) {
+        const float top = std::max(c[0], std::max(c[1], c[2]));
+        if (top < 1.0f) {
+            for (float& channel : c) channel = lerp(a.night_vision_factor, channel, channel / top);
+        }
+    }
+    if (a.ambient_light_factor == 0.0f) {
+        for (float& channel : c) channel -= a.darkness_scale;
+    }
+    for (float& channel : c) channel = std::clamp(channel, 0.0f, 1.0f);
+    const float top = std::max(std::max(c[0], c[1]), c[2]);
     const float inverted = 1.0f - top;
     const float scaled = 1.0f - inverted * inverted * inverted * inverted;
     for (int i = 0; i < 3; ++i) {
-        const float lifted = top > 0.0f ? c[i] * (scaled / top) : 0.0f;
-        c[i] = c[i] + (lifted - c[i]) * a.brightness;
-        out[i] = c[i] + (0.75f - c[i]) * 0.04f;
+        const float lifted = c[i] * (scaled / top);
+        c[i] = lerp(a.brightness_factor, c[i], lifted);
+        out[i] = lerp(0.04f, c[i], 0.75f);
     }
 }
 
-std::vector<BiomeWeight> biome_weights(double x, double y, double z,
-                                       const std::function<int32_t(int32_t, int32_t, int32_t)>& biome_at) {
-    const double qx = (x - 2.0) * 0.25;
-    const double qy = (y - 2.0) * 0.25;
-    const double qz = (z - 2.0) * 0.25;
-    const auto ix = static_cast<int32_t>(std::floor(qx));
-    const auto iy = static_cast<int32_t>(std::floor(qy));
-    const auto iz = static_cast<int32_t>(std::floor(qz));
-    const double fx = qx - ix;
-    const double fy = qy - iy;
-    const double fz = qz - iz;
-    const auto weight = [](double f, int i) {
-        return kGaussian[i + 1] + (kGaussian[i] - kGaussian[i + 1]) * f;
-    };
-    std::map<int32_t, double> sums;
-    for (int dx = 0; dx < 6; ++dx) {
-        const double wx = weight(fx, dx);
-        for (int dy = 0; dy < 6; ++dy) {
-            const double wy = weight(fy, dy);
-            for (int dz = 0; dz < 6; ++dz) {
-                const double w = wx * wy * weight(fz, dz);
-                if (w <= 0.0) continue;
-                const int32_t biome = biome_at(ix - 2 + dx, iy - 2 + dy, iz - 2 + dz);
-                if (biome < 0) continue;
-                sums[biome] += w;
+void fill_lightmap(Atmosphere& a) {
+    for (int32_t sky = 0; sky < 16; ++sky) {
+        for (int32_t block = 0; block < 16; ++block) {
+            float rgb[3];
+            lightmap_texel(a, block, sky, rgb);
+            uint8_t* texel = &a.lightmap[static_cast<size_t>(sky * 16 + block) * 4];
+            for (int i = 0; i < 3; ++i) {
+                texel[i] = static_cast<uint8_t>(std::lround(std::clamp(rgb[i], 0.0f, 1.0f) * 255.0f));
             }
+            texel[3] = 255;
         }
     }
-    std::vector<BiomeWeight> out;
-    out.reserve(sums.size());
-    for (const auto& [biome, w] : sums) out.push_back({static_cast<size_t>(biome), w});
-    return out;
 }
 
 } // namespace mcpp::world

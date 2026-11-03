@@ -2,6 +2,7 @@
 
 #include "mcpp/gpu/outline.hpp"
 #include "mcpp/gpu/sky.hpp"
+#include "vk_util.hpp"
 
 #include "mcpp/byte_buffer.hpp"
 
@@ -55,6 +56,14 @@ void parallel_for(size_t count, Body&& body) {
 constexpr VkFormat kColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+// The game's cutout layer drops texels under half alpha; its translucent layer
+// only the nearly invisible ones.
+constexpr float kCutout = 0.5f;
+constexpr float kTranslucentCutout = 0.01f;
+constexpr uint32_t kFrameSlots = 3;
+constexpr uint32_t kFrameSlotBytes = 2048;
+constexpr uint32_t kFrameUniformBytes = 32;
+constexpr uint32_t kLightmapOffset = 1024;
 
 void check(VkResult result, std::string_view what) {
     if (result != VK_SUCCESS) {
@@ -183,62 +192,17 @@ float dot(const float a[3], const float b[3]) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-// Column-major, Vulkan clip space: y points down. Depth is reversed - near maps
-// to 1 and far to 0 - which pairs with a depth buffer cleared to 0 and a GREATER
-// test, and keeps float precision where it is needed.
 Mat4 view_projection(const Camera& camera, float aspect) {
-    float forward[3] = {camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1],
-                        camera.target[2] - camera.eye[2]};
-    normalise(forward);
-
-    const float world_up[3] = {0.0f, 1.0f, 0.0f};
-    float right[3];
-    cross(forward, world_up, right);
-    normalise(right);
-    float up[3];
-    cross(right, forward, up);
-
-    if (camera.roll_degrees != 0.0f) {
-        const float angle = camera.roll_degrees * 3.14159265f / 180.0f;
-        const float c = std::cos(angle);
-        const float s = std::sin(angle);
-        float rolled_right[3];
-        float rolled_up[3];
-        for (int i = 0; i < 3; ++i) {
-            rolled_right[i] = right[i] * c + up[i] * s;
-            rolled_up[i] = up[i] * c - right[i] * s;
+    const Matrix4 combined = camera_projection(camera, aspect) * [&] {
+        Matrix4 view = camera_rotation(camera);
+        for (int row = 0; row < 3; ++row) {
+            view.m[12 + row] = -(view.m[row] * camera.eye[0] + view.m[4 + row] * camera.eye[1] +
+                                 view.m[8 + row] * camera.eye[2]);
         }
-        for (int i = 0; i < 3; ++i) {
-            right[i] = rolled_right[i];
-            up[i] = rolled_up[i];
-        }
-    }
-
-    const float f = 1.0f / std::tan(camera.fov_degrees * 3.14159265f / 360.0f);
-    const float a = camera.near_plane;
-    const float b = camera.far_plane;
-
-    const float view[16] = {
-        right[0],              up[0],              -forward[0],            0.0f,
-        right[1],              up[1],              -forward[1],            0.0f,
-        right[2],              up[2],              -forward[2],            0.0f,
-        -dot(right, camera.eye), -dot(up, camera.eye), dot(forward, camera.eye), 1.0f,
-    };
-    const float projection[16] = {
-        f / aspect, 0.0f,  0.0f,            0.0f,
-        0.0f,       -f,    0.0f,            0.0f,
-        0.0f,       0.0f,  a / (b - a),    -1.0f,
-        0.0f,       0.0f,  a * b / (b - a), 0.0f,
-    };
-
+        return view;
+    }();
     Mat4 out{};
-    for (int column = 0; column < 4; ++column) {
-        for (int row = 0; row < 4; ++row) {
-            float sum = 0.0f;
-            for (int k = 0; k < 4; ++k) sum += projection[k * 4 + row] * view[column * 4 + k];
-            out.m[column * 4 + row] = sum;
-        }
-    }
+    std::copy(std::begin(combined.m), std::end(combined.m), out.m);
     return out;
 }
 
@@ -254,12 +218,69 @@ VkShaderModule make_module(VkDevice device, std::span<const uint32_t> words) {
 
 } // namespace
 
+Matrix4 operator*(const Matrix4& a, const Matrix4& b) {
+    Matrix4 out{};
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; ++k) sum += a.m[k * 4 + row] * b.m[column * 4 + k];
+            out.m[column * 4 + row] = sum;
+        }
+    }
+    return out;
+}
+
+Matrix4 camera_rotation(const Camera& camera) {
+    float forward[3] = {camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1],
+                        camera.target[2] - camera.eye[2]};
+    normalise(forward);
+    const float world_up[3] = {0.0f, 1.0f, 0.0f};
+    float right[3];
+    cross(forward, world_up, right);
+    normalise(right);
+    float up[3];
+    cross(right, forward, up);
+    if (camera.roll_degrees != 0.0f) {
+        const float angle = camera.roll_degrees * 3.14159265f / 180.0f;
+        const float c = std::cos(angle);
+        const float s = std::sin(angle);
+        float rolled_right[3];
+        float rolled_up[3];
+        for (int i = 0; i < 3; ++i) {
+            rolled_right[i] = right[i] * c + up[i] * s;
+            rolled_up[i] = up[i] * c - right[i] * s;
+        }
+        for (int i = 0; i < 3; ++i) {
+            right[i] = rolled_right[i];
+            up[i] = rolled_up[i];
+        }
+    }
+    return Matrix4{{
+        right[0], up[0], -forward[0], 0.0f,
+        right[1], up[1], -forward[1], 0.0f,
+        right[2], up[2], -forward[2], 0.0f,
+        0.0f,     0.0f,  0.0f,        1.0f,
+    }};
+}
+
+Matrix4 camera_projection(const Camera& camera, float aspect) {
+    const float f = 1.0f / std::tan(camera.fov_degrees * 3.14159265f / 360.0f);
+    const float a = camera.near_plane;
+    const float b = camera.far_plane;
+    return Matrix4{{
+        f / aspect, 0.0f,  0.0f,            0.0f,
+        0.0f,       -f,    0.0f,            0.0f,
+        0.0f,       0.0f,  a / (b - a),    -1.0f,
+        0.0f,       0.0f,  a * b / (b - a), 0.0f,
+    }};
+}
+
 // Outside the anonymous namespace so a member function can take one.
 struct PushConstants {
     Mat4 view_projection;
     float origin[4];   // the section's corner in world space
-    float eye[4];      // camera in world space, w is where the fog starts
-    float sky[4];      // what the fog fades into, w is where it finishes
+    float eye[4];      // camera in world space, w the alpha below which a texel is cut
+    float extra[4];
 };
 
 WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
@@ -467,7 +488,35 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
         biome_colours_[i * 4 + 3] = 0x8F7A36u;
     }
 
-    VkDescriptorSetLayoutBinding bindings[2]{};
+    {
+        const auto buffer = vk::mapped_buffer(device_, kFrameSlots * kFrameSlotBytes,
+                                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+                                                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        frame_data_ = {buffer.buffer, buffer.memory, buffer.mapped, buffer.size};
+        const auto image = vk::updatable_image(device_, VK_FORMAT_R8G8B8A8_UNORM, 16, 16);
+        lightmap_ = {image.image, image.memory, image.view};
+    }
+    lightmap_sampler_ = vk::sampler(device_.handle(), VK_FILTER_LINEAR,
+                                    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    // The lightmap image was made as an array view; the shader wants a plain one.
+    VkImageViewCreateInfo plain{};
+    plain.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    plain.image = lightmap_.image;
+    plain.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    plain.format = VK_FORMAT_R8G8B8A8_UNORM;
+    plain.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    check(vkCreateImageView(device_.handle(), &plain, nullptr, &lightmap_view_),
+          "vkCreateImageView lightmap");
+
+    VkDescriptorSetLayoutBinding bindings[4]{};
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1;
@@ -479,20 +528,22 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
 
     VkDescriptorSetLayoutCreateInfo layout{};
     layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout.bindingCount = 2;
+    layout.bindingCount = 4;
     layout.pBindings = bindings;
     check(vkCreateDescriptorSetLayout(device_.handle(), &layout, nullptr, &set_layout_),
           "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[2]{};
+    VkDescriptorPoolSize sizes[3]{};
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sizes[0].descriptorCount = 1;
+    sizes[0].descriptorCount = 2;
     sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     sizes[1].descriptorCount = 1;
+    sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    sizes[2].descriptorCount = 1;
     VkDescriptorPoolCreateInfo pool_create{};
     pool_create.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_create.maxSets = 1;
-    pool_create.poolSizeCount = 2;
+    pool_create.poolSizeCount = 3;
     pool_create.pPoolSizes = sizes;
     check(vkCreateDescriptorPool(device_.handle(), &pool_create, nullptr, &descriptor_pool_),
           "vkCreateDescriptorPool");
@@ -513,7 +564,27 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     buffer_info.buffer = biome_buffer_;
     buffer_info.range = VK_WHOLE_SIZE;
 
-    VkWriteDescriptorSet writes[2]{};
+    VkDescriptorBufferInfo frame_info{};
+    frame_info.buffer = frame_data_.buffer;
+    frame_info.range = kFrameUniformBytes;
+    VkDescriptorImageInfo lightmap_info{};
+    lightmap_info.sampler = lightmap_sampler_;
+    lightmap_info.imageView = lightmap_view_;
+    lightmap_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet writes[4]{};
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = descriptor_set_;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    writes[2].pBufferInfo = &frame_info;
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = descriptor_set_;
+    writes[3].dstBinding = 3;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[3].pImageInfo = &lightmap_info;
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descriptor_set_;
     writes[0].dstBinding = 0;
@@ -526,7 +597,7 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[1].pBufferInfo = &buffer_info;
-    vkUpdateDescriptorSets(device_.handle(), 2, writes, 0, nullptr);
+    vkUpdateDescriptorSets(device_.handle(), 4, writes, 0, nullptr);
 }
 
 void WorldRenderer::create_targets() {
@@ -695,8 +766,8 @@ void WorldRenderer::create_pipeline() {
     VkResult result = vkCreateGraphicsPipelines(device_.handle(), device_.pipeline_cache(), 1,
                                                 &create, nullptr, &pipeline_);
     if (result == VK_SUCCESS) {
-        // Water and glass: blended, and writing no depth, or the surface would
-        // hide whatever is behind it in the same pass.
+        // Water and glass: blended over what is already drawn, back to front,
+        // and writing depth like the game's translucent layer does.
         blend_attachment.blendEnable = VK_TRUE;
         blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
         blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -704,7 +775,6 @@ void WorldRenderer::create_pipeline() {
         blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
         blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
-        depth.depthWriteEnable = VK_FALSE;
         result = vkCreateGraphicsPipelines(device_.handle(), device_.pipeline_cache(), 1, &create,
                                            nullptr, &blended_pipeline_);
     }
@@ -1268,8 +1338,11 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push) 
         }
         if (index_count_ > opaque_index_count_) {
             vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
+            push.eye[3] = kTranslucentCutout;
+            send(none);
             vkCmdDrawIndexed(command, index_count_ - opaque_index_count_, 1,
                              opaque_index_count_, 0, 0);
+            push.eye[3] = kCutout;
             vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         }
         drawn_triangles_ = index_count_ / 3;
@@ -1310,6 +1383,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push) 
     });
 
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
+    push.eye[3] = kTranslucentCutout;
     for (const auto* section : visible_) {
         const uint32_t count = section->index_count - section->opaque_count;
         if (count == 0) continue;
@@ -1318,6 +1392,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push) 
                          section->vertex_offset, 0);
         drawn_triangles_ += count / 3;
     }
+    push.eye[3] = kCutout;
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 }
 
@@ -1332,6 +1407,20 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestamps_, 0);
     // Outside the pass, because the index buffer is written to.
     sort_translucent(command, camera);
+
+    // This frame's fog and lightmap, in a slot no frame still in flight reads.
+    const uint32_t slot = static_cast<uint32_t>(frames_recorded_ % kFrameSlots);
+    auto* frame = static_cast<uint8_t*>(frame_data_.mapped) + slot * kFrameSlotBytes;
+    const float fog_uniform[8] = {atmosphere_.fog_colour[0], atmosphere_.fog_colour[1],
+                                  atmosphere_.fog_colour[2], atmosphere_.fog_colour[3],
+                                  atmosphere_.fog_start, atmosphere_.fog_end,
+                                  atmosphere_.render_fog_start, atmosphere_.render_fog_end};
+    std::memcpy(frame, fog_uniform, sizeof(fog_uniform));
+    std::memcpy(frame + kLightmapOffset, atmosphere_.lightmap.data(), atmosphere_.lightmap.size());
+    vk::record_image_update(command, lightmap_.image, frame_data_.buffer,
+                            slot * kFrameSlotBytes + kLightmapOffset, 16, 16, !lightmap_ready_);
+    lightmap_ready_ = true;
+    frame_offset_ = slot * kFrameSlotBytes;
 
     transition(command, color_, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
@@ -1348,7 +1437,12 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color.clearValue.color = {{fog_[0], fog_[1], fog_[2], 1.0f}};
+    // The game clears to the fog colour as 8-bit channels, rounded down.
+    for (int i = 0; i < 3; ++i) {
+        color.clearValue.color.float32[i] =
+            static_cast<float>(world::argb::as_8bit(atmosphere_.fog_colour[i])) / 255.0f;
+    }
+    color.clearValue.color.float32[3] = 0.0f;
 
     VkRenderingAttachmentInfo depth_attachment{};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -1367,7 +1461,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     rendering.pDepthAttachment = &depth_attachment;
 
     vkCmdBeginRendering(command, &rendering);
-    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, zenith_, fog_);
+    if (sky_ != nullptr) sky_->record(command, camera, width_, height_, atmosphere_);
     if (index_count_ > 0) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width_),
@@ -1380,15 +1474,11 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         push.eye[0] = camera.eye[0];
         push.eye[1] = camera.eye[1];
         push.eye[2] = camera.eye[2];
-        push.eye[3] = camera.fog_start;
-        push.sky[0] = fog_[0];
-        push.sky[1] = fog_[1];
-        push.sky[2] = fog_[2];
-        push.sky[3] = camera.fog_end;
+        push.eye[3] = kCutout;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
-                                &descriptor_set_, 0, nullptr);
+                                &descriptor_set_, 1, &frame_offset_);
 
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
@@ -1399,6 +1489,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
             outline_->record(command, push.view_projection.m, outlined_);
         }
     }
+    if (sky_ != nullptr) sky_->record_clouds(command, camera, width_, height_, atmosphere_);
     vkCmdEndRendering(command);
 
     // What goes on top - a hud, a menu - is drawn into the same image
@@ -1519,14 +1610,8 @@ double WorldRenderer::draw(const Camera& camera) {
     return last_gpu_ms_;
 }
 
-void WorldRenderer::set_sky_colours(uint32_t zenith, uint32_t fog) {
-    const auto unpack = [](uint32_t packed, float out[3]) {
-        out[0] = static_cast<float>((packed >> 16) & 0xFF) / 255.0f;
-        out[1] = static_cast<float>((packed >> 8) & 0xFF) / 255.0f;
-        out[2] = static_cast<float>(packed & 0xFF) / 255.0f;
-    };
-    unpack(zenith, zenith_);
-    unpack(fog, fog_);
+void WorldRenderer::set_atmosphere(const world::Atmosphere& atmosphere) {
+    atmosphere_ = atmosphere;
 }
 
 void WorldRenderer::set_biome_colours(std::span<const uint32_t> colours) {
@@ -1540,6 +1625,7 @@ void WorldRenderer::set_biome_colours(std::span<const uint32_t> colours) {
 }
 
 VkFormat WorldRenderer::colour_format() const { return kColorFormat; }
+VkFormat WorldRenderer::depth_format() const { return kDepthFormat; }
 
 std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& overlay) {
     VkCommandBufferAllocateInfo allocate{};
@@ -1589,6 +1675,9 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
           "vkMapMemory");
     std::memcpy(pixels.data(), mapped, pixels.size());
     vkUnmapMemory(device_.handle(), readback_memory_);
+    // What the blending leaves in alpha is never shown; the game's screen
+    // copy takes colour only, and so does a picture of it.
+    for (size_t i = 3; i < pixels.size(); i += 4) pixels[i] = 255;
 
     vkDestroyFence(device_.handle(), fence, nullptr);
     vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
@@ -1608,6 +1697,16 @@ void WorldRenderer::destroy_mesh() {
     }
 }
 
+void WorldRenderer::MappedBuffer::destroy(VkDevice device) {
+    vk::Buffer{buffer, memory, mapped, size}.destroy(device);
+    *this = {};
+}
+
+void WorldRenderer::OwnedImage::destroy(VkDevice device) {
+    vk::Image{image, memory, view}.destroy(device);
+    *this = {};
+}
+
 WorldRenderer::~WorldRenderer() {
     if (device_.handle() == VK_NULL_HANDLE) return;
     vkDeviceWaitIdle(device_.handle());
@@ -1619,6 +1718,10 @@ WorldRenderer::~WorldRenderer() {
     vkDestroyPipeline(device_.handle(), blended_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_.handle(), layout_, nullptr);
     vkDestroyDescriptorPool(device_.handle(), descriptor_pool_, nullptr);
+    frame_data_.destroy(device_.handle());
+    if (lightmap_view_ != VK_NULL_HANDLE) vkDestroyImageView(device_.handle(), lightmap_view_, nullptr);
+    lightmap_.destroy(device_.handle());
+    if (lightmap_sampler_ != VK_NULL_HANDLE) vkDestroySampler(device_.handle(), lightmap_sampler_, nullptr);
     vkDestroyDescriptorSetLayout(device_.handle(), set_layout_, nullptr);
     vkDestroySampler(device_.handle(), sampler_, nullptr);
     vkDestroyImageView(device_.handle(), atlas_view_, nullptr);

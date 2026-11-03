@@ -1,6 +1,7 @@
 #include "client/game.hpp"
 
 #include "mcpp/protocol_versions.hpp"
+#include "mcpp/jmath.hpp"
 #include "mcpp/world/biomes.hpp"
 
 #include <algorithm>
@@ -12,6 +13,92 @@
 
 namespace client {
 namespace {
+
+using mcpp::world::Chunk;
+
+// The biome the game reads at a quarter-block cell: y clamped into the world,
+// and plains where nothing is loaded.
+template <typename FindChunk>
+int32_t biome_cell(FindChunk&& find_chunk, int32_t plains, int32_t qx, int32_t qy, int32_t qz) {
+    const Chunk* chunk = find_chunk(qx >> 2, qz >> 2);
+    if (chunk == nullptr) return plains;
+    const int32_t top = static_cast<int32_t>(chunk->sections.size()) * 4 - 1;
+    const int32_t qy_index = std::clamp(qy - (chunk->min_y >> 2), 0, std::max(top, 0));
+    return chunk->biome_at((qx * 4) & 15, qy_index * 4, (qz * 4) & 15);
+}
+
+template <typename FindChunk>
+mcpp::world::AttributeValues attributes_at(const mcpp::Session& session, int64_t day_time,
+                                           const double eye[3], FindChunk&& find_chunk,
+                                           const mcpp::Weather& weather) {
+    const int32_t plains = std::max(
+        session.registries().index_of("minecraft:worldgen/biome", "minecraft:plains"), 0);
+    const auto cell = [&](int32_t qx, int32_t qy, int32_t qz) {
+        return biome_cell(find_chunk, plains, qx, qy, qz);
+    };
+    const auto weights = mcpp::world::gaussian_biomes(eye[0], eye[1], eye[2], cell);
+    const auto floor_int = [](double v) { return static_cast<int32_t>(std::floor(v)); };
+    const int32_t underfoot =
+        cell(floor_int(eye[0]) >> 2, floor_int(eye[1]) >> 2, floor_int(eye[2]) >> 2);
+    return session.environment().evaluate(
+        day_time, weights, static_cast<size_t>(std::max(underfoot, 0)),
+        {weather.rain_level, weather.thunder_level * weather.rain_level});
+}
+
+// Camera.getFluidInCamera, for the camera's own block: water when below its
+// surface, lava or powder snow when the eye is in them.
+template <typename BlockAt>
+mcpp::world::Medium medium_at(const float eye[3], BlockAt&& block_at,
+                              const mcpp::world::FluidTable& fluids,
+                              const mcpp::world::BlockTable& table) {
+    const int32_t x = static_cast<int32_t>(std::floor(eye[0]));
+    const int32_t y = static_cast<int32_t>(std::floor(eye[1]));
+    const int32_t z = static_cast<int32_t>(std::floor(eye[2]));
+    const int32_t state = block_at(x, y, z);
+    const auto fluid = fluids.at(state);
+    if (fluid.fluid != mcpp::world::Fluid::None) {
+        const bool same_above = fluids.at(block_at(x, y + 1, z)).fluid == fluid.fluid;
+        const float height = same_above ? 1.0f : fluid.own_height();
+        if (eye[1] < static_cast<float>(y) + height) {
+            return fluid.fluid == mcpp::world::Fluid::Water ? mcpp::world::Medium::Water
+                                                            : mcpp::world::Medium::Lava;
+        }
+    }
+    if (state > 0 && table.block_name(state) == "minecraft:powder_snow") {
+        return mcpp::world::Medium::PowderSnow;
+    }
+    return mcpp::world::Medium::Air;
+}
+
+float water_vision(int32_t time) {
+    if (time >= 600) return 1.0f;
+    const float early = std::clamp(static_cast<float>(time) / 100.0f, 0.0f, 1.0f);
+    const float late = time < 100 ? 0.0f
+                                  : std::clamp((static_cast<float>(time) - 100.0f) / 500.0f, 0.0f, 1.0f);
+    return early * 0.6f + late * 0.39999998f;
+}
+
+mcpp::world::AtmosphereInputs inputs_for(const mcpp::Session& session, const mcpp::gpu::Camera& camera,
+                                         int32_t render_distance, const mcpp::Weather& weather) {
+    mcpp::world::AtmosphereInputs in;
+    float forward[3] = {camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1],
+                        camera.target[2] - camera.eye[2]};
+    const float length =
+        std::sqrt(forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]);
+    for (int i = 0; i < 3; ++i) {
+        in.forward[i] = length > 0.0f ? forward[i] / length : 0.0f;
+        in.eye[i] = camera.eye[i];
+    }
+    const auto& dimension = session.dimension();
+    in.min_y = dimension.min_y;
+    in.flat_world = dimension.flat_world;
+    in.render_distance = render_distance;
+    in.rain = weather.rain_level;
+    in.thunder = weather.thunder_level * weather.rain_level;
+    in.skybox = mcpp::world::skybox_named(dimension.skybox);
+    in.ambient_light = dimension.ambient_light;
+    return in;
+}
 
 void forget_chunk(Game& game, int32_t chunk_x, int32_t chunk_z) {
     auto& area = game.world;
@@ -153,7 +240,8 @@ void world_start(Game& game) {
 
     const auto sky_path = mcpp::gpu::Sky::default_path(mcpp::protocol::kTargetProtocol);
     if (std::filesystem::exists(sky_path)) {
-        game.world.sky.emplace(game.device, renderer.colour_format(), sky_path);
+        game.world.sky.emplace(game.device, renderer.colour_format(), renderer.depth_format(),
+                               sky_path);
         renderer.set_sky(&*game.world.sky);
     }
     if (!game.session->biomes().empty()) {
@@ -161,6 +249,9 @@ void world_start(Game& game) {
         maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
         renderer.set_biome_colours(game.session->biomes().tints(maps));
     }
+    game.world.fluids.open(
+        mcpp::world::FluidTable::default_path(mcpp::protocol::kTargetProtocol));
+    game.world.render_distance = game.options.view_distance;
     game.world.outline.emplace(game.device, renderer.colour_format());
     renderer.set_outline(&*game.world.outline);
 
@@ -220,6 +311,88 @@ void world_start(Game& game) {
 }
 
 void world_input(Game&) {}
+
+// The client's own tick: the day moves on between the server's corrections,
+// the camera's attributes are read once a tick, and a frame blends the last
+// two the way the game's probe does.
+void advance_sky(Game& game) {
+    auto& area = game.world;
+    auto& session = *game.session;
+    if (session.environment().selected().empty()) return;
+    const auto& time = session.time();
+    if (time.updates != area.time_updates) {
+        area.time_updates = time.updates;
+        area.day_time = time.day_time;
+        area.game_time = time.game_time;
+        area.time_ticking = time.ticking;
+    }
+    const double eye[3] = {game.camera.eye[0], game.camera.eye[1], game.camera.eye[2]};
+    const auto find_chunk = [&](int32_t cx, int32_t cz) -> const Chunk* {
+        const auto found = area.world.find({cx, cz});
+        return found == area.world.end() ? nullptr : &found->second;
+    };
+    const auto sample = [&] {
+        std::lock_guard lock(area.world_guard);
+        return attributes_at(session, area.day_time, eye, find_chunk, session.weather());
+    };
+    const auto block_at = [&](int32_t x, int32_t y, int32_t z) { return area.block_at(x, y, z); };
+    const auto medium = medium_at(game.camera.eye, block_at, area.fluids, game.table);
+    if (!area.probed) {
+        area.probe.reset(sample());
+        area.probed = true;
+    }
+
+    const double frame_ticks = static_cast<double>(game.dt) * 20.0;
+    area.ticks += frame_ticks;
+    int ticked = 0;
+    while (area.ticks >= 1.0 && ticked < 10) {
+        area.ticks -= 1.0;
+        ++ticked;
+        ++area.game_time;
+        if (area.time_ticking) ++area.day_time;
+        area.probe.tick(sample());
+        mcpp::jmath::LegacyRandom random(static_cast<int64_t>(area.flicker_seed));
+        area.flicker += (random.next_float() - random.next_float()) * random.next_float() *
+                        random.next_float() * 0.1f;
+        area.flicker *= 0.9f;
+        area.flicker_seed = static_cast<uint64_t>(random.next_long());
+        if (medium == mcpp::world::Medium::Water) {
+            area.water_vision_time = std::clamp(area.water_vision_time + 1, 0, 600);
+        } else if (area.water_vision_time > 0) {
+            area.water_vision_time = std::clamp(area.water_vision_time - 10, 0, 600);
+        }
+    }
+    if (ticked == 10) area.ticks = 0.0;
+    area.partial = static_cast<float>(area.ticks);
+
+    auto in = inputs_for(session, game.camera, area.render_distance, session.weather());
+    in.medium = medium;
+    in.water_vision = water_vision(area.water_vision_time);
+    in.block_flicker = area.flicker;
+    {
+        const int32_t x = static_cast<int32_t>(std::floor(eye[0]));
+        const int32_t y = static_cast<int32_t>(std::floor(eye[1]));
+        const int32_t z = static_cast<int32_t>(std::floor(eye[2]));
+        int32_t sky_light = 15;
+        bool precipitation = true;
+        {
+            std::lock_guard lock(area.world_guard);
+            if (const auto* chunk = find_chunk(x >> 4, z >> 4)) {
+                const int32_t index = chunk->index_of(y);
+                if (index >= 0 && index < static_cast<int32_t>(chunk->sections.size()) * 16) {
+                    sky_light = chunk->sky_light_at(x & 15, index, z & 15);
+                    const auto* biome = session.biomes().at(
+                        static_cast<size_t>(std::max(chunk->biome_at(x & 15, index, z & 15), 0)));
+                    if (biome != nullptr) precipitation = biome->has_precipitation;
+                }
+            }
+        }
+        area.rain_fog.update(in.rain, sky_light, precipitation, static_cast<float>(frame_ticks));
+    }
+    in.rain_fog = area.rain_fog.multiplier;
+    game.renderer->set_atmosphere(mcpp::world::atmosphere(area.probe, area.partial, in));
+    if (area.sky) area.sky->set_cloud_time(area.game_time, area.partial);
+}
 
 void world_tick(Game& game) {
     auto& area = game.world;
@@ -297,22 +470,7 @@ void world_tick(Game& game) {
         }
     }
 
-    // The sky is the standing biome's, so walking from a plains into a
-    // taiga changes the colour overhead the way it does in the game.
-    if (game.tick_due && !session.biomes().empty()) {
-        const float* eye = game.player.eye;
-        const int32_t cx = static_cast<int32_t>(std::floor(eye[0] / 16.0));
-        const int32_t cz = static_cast<int32_t>(std::floor(eye[2] / 16.0));
-        std::lock_guard lock(area.world_guard);
-        if (const auto found = area.world.find({cx, cz}); found != area.world.end()) {
-            const int32_t biome = found->second.biome_at(
-                static_cast<int32_t>(std::floor(eye[0])) & 15,
-                found->second.index_of(static_cast<int32_t>(std::floor(eye[1]))),
-                static_cast<int32_t>(std::floor(eye[2])) & 15);
-            renderer.set_sky_colours(
-                session.biomes().sky(static_cast<size_t>(std::max(biome, 0))), 0xC0D8FFu);
-        }
-    }
+    advance_sky(game);
 }
 
 void world_draw(Game&) {}
@@ -343,6 +501,42 @@ void world_predict_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t st
     if ((x & 15) == 15) area.dirty.insert({chunk_x + 1, chunk_z});
     if ((z & 15) == 0) area.dirty.insert({chunk_x, chunk_z - 1});
     if ((z & 15) == 15) area.dirty.insert({chunk_x, chunk_z + 1});
+}
+
+} // namespace client
+
+namespace client {
+
+mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
+                                             const std::vector<mcpp::world::Chunk>& chunks,
+                                             const mcpp::gpu::Camera& camera,
+                                             std::string_view options) {
+    int64_t day_time = session.time().day_time;
+    int32_t render_distance = 12;
+    mcpp::Weather weather = session.weather();
+    while (!options.empty()) {
+        const size_t comma = options.find(',');
+        const std::string_view option = options.substr(0, comma);
+        options = comma == std::string_view::npos ? std::string_view{} : options.substr(comma + 1);
+        const size_t equals = option.find('=');
+        if (equals == std::string_view::npos) continue;
+        const std::string key(option.substr(0, equals));
+        const std::string value(option.substr(equals + 1));
+        if (key == "t") day_time = std::stoll(value);
+        if (key == "rd") render_distance = std::stoi(value);
+        if (key == "rain") weather.rain_level = std::stof(value);
+        if (key == "thunder") weather.thunder_level = std::stof(value);
+    }
+    const auto find_chunk = [&](int32_t cx, int32_t cz) -> const mcpp::world::Chunk* {
+        for (const auto& chunk : chunks) {
+            if (chunk.x == cx && chunk.z == cz) return &chunk;
+        }
+        return nullptr;
+    };
+    const double eye[3] = {camera.eye[0], camera.eye[1], camera.eye[2]};
+    mcpp::world::AttributeProbe probe;
+    probe.reset(attributes_at(session, day_time, eye, find_chunk, weather));
+    return mcpp::world::atmosphere(probe, 0.0f, inputs_for(session, camera, render_distance, weather));
 }
 
 } // namespace client
