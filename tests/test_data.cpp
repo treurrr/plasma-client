@@ -2,6 +2,7 @@
 #include "mcpp/proto/components.hpp"
 #include "mcpp/proto/metadata.hpp"
 #include "mcpp/session.hpp"
+#include "mcpp/status.hpp"
 
 #include <format>
 #include <iostream>
@@ -358,6 +359,15 @@ void test_packets() {
 
 // Layouts the server has not sent here but other servers will, checked
 // against the table rather than bytes: every named type it refers to exists.
+// A server icon is a data url; the first bytes of every PNG, in base64.
+void test_favicon() {
+    const auto png = mcpp::status::decode_base64("iVBORw0KGgo=");
+    const std::vector<uint8_t> magic = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    check(png == magic, "the png signature");
+    check(mcpp::status::decode_base64("TWFu") == std::vector<uint8_t>{'M', 'a', 'n'}, "Man");
+    check(mcpp::status::decode_base64("a*b").empty(), "not base64");
+}
+
 void test_table() {
     const std::string problem = mcpp::proto::check_layouts();
     check(problem.empty(), problem);
@@ -372,6 +382,7 @@ int main() {
     test_inventory();
     test_entity_data();
     test_packets();
+    test_favicon();
     test_table();
     if (failures != 0) {
         std::cerr << failures << " failures\n";
