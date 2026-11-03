@@ -197,6 +197,7 @@ void Session::fail(std::string reason) {
 }
 
 void Session::send(int32_t id, const ByteBuffer& payload) {
+    if (playback_.is_open()) return;   // a recording has nobody to answer
     std::lock_guard guard(send_mutex_);
     connection_.send(id, payload);
 }
@@ -850,16 +851,69 @@ void Session::connect() {
 #endif
     }
 
+    if (!options_.replay.empty()) {
+        playback_.open(options_.replay, std::ios::binary);
+        char magic[4]{};
+        playback_.read(magic, 4);
+        if (!playback_ || std::string_view(magic, 4) != "PLRC") {
+            fail(std::format("{} is not a recording", options_.replay.string()));
+        }
+        profile_name_ = options_.username;
+        state_ = SessionState::Configuration;
+        status(std::format("playing back {}", options_.replay.string()));
+        return;
+    }
+
     handshake();
     run_login();
     begin_configuration();
+    if (!options_.record.empty()) {
+        recording_.open(options_.record, std::ios::binary | std::ios::trunc);
+        recording_.write("PLRC", 4);
+    }
 }
 
-bool Session::has_data() const { return connection_.socket().readable(); }
+bool Session::has_data() const {
+    if (playback_.is_open()) return playback_.good() && playback_.rdbuf()->in_avail() != 0;
+    return connection_.socket().readable();
+}
+
+// One record: the state it arrived in, the id, the length and the bytes.
+bool Session::next_from_playback(PacketConnection::Packet& packet) {
+    uint8_t state = 0;
+    uint32_t length = 0;
+    playback_.read(reinterpret_cast<char*>(&state), 1);
+    playback_.read(reinterpret_cast<char*>(&packet.id), sizeof(packet.id));
+    playback_.read(reinterpret_cast<char*>(&length), sizeof(length));
+    if (!playback_) return false;
+    std::vector<uint8_t> bytes(length);
+    playback_.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(length));
+    if (!playback_) return false;
+    packet.data = ByteBuffer(std::move(bytes));
+    return true;
+}
 
 bool Session::pump() {
     if (state_ == SessionState::Closed) return false;
-    auto packet = connection_.receive();
+    PacketConnection::Packet packet;
+    if (playback_.is_open()) {
+        if (!next_from_playback(packet)) {
+            state_ = SessionState::Closed;
+            return false;
+        }
+    } else {
+        packet = connection_.receive();
+        if (recording_.is_open() && (state_ == SessionState::Configuration ||
+                                     state_ == SessionState::Play)) {
+            const auto state = static_cast<uint8_t>(state_ == SessionState::Play ? 2 : 1);
+            const auto& bytes = packet.data.data();
+            const auto length = static_cast<uint32_t>(bytes.size());
+            recording_.write(reinterpret_cast<const char*>(&state), 1);
+            recording_.write(reinterpret_cast<const char*>(&packet.id), sizeof(packet.id));
+            recording_.write(reinterpret_cast<const char*>(&length), sizeof(length));
+            recording_.write(reinterpret_cast<const char*>(bytes.data()), length);
+        }
+    }
     if (state_ == SessionState::Configuration) return handle_configuration(packet);
     if (state_ == SessionState::Play) {
         const size_t size = packet.data.remaining();

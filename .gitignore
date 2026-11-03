@@ -11,3 +11,6 @@ docs/HORIZON-*.md
 build-strict/
 __pycache__/
 *.pyc
+
+# Recorded worlds: server output, made locally with `plasma-client record`.
+/corpus/

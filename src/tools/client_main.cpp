@@ -431,6 +431,41 @@ int do_churn(const std::string& target, size_t chunk_limit, int rounds) {
     return 0;
 }
 
+// Records a world to a file: every packet from configuration on, until the
+// given number of chunks has arrived, plus a moment more so the light and the
+// entities that follow them are in it too.
+int do_record(const std::string& target, const std::string& file, size_t chunk_limit) {
+    const auto address = parse_address(target);
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    std::string username = "PlasmaShot";
+    options.profile = signed_in_profile(username);
+    options.username = username;
+    options.record = file;
+
+    size_t chunks = 0;
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.on_chunk = [&](const mcpp::world::Chunk&) { ++chunks; };
+    mcpp::Session session(options, events);
+    session.connect();
+    std::optional<std::chrono::steady_clock::time_point> enough;
+    while (true) {
+        if (chunks >= chunk_limit && !enough) enough = std::chrono::steady_clock::now();
+        if (enough && std::chrono::steady_clock::now() - *enough > std::chrono::seconds(2)) break;
+        try {
+            if (!session.pump()) break;
+        } catch (const mcpp::TimeoutError&) {
+            break;
+        }
+    }
+    session.close();
+    std::cout << std::format("- {} chunks recorded to {} ({:.1f} MB)\n", chunks, file,
+                             static_cast<double>(std::filesystem::file_size(file)) / 1e6);
+    return chunks == 0 ? 1 : 0;
+}
+
 int do_bench(const std::string& target, size_t chunk_limit, size_t frames, uint32_t width,
              uint32_t height) {
 
@@ -1333,7 +1368,7 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
 int do_worldshot(const std::string& target, const std::string& out_path, size_t chunk_limit,
                  const std::string& view, const std::string& overlay_kind) {
-    const auto address = parse_address(target);
+    const auto address = parse_address(target.starts_with("replay:") ? "localhost" : target);
     mcpp::world::BlockTable table;
     if (!table.open(mcpp::world::BlockTable::default_path(mcpp::protocol::kTargetProtocol))) {
         std::cerr << "no block table; bake one with tools/bake_block_table.py\n";
@@ -1345,8 +1380,14 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     std::atomic<bool> enough{false};
 
     mcpp::SessionOptions options;
-    options.host = address.host;
-    options.port = address.port;
+    // replay:<file> draws a recorded world instead of asking a server, so a
+    // picture taken today can be taken again next week and compared.
+    if (target.starts_with("replay:")) {
+        options.replay = target.substr(7);
+    } else {
+        options.host = address.host;
+        options.port = address.port;
+    }
     std::string username = "PlasmaShot";
     options.profile = signed_in_profile(username);
     options.username = username;
@@ -1363,7 +1404,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     session.connect();
     while (!enough.load()) {
         try {
-            session.pump();
+            if (!session.pump()) break;
         } catch (const mcpp::TimeoutError&) {
             break;
         }
@@ -2570,6 +2611,9 @@ int main(int argc, char** argv) {
             const uint32_t width = argc > 3 ? static_cast<uint32_t>(std::stoul(argv[3])) : 1280;
             const uint32_t height = argc > 4 ? static_cast<uint32_t>(std::stoul(argv[4])) : 720;
             return do_render(out, width, height);
+        }
+        if (command == "record" && argc > 3) {
+            return do_record(argv[2], argv[3], argc > 4 ? std::stoul(argv[4]) : 200);
         }
         if (command == "churn" && argc > 2) {
             return do_churn(argv[2], argc > 3 ? std::stoul(argv[3]) : 64,

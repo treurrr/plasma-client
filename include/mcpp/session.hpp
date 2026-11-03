@@ -11,6 +11,7 @@
 #include <array>
 #include <map>
 #include <set>
+#include <fstream>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -40,6 +41,12 @@ struct SessionOptions {
     bool debug_packets = false;
     std::filesystem::path lang_file = Translations::default_path();
     std::filesystem::path chunk_dump;
+    // A recording is every packet from configuration onwards, as it arrived.
+    // Played back, the same handlers see the same packets, so a screenshot of
+    // a recording is the screenshot of that world, every time: a server that
+    // generates more terrain, or a world that is reset, changes nothing.
+    std::filesystem::path record;
+    std::filesystem::path replay;
 };
 
 // Everything the server says about another thing in the world, as of the last
@@ -191,6 +198,9 @@ private:
     int32_t sequence_ = 0;
     bool announced_loaded_ = false;
     bool in_bundle_ = false;
+    std::ofstream recording_;
+    std::ifstream playback_;
+    bool next_from_playback(PacketConnection::Packet& packet);
     std::set<int32_t> part_read_;
     // Where the player last was, by the server's word or by our own movement:
     // what a relative teleport is an offset from.
