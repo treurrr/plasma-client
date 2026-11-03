@@ -56,6 +56,32 @@ struct SessionEvents {
     std::function<void(int32_t)> on_entity_remove;
 };
 
+// One stack in a slot. An empty slot is a count of zero. `readable` goes false
+// when the stack carried data components, whose bodies differ per component
+// type: the id and count before them are still right, the slots after it in
+// the same packet are not.
+struct ItemStack {
+    int32_t id = 0;
+    int32_t count = 0;
+    bool readable = true;
+};
+
+// The player's own inventory, in the order the server sends it: a crafting
+// result, the crafting grid, the four armour slots, the three main rows, the
+// hotbar, and the off hand.
+struct Inventory {
+    static constexpr size_t kSlots = 46;
+    static constexpr size_t kHotbarFirst = 36;
+    static constexpr size_t kHotbarSlots = 9;
+    static constexpr size_t kOffhand = 45;
+
+    std::array<ItemStack, kSlots> slots{};
+    ItemStack carried{};
+    int32_t held = 0;   // which of the nine the player has in hand
+
+    const ItemStack& hotbar(size_t index) const { return slots[kHotbarFirst + index]; }
+};
+
 // Offline mode only: a server in online-mode sends an encryption request, which
 // needs a Microsoft session we do not have yet.
 class Session {
@@ -73,6 +99,9 @@ public:
     // Biomes in the order the server sent them, which is the order a chunk's
     // palette indexes into.
     const world::BiomeTable& biomes() const { return biomes_; }
+    const Inventory& inventory() const { return inventory_; }
+    // Switches the hand locally and tells the server, the way the wheel does.
+    void send_held_slot(int32_t slot);
     // One tick of being a player rather than a viewer. Vanilla wants the tick
     // marker before the position, or it ignores the movement entirely.
     void send_position(double x, double y, double z, float yaw, float pitch, bool on_ground);
@@ -87,6 +116,8 @@ public:
 
 private:
     bool light_format_warned_ = false;
+    bool slot_format_warned_ = false;
+    Inventory inventory_;
     bool player_list_broken_ = false;
     int32_t ping_ms_ = -1;
 

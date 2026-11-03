@@ -2,6 +2,7 @@
 #include "mcpp/gpu/text.hpp"
 #include "mcpp/gpu/ui.hpp"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,12 @@ struct HudState {
     std::vector<std::string> chat;
     bool typing = false;
     std::string compose;
+    // The nine the player can reach, as item ids with their stack sizes, and
+    // which of them is in hand. An id of zero is an empty slot.
+    std::array<int32_t, 9> hotbar{};
+    std::array<int32_t, 9> hotbar_counts{};
+    int32_t held = 0;
+    std::string held_name;
 };
 
 void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, float height,

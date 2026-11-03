@@ -81,6 +81,11 @@ Window::Window(Device& device, uint32_t width, uint32_t height, const std::strin
         }
     });
 
+    glfwSetScrollCallback(window_, [](GLFWwindow* handle, double, double y) {
+        auto* self = static_cast<Window*>(glfwGetWindowUserPointer(handle));
+        if (self != nullptr) self->wheel_ += y;
+    });
+
     check(glfwCreateWindowSurface(device_.instance(), window_, nullptr, &surface_),
           "glfwCreateWindowSurface");
 
@@ -294,6 +299,16 @@ FrameInput Window::poll() {
     const bool fly_now = down(GLFW_KEY_F);
     input.toggle_fly = fly_now && !fly_key_down_;
     fly_key_down_ = fly_now;
+
+    // The wheel steps one slot at a time whatever the mouse reports, and the
+    // number row picks a slot outright, the way the game does both.
+    input.wheel = wheel_ > 0.5 ? 1 : (wheel_ < -0.5 ? -1 : 0);
+    wheel_ = 0.0;
+    for (int i = 0; i < 9; ++i) {
+        const bool pressed = down(GLFW_KEY_1 + i);
+        if (pressed && !slot_key_down_[i]) input.pick_slot = i;
+        slot_key_down_[i] = pressed;
+    }
 
     const bool menu_now = down(GLFW_KEY_M);
     input.toggle_menu = menu_now && !menu_key_down_;

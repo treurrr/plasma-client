@@ -7,6 +7,16 @@ layout(location = 3) in vec4 fill_top;
 layout(location = 4) in vec4 fill_bottom;
 layout(location = 5) in vec4 border_colour;
 layout(location = 6) in vec4 glow_colour;
+layout(location = 7) flat in int layer;
+layout(location = 8) flat in float linearise;
+layout(location = 9) in vec2 sprite_uv;
+
+// Inventory icons. Every item the server knows is one layer, so an item id
+// needs no lookup at all.
+layout(set = 0, binding = 0) uniform sampler2DArray items;
+
+// The game's own interface sprites: the hotbar, the hearts, the crosshair.
+layout(set = 0, binding = 1) uniform sampler2D gui;
 
 layout(location = 0) out vec4 colour;
 
@@ -21,7 +31,28 @@ vec4 over(vec4 src, vec4 dst) {
     return vec4((src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / a, a);
 }
 
+vec3 to_linear(vec3 colour) {
+    return mix(colour / 12.92, pow((colour + 0.055) / 1.055, vec3(2.4)), step(0.04045, colour));
+}
+
 void main() {
+    if (layer == -2) {
+        vec4 texel = texture(gui, sprite_uv);
+        if (texel.a < 0.01) discard;
+        vec3 rgb = linearise > 0.5 ? to_linear(texel.rgb) : texel.rgb;
+        colour = vec4(rgb * fill_top.rgb, texel.a * fill_top.a);
+        return;
+    }
+    if (layer >= 0) {
+        vec2 uv = local / half_size * 0.5 + 0.5;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) discard;
+        vec4 texel = texture(items, vec3(uv, float(layer)));
+        if (texel.a < 0.02) discard;
+        vec3 rgb = linearise > 0.5 ? to_linear(texel.rgb) : texel.rgb;
+        colour = vec4(rgb * fill_top.rgb, texel.a * fill_top.a);
+        return;
+    }
+
     float radius = min(params.x, min(half_size.x, half_size.y));
     float distance = rounded_box(local, half_size, radius);
 

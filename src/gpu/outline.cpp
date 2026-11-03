@@ -85,7 +85,8 @@ Outline::Outline(Device& device, VkFormat colour_format) : device_(device) {
 
     VkPipelineRasterizationStateCreateInfo raster{};
     raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    raster.polygonMode = VK_POLYGON_MODE_LINE;
+    // LINE_LIST already rasterises as lines; polygonMode only matters for polygons.
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
     raster.cullMode = VK_CULL_MODE_NONE;
     raster.lineWidth = width_;
 

@@ -60,6 +60,23 @@ mcpp::auth::Profile signed_in_profile(std::string& username) {
     return {};
 }
 
+// "diamond_sword" is how the registry names it; a player reads "Diamond Sword".
+// The real translation comes from the language file when one is installed.
+std::string pretty_item(std::string_view name) {
+    std::string out;
+    bool start = true;
+    for (const char c : name) {
+        if (c == '_') {
+            out += ' ';
+            start = true;
+            continue;
+        }
+        out += start ? static_cast<char>(std::toupper(c)) : c;
+        start = false;
+    }
+    return out;
+}
+
 // The block the crosshair is on, or none within reach. The game reaches 4.5
 // blocks and takes the first block the ray enters, so this steps cell by cell
 // rather than sampling along the ray, where a corner can be missed.
@@ -666,7 +683,10 @@ int do_play(const std::string& target, size_t chunk_limit) {
 
     mcpp::gpu::TextRenderer hud(device, mcpp::gpu::TextRenderer::default_font_path(),
                                 window.colour_format());
-    mcpp::gpu::UiRenderer quads(device, window.colour_format());
+    mcpp::gpu::UiRenderer quads(
+        device, window.colour_format(),
+        mcpp::gpu::UiRenderer::default_items_path(mcpp::protocol::kTargetProtocol),
+        mcpp::gpu::UiRenderer::default_gui_path(mcpp::protocol::kTargetProtocol));
     double fps = 0.0;
     bool menu_open = false;
     int menu_filter = -1;
@@ -866,6 +886,15 @@ int do_play(const std::string& target, size_t chunk_limit) {
             }
         }
 
+        if (!window.typing()) {
+            if (input.pick_slot >= 0) {
+                session.send_held_slot(input.pick_slot);
+            } else if (input.wheel != 0) {
+                const int32_t slots = static_cast<int32_t>(mcpp::Inventory::kHotbarSlots);
+                session.send_held_slot((session.inventory().held - input.wheel + slots) % slots);
+            }
+        }
+
         tick_accumulator += dt;
         if (tick_accumulator >= 0.05f) {
             tick_accumulator = 0.0f;
@@ -914,6 +943,17 @@ int do_play(const std::string& target, size_t chunk_limit) {
         state.right = input.right > 0.0f;
         state.jump = input.up > 0.0f;
         state.sections = renderer.drawn_sections();
+        {
+            const auto& inventory = session.inventory();
+            for (size_t i = 0; i < mcpp::Inventory::kHotbarSlots; ++i) {
+                state.hotbar[i] = inventory.hotbar(i).id;
+                state.hotbar_counts[i] = inventory.hotbar(i).count;
+            }
+            state.held = inventory.held;
+            const auto& in_hand = inventory.hotbar(static_cast<size_t>(inventory.held));
+            state.held_name = in_hand.count > 0 ? pretty_item(quads.item_name(in_hand.id))
+                                                : std::string{};
+        }
         state.entities = session.entity_count();
         state.typing = window.typing();
         state.compose = window.typed();
@@ -1289,7 +1329,9 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
 
         text.emplace(device, mcpp::gpu::TextRenderer::default_font_path(),
                      renderer.colour_format());
-        quads.emplace(device, renderer.colour_format());
+        quads.emplace(device, renderer.colour_format(),
+                      mcpp::gpu::UiRenderer::default_items_path(mcpp::protocol::kTargetProtocol),
+        mcpp::gpu::UiRenderer::default_gui_path(mcpp::protocol::kTargetProtocol));
 
         quads->begin();
         text->begin();
@@ -1315,6 +1357,14 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
             state.z = camera.eye[2];
             state.forward = true;
             state.sections = renderer.drawn_sections();
+            const auto& inventory = session.inventory();
+            for (size_t i = 0; i < mcpp::Inventory::kHotbarSlots; ++i) {
+                state.hotbar[i] = inventory.hotbar(i).id;
+                state.hotbar_counts[i] = inventory.hotbar(i).count;
+            }
+            state.held = inventory.held;
+            const auto& in_hand = inventory.hotbar(static_cast<size_t>(inventory.held));
+            if (in_hand.count > 0) state.held_name = pretty_item(quads->item_name(in_hand.id));
             mcpp::ui::draw_hud(*quads, *text, static_cast<float>(shot_width),
                                static_cast<float>(shot_height), state);
         }

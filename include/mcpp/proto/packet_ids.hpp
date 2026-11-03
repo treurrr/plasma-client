@@ -36,13 +36,15 @@ struct PacketIds {
             light_update, block_update, section_blocks_update, set_chunk_cache_center,
             set_chunk_cache_radius, add_entity, remove_entities, move_entity_pos,
             move_entity_pos_rot, move_entity_rot, entity_position_sync, player_info_update,
-            player_info_remove;
+            player_info_remove, container_set_content, container_set_slot, container_close,
+            set_held_slot, set_experience, set_cursor_item, set_player_inventory;
     } play_cb;
 
     struct PlayServerbound {
         int32_t keep_alive, pong, chat, chat_command, chat_ack, client_information,
             configuration_acknowledged, custom_payload, accept_teleportation, move_player_pos,
-            move_player_pos_rot, client_tick_end, chunk_batch_received;
+            move_player_pos_rot, client_tick_end, chunk_batch_received, set_carried_item,
+            container_click, container_close;
     } play_sb;
 };
 

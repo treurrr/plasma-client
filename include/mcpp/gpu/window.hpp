@@ -34,6 +34,9 @@ struct FrameInput {
     bool submit_text = false;
     bool cancel_text = false;
     bool toggle_fly = false;
+    // -1, 0 or 1 for the wheel this frame, and 0..8 for a number key, or -1.
+    int32_t wheel = 0;
+    int32_t pick_slot = -1;
 };
 
 // GLFW only for the surface and the key state; everything after the surface is
@@ -112,6 +115,8 @@ private:
     bool typing_ = false;
     bool chat_key_down_ = false;
     bool fly_key_down_ = false;
+    double wheel_ = 0.0;
+    bool slot_key_down_[9]{};
     bool forward_key_down_ = false;
     bool double_tap_sprint_ = false;
     double last_forward_press_ = -1.0;

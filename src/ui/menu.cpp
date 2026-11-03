@@ -1,3 +1,4 @@
+#include <cmath>
 #include "mcpp/ui/menu.hpp"
 
 #include "mcpp/features.hpp"
@@ -315,6 +316,78 @@ void draw_hud(gpu::UiRenderer& quads, gpu::TextRenderer& text, float width, floa
     }
     if (registry.enabled(features::Id::CpsCounter)) {
         readout(std::format("{} | {}", state.cps_left, state.cps_right), "CPS");
+    }
+
+    // The hotbar. The game's own sprites, read out of the player's own
+    // installation, because a hotbar that is only nearly right reads as a fake.
+    // It is laid out in real pixels at the game's own gui scale rather than in
+    // our design space: a sprite drawn at a fraction of a pixel is a blurred
+    // sprite, and these are eight pixel tall pictures.
+    {
+        const bool plasma = registry.enabled(features::Id::PlasmaHotbar) || !quads.has_sprites();
+        // The game picks the largest whole scale that still leaves 320 by 240
+        // of room, up to four.
+        float gui = 1.0f;
+        while (gui < 4.0f && width / (gui + 1.0f) >= 320.0f && height / (gui + 1.0f) >= 240.0f) {
+            gui += 1.0f;
+        }
+
+        constexpr float kSlot = 20.0f;
+        const float slot = kSlot * gui;
+        const float bar = slot * 9.0f;
+        const float left = std::round((width - bar) * 0.5f);
+        const float top = std::round(height - slot - 4.0f * gui);
+
+        if (plasma) {
+            constexpr float kGap = 2.0f;
+            const float gapped = (bar - kGap * gui * 8.0f) / 9.0f;
+            quads.panel(left - 3.0f * gui, top - 3.0f * gui, bar + 6.0f * gui,
+                        gapped + 6.0f * gui, 5.0f * gui, kGlass, kGlassEdge, gui);
+            for (int i = 0; i < 9; ++i) {
+                const float x = left + static_cast<float>(i) * (gapped + kGap * gui);
+                const bool held = i == state.held;
+                quads.panel(x, top, gapped, gapped, 3.0f * gui,
+                            held ? 0x1A1A22FFu : 0x121218AAu,
+                            held ? kAccent : 0x2A2A33AAu, held ? 2.0f * gui : gui);
+            }
+        } else {
+            const auto [bar_w, bar_h] = quads.sprite_size("hud/hotbar");
+            quads.sprite("hud/hotbar", left - gui, top - gui, bar_w * gui, bar_h * gui);
+            const auto [sel_w, sel_h] = quads.sprite_size("hud/hotbar_selection");
+            quads.sprite("hud/hotbar_selection",
+                         left + static_cast<float>(state.held) * slot - gui, top - 2.0f * gui,
+                         sel_w * gui, sel_h * gui);
+        }
+
+        for (int i = 0; i < 9; ++i) {
+            const int32_t item = state.hotbar[static_cast<size_t>(i)];
+            if (item <= 0) continue;
+            const float x = left + static_cast<float>(i) * slot;
+            const float icon_x = x + 2.0f * gui;
+            const float icon_y = top + 2.0f * gui;
+            quads.icon(item, icon_x, icon_y, 16.0f * gui);
+            const int32_t count = state.hotbar_counts[static_cast<size_t>(i)];
+            if (count > 1) {
+                // Nineteen across and nine down from the icon's own corner,
+                // which is where the game puts it: hard against the bottom
+                // right, overhanging the slot a little.
+                const std::string label = std::format("{}", count);
+                quads.text(label, icon_x + 19.0f * gui - quads.text_width(label, gui),
+                           icon_y + 9.0f * gui, gui, 0xFFFFFFFFu);
+            }
+        }
+        if (!state.held_name.empty()) {
+            quads.text(state.held_name,
+                       std::round(width * 0.5f - quads.text_width(state.held_name, gui) * 0.5f),
+                       top - 13.0f * gui, gui, 0xFFFFFFFFu);
+        }
+
+        if (!plasma) {
+            const auto [cross_w, cross_h] = quads.sprite_size("hud/crosshair");
+            quads.sprite("hud/crosshair", std::round((width - cross_w * gui) * 0.5f),
+                         std::round((height - cross_h * gui) * 0.5f), cross_w * gui,
+                         cross_h * gui);
+        }
     }
 
     // The frame cost, which is the claim this client is making, said in the

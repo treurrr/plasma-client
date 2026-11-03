@@ -29,6 +29,7 @@ enum class Id : uint8_t {
     NoHurtCam,
     NoFireOverlay,
     ScoreboardCleanup,
+    PlasmaHotbar,
     Count,
 };
 

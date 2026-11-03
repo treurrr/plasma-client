@@ -15,6 +15,27 @@
 namespace mcpp {
 namespace {
 
+// One stack off the wire. Data components carry a body whose shape depends on
+// the component type, and those shapes are not in the reports, so a stack that
+// has any is read as far as its id and count and then gives up: `readable`
+// tells the caller that everything after this point in the packet is lost.
+ItemStack read_slot(ByteBuffer& in, bool& readable) {
+    ItemStack stack;
+    const int32_t count = in.read_varint();
+    if (count <= 0) return stack;
+    stack.count = count;
+    stack.id = in.read_varint();
+    const int32_t added = in.read_varint();
+    const int32_t removed = in.read_varint();
+    if (added != 0) {
+        stack.readable = false;
+        readable = false;
+        return stack;
+    }
+    for (int32_t i = 0; i < removed; ++i) in.read_varint();
+    return stack;
+}
+
 // A colour in the biome registry arrives either as a packed int or as the text
 // "#rrggbb", depending on how the server's datapack was written.
 std::optional<uint32_t> read_colour(const nbt::Value& value) {
@@ -491,6 +512,41 @@ bool Session::handle_play(PacketConnection::Packet& packet) {
         }
         return true;
     }
+    if (packet.id == cb.set_held_slot) {
+        const int32_t slot = in.read_varint();
+        if (slot >= 0 && slot < static_cast<int32_t>(Inventory::kHotbarSlots)) {
+            inventory_.held = slot;
+        }
+        return true;
+    }
+    if (packet.id == cb.container_set_content) {
+        const int32_t container = in.read_varint();
+        in.read_varint();   // state id, only needed to echo back on a click
+        const int32_t count = in.read_varint();
+        if (container != 0 || count < 0) return true;   // only our own inventory for now
+        bool readable = true;
+        for (int32_t i = 0; i < count && readable; ++i) {
+            const ItemStack stack = read_slot(in, readable);
+            if (i < static_cast<int32_t>(Inventory::kSlots)) inventory_.slots[i] = stack;
+        }
+        if (readable) inventory_.carried = read_slot(in, readable);
+        if (!readable && !slot_format_warned_) {
+            slot_format_warned_ = true;
+            status("an item carries data components; the slots after it are not read");
+        }
+        return true;
+    }
+    if (packet.id == cb.container_set_slot) {
+        const int32_t container = in.read_varint();
+        in.read_varint();   // state id
+        const auto slot = static_cast<int16_t>(in.read_u16());
+        bool readable = true;
+        const ItemStack stack = read_slot(in, readable);
+        if (container == 0 && slot >= 0 && slot < static_cast<int32_t>(Inventory::kSlots)) {
+            inventory_.slots[slot] = stack;
+        }
+        return true;
+    }
     if (packet.id == cb.player_info_update) {
         read_player_list(in);
         return true;
@@ -629,6 +685,15 @@ void Session::send_position(double x, double y, double z, float yaw, float pitch
     // One flags byte since 1.21.4: bit 0 on ground, bit 1 horizontal collision.
     out.write_u8(on_ground ? 1 : 0);
     send(ids_->play_sb.move_player_pos_rot, out);
+}
+
+void Session::send_held_slot(int32_t slot) {
+    if (slot < 0 || slot >= static_cast<int32_t>(Inventory::kHotbarSlots)) return;
+    if (slot == inventory_.held) return;
+    inventory_.held = slot;
+    ByteBuffer out;
+    out.write_u16(static_cast<uint16_t>(slot));
+    send(ids_->play_sb.set_carried_item, out);
 }
 
 void Session::send_chat(std::string_view message) {
