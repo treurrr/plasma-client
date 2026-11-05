@@ -1,5 +1,6 @@
 #include "client/game.hpp"
 #include "client/player_rules.hpp"
+#include "client/breaking.hpp"
 
 #include "mcpp/jmath.hpp"
 #include "mcpp/world/shape_edges.hpp"
@@ -140,115 +141,20 @@ void interact(Game& game) {
                       !game.window->typing();
     const bool attack = free && input.attack;
     const bool use = free && input.use;
-    const auto& body = player.body;
-    const bool creative = session.abilities().instant_build;
 
     if (player.right_click_delay > 0) --player.right_click_delay;
     if (player.miss_time > 0) --player.miss_time;
 
-    const auto state_at = [&](const int32_t p[3]) {
-        std::lock_guard lock(game.world.world_guard);
-        return std::max(0, block_unlocked(game, p[0], p[1], p[2]));
-    };
-    const auto progress = [&](int32_t state) {
-        DigContext dig;
-        const int32_t me = session.entity_id();
-        dig.mining_efficiency = session.attribute(me, "minecraft:mining_efficiency", 0.0);
-        dig.block_break_speed = session.attribute(me, "minecraft:block_break_speed", 1.0);
-        dig.submerged_mining_speed = session.attribute(me, "minecraft:submerged_mining_speed", 0.2);
-        dig.haste = session.effect_level("minecraft:haste");
-        dig.conduit_power = session.effect_level("minecraft:conduit_power");
-        dig.mining_fatigue = session.effect_level("minecraft:mining_fatigue");
-        dig.eye_in_water = body.eye_in_water;
-        dig.on_ground = body.on_ground;
-        const auto& info = shapes().state(state);
-        return destroy_progress(info.hardness, (info.flags & mcpp::world::kNeedsTool) != 0, dig);
-    };
-    const auto stop = [&] {
-        if (!player.destroying) return;
-        session.send_dig_action(1, player.destroy_pos[0], player.destroy_pos[1],
-                                player.destroy_pos[2], 0);
-        player.destroying = false;
-        player.destroy_progress = 0.0f;
-    };
-    const auto destroy = [&](const int32_t p[3]) { world_predict_block(game, p[0], p[1], p[2], 0); };
-    const auto start = [&](const int32_t p[3], int32_t face) {
-        if (creative) {
-            destroy(p);
-            session.send_dig_action(0, p[0], p[1], p[2], face);
-            player.destroy_delay = 5;
-            return;
-        }
-        const bool same = player.destroying && std::equal(p, p + 3, player.destroy_pos) &&
-                          held_item(game) == player.destroy_item;
-        if (same) return;
-        if (player.destroying) {
-            session.send_dig_action(1, player.destroy_pos[0], player.destroy_pos[1],
-                                    player.destroy_pos[2], face);
-        }
-        const int32_t state = state_at(p);
-        if (state != 0 && progress(state) >= 1.0f) {
-            destroy(p);
-        } else {
-            player.destroying = true;
-            std::copy(p, p + 3, player.destroy_pos);
-            player.destroy_item = held_item(game);
-            player.destroy_progress = 0.0f;
-            player.destroy_ticks = 0.0f;
-        }
-        session.send_dig_action(0, p[0], p[1], p[2], face);
-    };
-
-    // A press starts a dig or a hit; holding it carries the dig on.
+    // `Minecraft.handleKeybinds`: a press starts an attack, then using, then
+    // holding attack carries a dig on.
     const bool pressed = attack && !player.attack_was;
     player.attack_was = attack;
-    if (pressed && player.miss_time <= 0) {
-        if (player.aiming && state_at(player.aimed) != 0) {
-            start(player.aimed, player.hit_face);
-        } else if (session.vitals().game_mode != 1) {
-            player.miss_time = 10;
-        }
-        if (session.vitals().game_mode != 3) session.send_swing();
-    }
-    if (!attack) player.miss_time = 0;
-    if (player.miss_time <= 0) {
-        if (attack && player.aiming && state_at(player.aimed) != 0) {
-            const int32_t* p = player.aimed;
-            if (player.destroy_delay > 0) {
-                --player.destroy_delay;
-                session.send_swing();
-            } else if (creative) {
-                player.destroy_delay = 5;
-                destroy(p);
-                session.send_dig_action(0, p[0], p[1], p[2], player.hit_face);
-                session.send_swing();
-            } else if (player.destroying && std::equal(p, p + 3, player.destroy_pos) &&
-                       held_item(game) == player.destroy_item) {
-                const int32_t state = state_at(p);
-                player.destroy_progress += progress(state);
-                player.destroy_ticks += 1.0f;
-                if (player.destroy_progress >= 1.0f) {
-                    player.destroying = false;
-                    destroy(p);
-                    session.send_dig_action(2, p[0], p[1], p[2], player.hit_face);
-                    player.destroy_progress = 0.0f;
-                    player.destroy_ticks = 0.0f;
-                    player.destroy_delay = 5;
-                }
-                session.send_swing();
-            } else {
-                start(p, player.hit_face);
-                session.send_swing();
-            }
-        } else if (!attack || !player.aiming) {
-            stop();
-        }
-    }
+    const bool broke = pressed && breaking_start_attack(game);
 
     // Using: a press, then again every four ticks while held.
     const bool use_pressed = use && !player.use_was;
     player.use_was = use;
-    if ((use_pressed || (use && player.right_click_delay == 0)) && !player.destroying) {
+    if ((use_pressed || (use && player.right_click_delay == 0)) && !breaking_destroying(game)) {
         player.right_click_delay = 4;
         if (player.aiming) {
             const int32_t* p = player.aimed;
@@ -259,6 +165,7 @@ void interact(Game& game) {
             session.send_swing();
         }
     }
+    breaking_continue_attack(game, attack && !broke);
 }
 
 // `GameRenderer.tickFov`, `AbstractClientPlayer.getFieldOfViewModifier`, `Camera.tick`: field of view and eye height ease.
@@ -290,6 +197,7 @@ void player_bind_motion(Game& game, mcpp::SessionEvents& events);
 
 void player_bind(Game& game, mcpp::SessionEvents& events) {
     player_bind_motion(game, events);
+    breaking_bind(game, events);
     events.player.on_teleport = [&game](const mcpp::SessionEvents::Player::Teleport& t) {
         auto& player = game.player;
         apply_teleport(player.body, t);
@@ -345,6 +253,7 @@ void player_start(Game& game) {
     body.flying = player.server_flying;
     player.last_turn = std::chrono::steady_clock::now();
     player.started = true;
+    breaking_start(game);
 }
 
 void player_input(Game&) {}
@@ -394,6 +303,7 @@ void player_tick(Game& game) {
         try {
             send_tick(session, body);
             ++player.ticks_sent;
+            breaking_tick(game);
         } catch (const std::exception& error) {
             std::cerr << std::format("movement stopped: {}\n", error.what());
             player.connection_lost = true;
@@ -505,9 +415,10 @@ void player_draw(Game& game) {
     player.game_yaw = body.yaw;
     player.fov = fov;
     aim_outline(game);
+    breaking_draw(game);
 }
 
-void player_stop(Game&) {}
+void player_stop(Game& game) { breaking_stop(game); }
 
 bool player_send(Game& game) { return !game.player.connection_lost; }
 

@@ -218,7 +218,18 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         return true;
     }
     if (packet.id == cb.block_changed_ack) {
-        in.read_varint();   // the sequence we sent; nothing to undo yet
+        const int32_t sequence = in.read_varint();
+        if (events_.player.on_block_changed_ack) events_.player.on_block_changed_ack(sequence);
+        return true;
+    }
+    if (packet.id == cb.block_destruction) {
+        const int32_t id = in.read_varint();
+        const int64_t packed = in.read_i64();
+        const auto x = static_cast<int32_t>(packed >> 38);
+        const auto y = static_cast<int32_t>(packed << 52 >> 52);
+        const auto z = static_cast<int32_t>(packed << 26 >> 38);
+        const int32_t stage = in.read_u8();
+        if (events_.player.on_block_destruction) events_.player.on_block_destruction(id, x, y, z, stage);
         return true;
     }
     return false;

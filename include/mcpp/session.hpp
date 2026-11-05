@@ -383,6 +383,10 @@ struct SessionEvents {
         // The server setting our own velocity: knockback, a launch. The game
         // takes it as the body's new delta movement.
         std::function<void(double, double, double)> on_motion;
+        // B: the server has applied every block action up to this sequence.
+        std::function<void(int32_t)> on_block_changed_ack;
+        // B: someone's crack in a block, by breaker id; outside 0..9 it stops.
+        std::function<void(int32_t, int32_t, int32_t, int32_t, int32_t)> on_block_destruction;
     } player;
 
     struct Ui {
@@ -596,6 +600,8 @@ public:
     // Start (0), abort (1) or finish (2) breaking a block, on a face from 0
     // (down) to 5 (east). Start and finish are predicted and numbered.
     void send_dig_action(int32_t action, int32_t x, int32_t y, int32_t z, int32_t face);
+    // B: the sequence number the last predicted action went out under.
+    int32_t sequence() const { return player_.sequence; }
     void send_place(int32_t x, int32_t y, int32_t z, int32_t face, float cursor_x,
                     float cursor_y, float cursor_z);
     void send_swing();

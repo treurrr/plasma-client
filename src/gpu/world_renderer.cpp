@@ -1376,8 +1376,11 @@ void WorldRenderer::upload_merged(const world::Mesh& mesh) {
 // is bound again after.
 void WorldRenderer::draw_in_world(VkCommandBuffer command, const PushConstants& push,
                                   const Camera& camera) {
-    if (!in_world_) return;
-    in_world_(command, push.view_projection.m, width_, height_, atmosphere_.fog_colour, camera);
+    if (!in_world_ && !after_entities_) return;
+    if (in_world_) in_world_(command, push.view_projection.m, width_, height_, atmosphere_.fog_colour, camera);
+    if (after_entities_) {
+        after_entities_(command, push.view_projection.m, width_, height_, atmosphere_.fog_colour, camera);
+    }
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
@@ -1576,6 +1579,11 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         const Mat4 matrix =
             view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));
         in_world_(command, matrix.m, width_, height_, atmosphere_.fog_colour, camera);
+    }
+    if (after_translucent_) {
+        const Mat4 matrix =
+            view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));
+        after_translucent_(command, matrix.m, width_, height_, atmosphere_.fog_colour, camera);
     }
     if (sky_ != nullptr) sky_->record_clouds(command, camera, width_, height_, atmosphere_);
     vkCmdEndRendering(command);
@@ -1821,6 +1829,14 @@ WorldRenderer::~WorldRenderer() {
     vkDestroyQueryPool(device_.handle(), timestamps_, nullptr);
     vkDestroyFence(device_.handle(), frame_fence_, nullptr);
     vkDestroyCommandPool(device_.handle(), pool_, nullptr);
+}
+
+uint32_t WorldRenderer::world_push_size() { return sizeof(PushConstants); }
+
+void WorldRenderer::bind_world_set(VkCommandBuffer command, VkPipelineLayout layout) const {
+    const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set_, 2,
+                            dynamic_offsets);
 }
 
 } // namespace mcpp::gpu

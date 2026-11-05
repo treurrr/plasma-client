@@ -99,4 +99,13 @@ private:
     uint64_t seed_ = 0;
 };
 
+// Java's (int) of a float: NaN is 0, and past the int range it stops at the
+// end, where a C++ cast is undefined.
+inline int32_t to_int(float f) {
+    if (std::isnan(f)) return 0;
+    if (f >= 2147483647.0f) return 2147483647;
+    if (f <= -2147483648.0f) return -2147483647 - 1;
+    return static_cast<int32_t>(f);
+}
+
 } // namespace mcpp::jmath

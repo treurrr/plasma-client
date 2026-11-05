@@ -139,6 +139,17 @@ public:
     size_t uploaded_bytes() const { return vertex_bytes_ + index_bytes_; }
     uint32_t index_count() const { return index_count_; }
 
+    // B: for a pipeline drawn in the world's pass that samples its textures,
+    // fog, lightmap and animations: the set layout and push block size it must
+    // share, and this frame's set bound under that pipeline's layout.
+    VkDescriptorSetLayout world_set_layout() const { return set_layout_; }
+    static uint32_t world_push_size();
+    void bind_world_set(VkCommandBuffer command, VkPipelineLayout layout) const;
+    // B: drawn right after what set_in_world draws (the cracks over blocks),
+    // and after the translucent terrain, before the clouds (particles).
+    void set_after_entities(InWorld draw) { after_entities_ = std::move(draw); }
+    void set_after_translucent(InWorld draw) { after_translucent_ = std::move(draw); }
+
 private:
     void record_frame(VkCommandBuffer command, const Camera& camera, bool readback);
     void record_frame(VkCommandBuffer command, const Camera& camera, bool readback,
@@ -303,6 +314,8 @@ private:
     double upload_gpu_ms_ = 0.0;
     float timestamp_period_ = 1.0f;
     InWorld in_world_;
+    InWorld after_entities_;
+    InWorld after_translucent_;
 
 public:
     // Recorded into the frame after the world and before the overlay, after

@@ -779,4 +779,23 @@ Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable&
     return merged;
 }
 
+void quad_corners(const BakedQuad& quad, float out[4][3], int& face) {
+    face = rotate_face(quad.face, quad.rotation_x, quad.rotation_y);
+    for (int corner = 0; corner < 4; ++corner) {
+        const int* pick = kCorner[quad.face][corner];
+        float local[3] = {
+            (pick[0] ? quad.to[0] : quad.from[0]) / kBlock,
+            (pick[1] ? quad.to[1] : quad.from[1]) / kBlock,
+            (pick[2] ? quad.to[2] : quad.from[2]) / kBlock,
+        };
+        apply_element_rotation(local, quad);
+        apply_rotation(local, quad.rotation_x, quad.rotation_y);
+        std::copy(local, local + 3, out[corner]);
+    }
+}
+
+int quad_cull_face(const BakedQuad& quad) {
+    return quad.cullface < 0 ? -1 : rotate_face(quad.cullface, quad.rotation_x, quad.rotation_y);
+}
+
 } // namespace mcpp::world

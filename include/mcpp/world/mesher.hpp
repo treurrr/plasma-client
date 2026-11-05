@@ -111,4 +111,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
                 const Neighbours& neighbours = {});
 
+// One baked quad's corners in the block, in the order the mesher emits them,
+// turned the way its model and blockstate turn it, and the face it ends up on.
+void quad_corners(const BakedQuad& quad, float out[4][3], int& face);
+// The face a neighbour must cover to hide the quad, after the turns, or -1.
+int quad_cull_face(const BakedQuad& quad);
+
 } // namespace mcpp::world

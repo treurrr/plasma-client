@@ -11,7 +11,8 @@ states-<protocol>.txt, one state per line:
 and tools-<protocol>.txt, one rule per line, for every item that is a tool:
     <item registry id> <name> <blocks> <speed or -> <drops: 1, 0 or ->
 where <blocks> is a #tag, or block names joined by commas. A first line per
-item with blocks "*" carries the tool's default speed.
+item with blocks "*" carries the tool's default speed, and after its "-" a 1
+or 0 for whether it breaks blocks in creative mode.
 """
 import json
 import sys
@@ -45,7 +46,8 @@ def main(reports, protocol, out):
         if tool is None:
             continue
         item_id = item_ids[name]
-        rules.append(f"{item_id}\t{name}\t*\t{tool.get('default_mining_speed', 1.0)}\t-")
+        creative = 1 if tool.get("can_destroy_blocks_in_creative", True) else 0
+        rules.append(f"{item_id}\t{name}\t*\t{tool.get('default_mining_speed', 1.0)}\t-\t{creative}")
         for rule in tool.get("rules", []):
             blocks_of = rule["blocks"]
             if isinstance(blocks_of, list):
