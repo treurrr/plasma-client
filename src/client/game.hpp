@@ -208,6 +208,8 @@ struct ScreensArea {
     bool server_links = false;
     bool leave = false;
     std::chrono::steady_clock::time_point last_drawn = std::chrono::steady_clock::now();
+    // C: the menu of the container the server opened, while its screen is up.
+    std::optional<mcpp::ui::ContainerMenu> container;
 };
 
 struct SoundRuntime;

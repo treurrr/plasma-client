@@ -302,7 +302,8 @@ Hit pick_block(const mcpp::world::BlockShapes& shapes, const mcpp::world::BlockA
         for (int i = 0; i < 3; ++i) h.location[i] += offset[i];
         const auto interaction = shapes.boxes(info.interaction);
         Hit over;
-        if (clip_shape(interaction, from, to, cell, over)) {
+        if (clip_shape(interaction, f, t, cell, over)) {
+            for (int i = 0; i < 3; ++i) over.location[i] += offset[i];
             const auto dist = [&](const double p[3]) {
                 const double dx = p[0] - from[0];
                 const double dy = p[1] - from[1];

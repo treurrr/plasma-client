@@ -409,6 +409,17 @@ struct SessionEvents {
         std::function<void(const BossEvent&)> on_boss_event;
         // The player list's header and footer.
         std::function<void(const nbt::Value&, const nbt::Value&)> on_tab_list;
+        // C: the server opened a container: its id, its menu type (an id in
+        // minecraft:menu) and its title.
+        std::function<void(int32_t, int32_t, const nbt::Value&)> on_open_screen;
+        // C: a recipe the player lacks the items for, to show as a ghost in
+        // the grid: the container and the recipe's display.
+        std::function<void(int32_t, const proto::Value&)> on_place_ghost_recipe;
+        // C: the recipe book packets as they come: an added batch (with its
+        // replace flag), the ids taken out, and the book's switches.
+        std::function<void(const proto::Value&)> on_recipe_book_add;
+        std::function<void(const std::vector<int32_t>&)> on_recipe_book_remove;
+        std::function<void(const proto::Value&)> on_recipe_book_settings;
     } ui;
 
     struct Sound {
@@ -637,6 +648,20 @@ public:
     // The state id the server last gave the open container.
     int32_t container_state() const { return player_.container_state; }
     void send_respawn();
+    // C: the container the server has open besides the inventory, 0 for none,
+    // and its slots as the server last said or a click predicted. Its last 36
+    // slots are the player's main inventory and hotbar, kept in step with
+    // inventory().
+    int32_t open_container() const { return player_.open_container; }
+    const std::vector<ItemStack>& container_slots() const { return player_.open_slots; }
+    void predict_container(const std::vector<ItemStack>& slots, const ItemStack& carried);
+    // C: asks the server to fill the open grid from a recipe in the book;
+    // `use_max` fills as many crafts as the inventory has items for.
+    void send_place_recipe(int32_t container, int32_t recipe, bool use_max);
+    // C: the book's open and filter switches for one book type (crafting 0).
+    void send_recipe_book_settings(int32_t book, bool open, bool filtering);
+    // C: the book has shown a recipe it was highlighting.
+    void send_recipe_seen(int32_t recipe);
     // H: the scoreboard as the server last described it.
     const Scoreboard& scoreboard() const { return ui_.scoreboard; }
 
@@ -659,6 +684,8 @@ public:
     const proto::Value& recipe_sets() const { return data_.recipe_sets; }
     const std::vector<proto::Value>& recipe_book() const { return data_.recipe_book; }
     const proto::Value& recipe_book_settings() const { return data_.recipe_book_settings; }
+    // C: goes up with every recipe book or recipe set packet.
+    uint64_t recipe_changes() const { return data_.recipe_changes; }
     // What the server says about itself in play, its pause menu links and the
     // lines it wants in a crash report.
     const proto::Value& server_data() const { return data_.server_data; }
@@ -749,8 +776,15 @@ private:
         uint8_t sent_keys = 0;
         int32_t position_reminder = 0;
         size_t teleports = 0;
+        // C: the open container besides the inventory.
+        int32_t open_container = 0;
+        int32_t open_state = 0;
+        std::vector<ItemStack> open_slots;
     };
     PlayerState player_;
+    // C: one slot of the inventory menu into the open container, and back.
+    void mirror_to_container(int32_t inventory_slot);
+    void mirror_to_inventory(int32_t container_slot);
 
     struct UiState {
         Scoreboard scoreboard;
@@ -789,6 +823,8 @@ private:
         std::map<std::string, std::vector<uint8_t>, std::less<>> cookies;
         std::set<int32_t> warned;
         bool brand_sent = false;
+        // C: counts every change to the recipe book or the recipe sets.
+        uint64_t recipe_changes = 0;
     };
     DataState data_;
     void read_tags(ByteBuffer& in);

@@ -106,6 +106,7 @@ add_library(mcpp_net STATIC
     src/world/mesher.cpp
     src/world/physics.cpp
     src/world/shapes.cpp
+    src/world/shape_edges.cpp
     src/world/light.cpp
     src/world/atlas.cpp
     src/world/biomes.cpp
@@ -130,6 +131,7 @@ add_library(mcpp_net STATIC
     src/ui/layout.cpp
     src/ui/items.cpp
     src/ui/container.cpp
+    src/ui/recipe_book.cpp
     src/ui/screens/container_screen.cpp
     src/ui/screens/registry.cpp
     src/ui/screens/creative_screen.cpp
@@ -179,7 +181,9 @@ endif()
 add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/menu.cpp
     src/client/common.cpp src/client/screenshot.cpp src/client/hud_shot.cpp
     src/client/clicktest.cpp src/client/inspect.cpp src/client/entityshot.cpp
-    src/client/player_rules.cpp src/client/movetest.cpp ${MCPP_PLAY_SOURCES})
+    src/client/player_rules.cpp src/client/movetest.cpp src/client/crafttest.cpp
+    src/client/outlineshot.cpp
+    ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
 mcpp_defaults(plasma-client)
@@ -242,3 +246,6 @@ mcpp_test(title)
 if(glfw3_FOUND)
     target_sources(plasma-client PRIVATE src/client/title.cpp)
 endif()
+mcpp_probe(clip_probe)
+target_sources(clip_probe PRIVATE src/client/player_rules.cpp)
+target_include_directories(clip_probe PRIVATE src)

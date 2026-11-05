@@ -21,6 +21,7 @@ const std::vector<ScreenName>& screen_names() {
     static const std::vector<ScreenName> names = {
         {"inventory", true},
         {"creative", true},
+        {"crafting", true},
         {"title", false},
         {"pause", true},
     };
@@ -30,6 +31,7 @@ const std::vector<ScreenName>& screen_names() {
 std::shared_ptr<Screen> make_screen(std::string_view name) {
     if (name == "inventory") return std::make_shared<InventoryScreen>();
     if (name == "creative") return std::make_shared<CreativeModeInventoryScreen>(&creative_tabs(), false);
+    if (name == "crafting") return std::make_shared<CraftingScreen>(translatable("container.crafting"));
     if (name == "title") return std::make_shared<TitleScreen>();
     if (name == "pause") return std::make_shared<PauseScreen>(true);
     return nullptr;

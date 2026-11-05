@@ -1,3 +1,5 @@
+#include "client/outlineshot.hpp"
+#include "client/crafttest.hpp"
 #include "client/common.hpp"
 #include "client/entityshot.hpp"
 #include "client/inspect.hpp"
@@ -1797,6 +1799,15 @@ int main(int argc, char** argv) {
         }
         if (command == "clicktest") {
             return client::clicktest(std::vector<std::string>(argv + 2, argv + argc));
+        }
+        if (command == "crafttest") {
+            return client::crafttest(std::vector<std::string>(argv + 2, argv + argc));
+        }
+        if (command == "booktest") {
+            return client::booktest(std::vector<std::string>(argv + 2, argv + argc));
+        }
+        if (command == "outlineshot") {
+            return client::outlineshot(std::vector<std::string>(argv + 2, argv + argc));
         }
         if (command == "screenshot") {
             return client::screenshot(std::vector<std::string>(argv + 2, argv + argc));

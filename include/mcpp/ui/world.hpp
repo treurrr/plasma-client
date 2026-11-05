@@ -2,6 +2,7 @@
 #include "mcpp/ui/container.hpp"
 #include "mcpp/ui/gui_graphics.hpp"
 #include "mcpp/ui/items.hpp"
+#include "mcpp/ui/recipe_book.hpp"
 
 #include <array>
 #include <functional>
@@ -13,24 +14,6 @@
 // model in the inventory's black window (entities), the recipe book's
 // contents (data).
 namespace mcpp::ui {
-
-// One recipe button: what it makes, and whether the inventory has what it
-// takes. `many` is a collection of more than one recipe for the same result.
-struct RecipeEntry {
-    int32_t result = 0;
-    int32_t count = 1;
-    bool craftable = false;
-    bool many = false;
-};
-
-// The crafting book: its four categories after the search tab, in the game's
-// order - equipment, building blocks, misc, redstone - each a list of
-// collections. Empty until the server's recipe book packets are read.
-struct RecipeBookView {
-    bool open = false;
-    bool filtering = false;
-    std::array<std::vector<RecipeEntry>, 4> categories;
-};
 
 struct World {
     ContainerMenu* menu = nullptr;
@@ -54,8 +37,13 @@ struct World {
     // Creative: the cursor and the slots are the client's to say; this hands
     // the menu's current state to the game without a click packet.
     std::function<void()> commit;
-    RecipeBookView recipe_book;
+    // The recipe book the server filled, and its crafting switches.
+    ClientRecipeBook recipe_book;
     std::function<void(bool open, bool filtering)> recipe_book_changed;
+    // C: asks the server to fill the open grid from a recipe; the book has
+    // shown a recipe it highlighted.
+    std::function<void(int32_t container, int32_t recipe, bool use_max)> place_recipe;
+    std::function<void(int32_t recipe)> recipe_seen;
     // The translated name an item shows, with its rarity colour.
     std::string item_name(const GuiGraphics& gfx, int32_t id) const;
 };
