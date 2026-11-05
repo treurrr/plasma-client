@@ -142,4 +142,8 @@ private:
 DigContext dig_context(const mcpp::Session& session, const mcpp::world::Body& body,
                        const ToolOnBlock& tool);
 
+// Joins as PlasmaB2 and breaks stone by hand, with pickaxes and in creative
+// on a platform far from spawn, the server as referee.
+int digtest2(const std::string& target);
+
 } // namespace client

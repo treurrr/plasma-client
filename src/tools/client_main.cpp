@@ -6,6 +6,7 @@
 #ifdef MCPP_HAVE_WINDOW
 #include "client/game.hpp"
 #include "client/player_rules.hpp"
+#include "client/game_mode.hpp"
 #endif
 
 #include "mcpp/auth.hpp"
@@ -1822,6 +1823,9 @@ int main(int argc, char** argv) {
         }
         if (command == "digtest" && argc > 2) {
             return do_digtest(argv[2]);
+        }
+        if (command == "digtest2" && argc > 2) {
+            return client::digtest2(argv[2]);
         }
         if (command == "movetest" && argc > 2) {
             return client::movetest(argv[2]);
