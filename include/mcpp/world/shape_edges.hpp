@@ -2,6 +2,7 @@
 #include "mcpp/world/shapes.hpp"
 
 #include <functional>
+#include <span>
 
 // The edges of a block shape the way the game strokes its outline.
 namespace mcpp::world {

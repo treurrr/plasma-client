@@ -1,3 +1,4 @@
+#include "client/outlineshot.hpp"
 #include "client/crafttest.hpp"
 #include "client/common.hpp"
 #include "client/entityshot.hpp"
@@ -1801,6 +1802,9 @@ int main(int argc, char** argv) {
         }
         if (command == "booktest") {
             return client::booktest(std::vector<std::string>(argv + 2, argv + argc));
+        }
+        if (command == "outlineshot") {
+            return client::outlineshot(std::vector<std::string>(argv + 2, argv + argc));
         }
         if (command == "screenshot") {
             return client::screenshot(std::vector<std::string>(argv + 2, argv + argc));
