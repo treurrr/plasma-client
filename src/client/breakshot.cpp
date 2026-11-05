@@ -107,7 +107,7 @@ int breakshot(const std::string& out_prefix) {
     for (int32_t z = 0; z < 16; ++z) {
         for (int32_t x = 0; x < 16; ++x) states[index(x, 0, z)] = stone;
     }
-    const int32_t block_x[4] = {4, 7, 10, 13};
+    const int32_t block_x[4] = {5, 7, 9, 11};
     for (int i = 0; i < 4; ++i) states[index(block_x[i], 1, 8)] = standing[i];
 
     w::Chunk chunk;
@@ -148,10 +148,10 @@ int breakshot(const std::string& out_prefix) {
     });
 
     mcpp::gpu::Camera camera{};
-    camera.eye[0] = 8.5f;
+    camera.eye[0] = 8.0f;
     camera.eye[1] = 2.6f;
     camera.eye[2] = 13.5f;
-    camera.target[0] = 8.5f;
+    camera.target[0] = 8.0f;
     camera.target[1] = 1.7f;
     camera.target[2] = 8.5f;
     camera.fov_degrees = 50.0f;
@@ -191,10 +191,10 @@ int breakshot(const std::string& out_prefix) {
     }
 
     // A close look at one stone block cracked through, filling the frame.
-    camera.eye[0] = 4.5f;
+    camera.eye[0] = 5.5f;
     camera.eye[1] = 1.9f;
     camera.eye[2] = 10.2f;
-    camera.target[0] = 4.5f;
+    camera.target[0] = 5.5f;
     camera.target[1] = 1.6f;
     camera.target[2] = 8.5f;
     camera.fov_degrees = 30.0f;
@@ -219,10 +219,10 @@ int breakshot(const std::string& out_prefix) {
     // The particles a break throws, with the blocks gone the way they are
     // when the bits appear, three ticks on so they have spread and some are
     // already bouncing off the floor.
-    camera.eye[0] = 8.5f;
+    camera.eye[0] = 8.0f;
     camera.eye[1] = 2.6f;
     camera.eye[2] = 13.5f;
-    camera.target[0] = 8.5f;
+    camera.target[0] = 8.0f;
     camera.target[1] = 1.7f;
     camera.target[2] = 8.5f;
     camera.fov_degrees = 50.0f;
@@ -279,10 +279,10 @@ int breakshot(const std::string& out_prefix) {
     // the camera is facing it for the right reason.
     {
         mcpp::gpu::Camera over = camera;
-        over.eye[0] = 13.0f;
+        over.eye[0] = 12.5f;
         over.eye[1] = 6.0f;
         over.eye[2] = 13.0f;
-        over.target[0] = 8.5f;
+        over.target[0] = 8.0f;
         over.target[1] = 1.2f;
         over.target[2] = 8.5f;
         const double from[3] = {over.eye[0], over.eye[1], over.eye[2]};
