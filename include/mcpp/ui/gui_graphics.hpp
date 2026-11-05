@@ -61,6 +61,14 @@ public:
     uint32_t ticks = 0;
     float partial = 0.0f;
     double seconds = 0.0;   // wall clock, for what the game animates by time
+    // Wall-clock milliseconds, the game's Util.getMillis(), and the ticks of
+    // real time since the last frame: what the splash and the panorama run on.
+    int64_t millis = 0;
+    float realtime_delta_ticks = 0.0f;
+    // The framebuffer in pixels, when the host knows it: the gui size times
+    // the scale can be a pixel or two larger.
+    int pixel_width = 0;
+    int pixel_height = 0;
     std::function<std::string(std::string_view)>& key_name = font.key_name;
 
     int gui_width() const { return width; }
@@ -73,6 +81,9 @@ public:
     void scale_by(float x, float y);
     // The game layers by strata; the buffer here is already in draw order.
     void next_stratum() {}
+    // `GuiGraphics.blurBeforeThisStratum`: everything drawn so far is blurred
+    // before the rest goes on top.
+    void blur_before_this_stratum() { quads.mark_blur(); }
 
     void fill(int x0, int y0, int x1, int y1, uint32_t argb);
     void fill_gradient(int x0, int y0, int x1, int y1, uint32_t top, uint32_t bottom);
@@ -111,6 +122,9 @@ public:
     // A label too wide for its box slides back and forth inside it.
     void draw_scrolling_string(const std::vector<Run>& runs, int x0, int y0, int x1, int y1,
                                uint32_t argb);
+    // The same, centred on `cx` when it fits rather than on the box.
+    void draw_scrolling_string(const std::vector<Run>& runs, int cx, int x0, int y0, int x1,
+                               int y1, uint32_t argb);
 
     void render_item(int32_t id, int x, int y);
     // The count in the corner, or `text` in its place; then the damage bar.

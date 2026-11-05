@@ -8,6 +8,7 @@
 #include "mcpp/options.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/translations.hpp"
+#include "mcpp/ui/panorama.hpp"
 #include "mcpp/ui/screens.hpp"
 #include "mcpp/ui/world.hpp"
 #include "mcpp/world/atlas.hpp"
@@ -47,7 +48,7 @@ void demo_book(mcpp::ui::RecipeBookView& book, const mcpp::ui::ItemTable& items)
 int screenshot(const std::vector<std::string>& args) {
     if (args.empty()) {
         std::cerr << "usage: screenshot <screen|all> [out-dir] [width height] [--at x y] "
-                     "[--closed-book]\n";
+                     "[--closed-book] [--scale n] [--spin degrees] [--millis ms]\n";
         for (const auto& known : mcpp::ui::screen_names()) std::cerr << "  " << known.name << '\n';
         return 2;
     }
@@ -58,12 +59,21 @@ int screenshot(const std::vector<std::string>& args) {
     double at_x = -1.0;
     double at_y = -1.0;
     bool book = true;
+    std::vector<int> scales = {2, 3};
+    float spin = 0.0f;
+    int64_t millis = 0;
     std::vector<std::string> plain;
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--at" && i + 2 < args.size()) {
             at_x = std::stod(args[i + 1]);
             at_y = std::stod(args[i + 2]);
             i += 2;
+        } else if (args[i] == "--scale" && i + 1 < args.size()) {
+            scales = {std::stoi(args[++i])};
+        } else if (args[i] == "--spin" && i + 1 < args.size()) {
+            spin = std::stof(args[++i]);
+        } else if (args[i] == "--millis" && i + 1 < args.size()) {
+            millis = std::stoll(args[++i]);
         } else if (args[i] == "--closed-book") {
             book = false;
         } else {
@@ -93,6 +103,8 @@ int screenshot(const std::vector<std::string>& args) {
 
     mcpp::Translations lang;
     lang.load(mcpp::Translations::default_path());
+    const mcpp::ui::Font font(quads, &lang);
+    const bool panorama = mcpp::ui::load_panorama(quads, mcpp::protocol::kTargetVersionName);
     mcpp::Options options;
     mcpp::Keybinds keybinds;
     keybinds.load(options);
@@ -115,9 +127,12 @@ int screenshot(const std::vector<std::string>& args) {
     }
 
     for (const auto& entry : todo) {
-        for (const int scale : {2, 3}) {
+        for (const int scale : scales) {
             mcpp::ui::ScreenManager manager;
             manager.lang = &lang;
+            manager.font = &font;
+            manager.username = "PlasmaT";
+            manager.panorama.spin = spin;
             manager.options = &options;
             manager.keybinds = &keybinds;
             manager.in_world = entry.in_world;
@@ -134,6 +149,16 @@ int screenshot(const std::vector<std::string>& args) {
             const auto build = [&] {
                 quads.begin();
                 mcpp::ui::GuiGraphics gfx(quads, scale, gw, gh, &lang);
+                gfx.millis = millis;
+                gfx.pixel_width = static_cast<int>(width);
+                gfx.pixel_height = static_cast<int>(height);
+                // No world here: over a world, the panorama stands in for one,
+                // so what the blur and the darkening do can be seen.
+                if (entry.in_world && panorama) {
+                    quads.panorama(0.0f, 0.0f, static_cast<float>(width),
+                                   static_cast<float>(height), -spin,
+                                   mcpp::ui::PanoramaRenderer::kPitch);
+                }
                 manager.current()->render_with_tooltip(gfx, mx, my);
             };
             constexpr int kRuns = 200;
@@ -145,6 +170,15 @@ int screenshot(const std::vector<std::string>& args) {
             const auto overlay = [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
                 quads.record(command, w, h);
             };
+            if (quads.blur_marked()) {
+                renderer.set_backdrop(
+                    [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
+                        quads.record_under_blur(command, w, h);
+                    },
+                    options.get_int("menuBackgroundBlurriness"));
+            } else {
+                renderer.set_backdrop({}, 0);
+            }
             mcpp::gpu::Camera camera{};
             camera.eye[1] = 10000.0f;
             camera.target[0] = 1.0f;

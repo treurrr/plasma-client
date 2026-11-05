@@ -92,6 +92,12 @@ def main(args):
     with zipfile.ZipFile(jar) as archive:
         (lang / "en_us.json").write_bytes(archive.read("assets/minecraft/lang/en_us.json"))
     print(f"{lang / 'en_us.json'}")
+    # The splash lines the title screen picks from, read at start.
+    texts = out.parent / "texts"
+    texts.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(jar) as archive:
+        (texts / "splashes.txt").write_bytes(archive.read("assets/minecraft/texts/splashes.txt"))
+    print(texts / "splashes.txt")
     print(f"\n{out} is ready for protocol {protocol}")
 
 

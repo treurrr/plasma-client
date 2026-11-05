@@ -1,6 +1,7 @@
 #pragma once
 #include "mcpp/ui/gui_graphics.hpp"
 #include "mcpp/ui/layout.hpp"
+#include "mcpp/ui/panorama.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -137,6 +138,11 @@ public:
     virtual void render_background(GuiGraphics& gfx, double mx, double my);
     void render_transparent_background(GuiGraphics& gfx);
     void render_menu_background(GuiGraphics& gfx, int x, int y, int w, int h);
+    void render_blurred_background(GuiGraphics& gfx);
+    void render_panorama(GuiGraphics& gfx);
+    virtual bool panorama_should_spin() const { return true; }
+    // Every widget faded to `alpha`, as the title screen fades in.
+    void fade_widgets(float alpha);
     virtual bool mouse_clicked(double mx, double my, int button);
     virtual bool mouse_released(double mx, double my, int button);
     virtual bool mouse_dragged(double mx, double my, int button, double dx, double dy);
@@ -180,6 +186,8 @@ struct Host {
     std::function<void()> respawn;
     std::function<void(const std::string&)> chat;
     std::function<void(const std::string&)> command;
+    // The title screen's Multiplayer button.
+    std::function<void()> multiplayer;
 };
 
 class ServerList;
@@ -221,11 +229,14 @@ public:
     Platform platform;
     Host host;
     std::function<std::string(std::string_view)> key_name;
-    // The panorama behind every screen of the title flow; blurred everywhere
-    // but on the title screen itself.
-    std::function<void(GuiGraphics&, bool blurred)> panorama;
+    // The panorama behind every screen of the title flow.
+    PanoramaRenderer panorama;
     // What a world screen needs to know about the world: set while playing.
     World* world = nullptr;
+    // The signed-in name, which a splash now and then shouts.
+    std::string username;
+    // The font, for screens that measure text while they lay out.
+    const Font* font = nullptr;
 
 private:
     int active_button_ = -1;

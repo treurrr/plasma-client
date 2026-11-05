@@ -1,4 +1,5 @@
 #pragma once
+#include "mcpp/gpu/blur.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/span_allocator.hpp"
 #include "mcpp/world/atlas.hpp"
@@ -10,6 +11,7 @@
 #include <climits>
 #include <array>
 #include <functional>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -301,6 +303,18 @@ private:
     double upload_gpu_ms_ = 0.0;
     float timestamp_period_ = 1.0f;
     InWorld in_world_;
+
+public:
+    // Recorded into the frame after the world and before the overlay, after
+    // which the whole frame is blurred `radius` texels: what a menu's
+    // blurred background covers. A radius below one draws it unblurred.
+    void set_backdrop(Overlay under, int radius);
+
+private:
+    void record_backdrop(VkCommandBuffer command);
+    Overlay backdrop_;
+    int blur_radius_ = 0;
+    std::unique_ptr<BoxBlur> blur_;
 };
 
 } // namespace mcpp::gpu

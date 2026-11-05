@@ -250,11 +250,16 @@ void GuiGraphics::draw_word_wrap(const Component& component, int x, int y, int m
 // `ActiveTextCollector.defaultScrollingHelper`: centres text that fits, else scrolls it back and forth.
 void GuiGraphics::draw_scrolling_string(const std::vector<Run>& r, int x0, int y0, int x1, int y1,
                                         uint32_t argb) {
+    draw_scrolling_string(r, (x0 + x1) / 2, x0, y0, x1, y1, argb);
+}
+
+void GuiGraphics::draw_scrolling_string(const std::vector<Run>& r, int centre, int x0, int y0,
+                                        int x1, int y1, uint32_t argb) {
     const int w = font.width(r);
     const int y = (y0 + y1 - Font::kLineHeight) / 2 + 1;
     const int box = x1 - x0;
     if (w <= box) {
-        const int cx = std::clamp((x0 + x1) / 2, x0 + w / 2, x1 - w / 2);
+        const int cx = std::clamp(centre, x0 + w / 2, x1 - w / 2);
         draw_centered_string(r, cx, y, argb);
         return;
     }

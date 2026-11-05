@@ -669,7 +669,9 @@ void WorldRenderer::create_targets() {
     };
 
     make_image(kColorFormat,
-               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, color_,
+               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                   VK_IMAGE_USAGE_SAMPLED_BIT,
+               color_,
                color_memory_, color_view_, VK_IMAGE_ASPECT_COLOR_BIT);
     make_image(kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_, depth_memory_,
                depth_view_, VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -1577,6 +1579,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     }
     if (sky_ != nullptr) sky_->record_clouds(command, camera, width_, height_, atmosphere_);
     vkCmdEndRendering(command);
+    record_backdrop(command);
 
     // What goes on top - a hud, a menu - is drawn into the same image
     // after the world, so a screenshot carries the frame it belongs to.

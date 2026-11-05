@@ -128,16 +128,25 @@ public:
     // The six faces of the title screen's panorama, in the game's order.
     void set_panorama(const std::vector<uint8_t> (&faces)[6], uint32_t side);
     bool has_panorama() const { return panorama_side_ > 1; }
-    // The panorama seen from its centre, turned `yaw` degrees and tilted
-    // `pitch`, blurred over `blur` screen pixels, over the rectangle.
+    // The panorama cube seen from its centre the way the game's camera sees
+    // it: turned `yaw` degrees about y, tilted `pitch` about x, 85 degrees
+    // from top to bottom across the rectangle.
     void panorama(float x, float y, float width, float height, float yaw, float pitch,
-                  float blur, uint32_t rgba = 0xFFFFFFFFu);
+                  uint32_t rgba = 0xFFFFFFFFu);
 
     static std::filesystem::path default_items_path(int32_t protocol);
     static std::filesystem::path default_gui_path(int32_t protocol);
+    // Everything after the blur mark, or everything when there is none.
     void record(VkCommandBuffer command, uint32_t width, uint32_t height);
+    // What was drawn before the screen asked for the blur: it goes under the
+    // blurred frame, the rest over it, the way the game splits its draws.
+    void mark_blur();
+    bool blur_marked() const { return blur_at_ != kNoBlur; }
+    void record_under_blur(VkCommandBuffer command, uint32_t width, uint32_t height);
 
 private:
+    void record_range(VkCommandBuffer command, uint32_t width, uint32_t height, uint32_t from,
+                      uint32_t to);
     struct Sprite {
         float u, v, du, dv;
         float width, height;
@@ -213,6 +222,8 @@ private:
     VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet descriptor_set_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
+    static constexpr uint32_t kNoBlur = 0xFFFFFFFFu;
+    uint32_t blur_at_ = kNoBlur;
 };
 
 } // namespace mcpp::gpu

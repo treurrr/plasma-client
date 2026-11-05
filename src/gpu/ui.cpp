@@ -574,6 +574,7 @@ void UiRenderer::create_pipeline(VkFormat colour_format) {
 
 void UiRenderer::begin() {
     count_ = 0;
+    blur_at_ = kNoBlur;
     segments_.clear();
     scissors_.clear();
     reset_transform();
@@ -770,7 +771,7 @@ void UiRenderer::set_panorama(const std::vector<uint8_t> (&faces)[6], uint32_t s
 }
 
 void UiRenderer::panorama(float x, float y, float width, float height, float yaw, float pitch,
-                          float blur, uint32_t rgba) {
+                          uint32_t rgba) {
     Quad quad;
     quad.x = x;
     quad.y = y;
@@ -781,7 +782,6 @@ void UiRenderer::panorama(float x, float y, float width, float height, float yaw
     quad.layer = -3;
     quad.uv[0] = yaw;
     quad.uv[1] = pitch;
-    quad.uv[2] = blur;
     add(quad);
 }
 
@@ -800,8 +800,21 @@ void UiRenderer::panel(float x, float y, float width, float height, float radius
     add(quad);
 }
 
+void UiRenderer::mark_blur() {
+    if (blur_at_ == kNoBlur) blur_at_ = count_;
+}
+
+void UiRenderer::record_under_blur(VkCommandBuffer command, uint32_t width, uint32_t height) {
+    if (blur_marked()) record_range(command, width, height, 0, blur_at_);
+}
+
 void UiRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t height) {
-    if (count_ == 0 || width == 0 || height == 0) return;
+    record_range(command, width, height, blur_marked() ? blur_at_ : 0, count_);
+}
+
+void UiRenderer::record_range(VkCommandBuffer command, uint32_t width, uint32_t height,
+                              uint32_t from, uint32_t to) {
+    if (to <= from || width == 0 || height == 0) return;
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
                               0.0f, 1.0f};
@@ -818,8 +831,8 @@ void UiRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t height
         segments_.insert(segments_.begin(), Segment{0, {{0, 0}, {width, height}}});
     }
     for (size_t i = 0; i < segments_.size(); ++i) {
-        const uint32_t first = segments_[i].first;
-        const uint32_t last = i + 1 < segments_.size() ? segments_[i + 1].first : count_;
+        const uint32_t first = std::max(segments_[i].first, from);
+        const uint32_t last = std::min(i + 1 < segments_.size() ? segments_[i + 1].first : count_, to);
         if (last <= first) continue;
         VkRect2D scissor = segments_[i].scissor;
         scissor.extent.width = std::min(scissor.extent.width,

@@ -22,7 +22,7 @@ layout(set = 0, binding = 1) uniform sampler2D gui;
 // Pictures that arrive at run time, one per layer: server icons, skins.
 layout(set = 0, binding = 2) uniform sampler2DArray dynamic_layers;
 
-// The title screen's six panorama faces.
+// The title screen's six panorama faces, as the cube's layers.
 layout(set = 0, binding = 3) uniform sampler2DArray panorama_faces;
 
 layout(location = 0) out vec4 colour;
@@ -46,32 +46,36 @@ bool outside() {
     return any(greaterThan(abs(local), half_size));
 }
 
-// One face per axis, each seen from inside the cube with its top edge
-// meeting the face above it.
-vec3 face_of(vec3 d) {
+// A direction to a layer and a texel of the cube, by the face table every
+// cube map sampler follows. The layers are the game's: +x, -x, +y, -y, +z, -z.
+vec3 cube_texel(vec3 d) {
     vec3 a = abs(d);
-    if (a.y >= a.x && a.y >= a.z) {
-        if (d.y > 0.0) return vec3(0.5 + 0.5 * d.x / a.y, 0.5 - 0.5 * d.z / a.y, 4.0);
-        return vec3(0.5 + 0.5 * d.x / a.y, 0.5 + 0.5 * d.z / a.y, 5.0);
+    if (a.x >= a.y && a.x >= a.z) {
+        return d.x > 0.0 ? vec3(-d.z, -d.y, 0.0) / vec3(a.x, a.x, 1.0)
+                         : vec3(d.z, -d.y, 1.0) / vec3(a.x, a.x, 1.0);
     }
-    if (a.x >= a.z) {
-        if (d.x > 0.0) return vec3(0.5 + 0.5 * d.z / a.x, 0.5 - 0.5 * d.y / a.x, 1.0);
-        return vec3(0.5 - 0.5 * d.z / a.x, 0.5 - 0.5 * d.y / a.x, 3.0);
+    if (a.y >= a.z) {
+        return d.y > 0.0 ? vec3(d.x, d.z, 2.0) / vec3(a.y, a.y, 1.0)
+                         : vec3(d.x, -d.z, 3.0) / vec3(a.y, a.y, 1.0);
     }
-    if (d.z < 0.0) return vec3(0.5 + 0.5 * d.x / a.z, 0.5 - 0.5 * d.y / a.z, 0.0);
-    return vec3(0.5 - 0.5 * d.x / a.z, 0.5 - 0.5 * d.y / a.z, 2.0);
+    return d.z > 0.0 ? vec3(d.x, -d.y, 4.0) / vec3(a.z, a.z, 1.0)
+                     : vec3(-d.x, -d.y, 5.0) / vec3(a.z, a.z, 1.0);
 }
 
+// The game draws the cube around a camera at its centre, the model view
+// turned half a turn about x, then `pitch` about x, then `yaw` about y; this
+// is that, inverted, for the ray through one pixel.
 vec3 panorama_at(vec2 ndc, float yaw, float pitch, float aspect) {
-    // 85 degrees from top to bottom, which is what the game projects it with.
     const float tan_half = tan(radians(85.0) * 0.5);
-    vec3 d = normalize(vec3(ndc.x * tan_half * aspect, -ndc.y * tan_half, -1.0));
-    float p = radians(pitch);
+    vec3 d = vec3(ndc.x * tan_half * aspect, -ndc.y * tan_half, -1.0);
+    d = vec3(d.x, -d.y, -d.z);
+    float p = -radians(pitch);
     d = vec3(d.x, d.y * cos(p) - d.z * sin(p), d.y * sin(p) + d.z * cos(p));
-    float y = radians(yaw);
-    d = vec3(d.x * cos(y) - d.z * sin(y), d.y, d.x * sin(y) + d.z * cos(y));
-    vec3 uvw = face_of(d);
-    return texture(panorama_faces, uvw).rgb;
+    float y = -radians(yaw);
+    d = vec3(d.x * cos(y) + d.z * sin(y), d.y, -d.x * sin(y) + d.z * cos(y));
+    vec3 face = cube_texel(d);
+    // The game flips every face upside down on its way into the cube.
+    return texture(panorama_faces, vec3(face.x * 0.5 + 0.5, 0.5 - face.y * 0.5, face.z)).rgb;
 }
 
 void main() {
@@ -86,26 +90,8 @@ void main() {
     if (layer == -3) {
         if (outside()) discard;
         vec2 ndc = local / half_size;
-        float aspect = half_size.x / half_size.y;
-        float blur = extra.z;
-        vec3 sum = vec3(0.0);
-        if (blur <= 0.5) {
-            sum = panorama_at(ndc, extra.x, extra.y, aspect);
-        } else {
-            // A gaussian over the blur radius, in screen pixels.
-            float weight = 0.0;
-            float sigma = blur * 0.5;
-            for (int j = -4; j <= 4; ++j) {
-                for (int i = -4; i <= 4; ++i) {
-                    vec2 offset = vec2(float(i), float(j)) * (blur / 4.0);
-                    float w = exp(-dot(offset, offset) / (2.0 * sigma * sigma));
-                    sum += panorama_at(ndc + offset / half_size, extra.x, extra.y, aspect) * w;
-                    weight += w;
-                }
-            }
-            sum /= weight;
-        }
-        vec3 rgb = linearise > 0.5 ? to_linear(sum) : sum;
+        vec3 rgb = panorama_at(ndc, extra.x, extra.y, half_size.x / half_size.y);
+        rgb = linearise > 0.5 ? to_linear(rgb) : rgb;
         colour = vec4(rgb * fill_top.rgb, fill_top.a);
         return;
     }

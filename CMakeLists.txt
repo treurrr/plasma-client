@@ -229,3 +229,13 @@ target_sources(movement_probe PRIVATE src/client/player_rules.cpp)
 target_include_directories(movement_probe PRIVATE src)
 mcpp_probe(sound_probe)
 target_link_libraries(sound_probe PRIVATE mcpp_audio)
+
+# The title and pause screens and the menu blur behind them.
+mcpp_shader(blur.vert BlurVert)
+mcpp_shader(blur.frag BlurFrag)
+add_custom_target(mcpp_blur_shaders DEPENDS ${MCPP_SHADER_DIR}/BlurVert.hpp
+                                            ${MCPP_SHADER_DIR}/BlurFrag.hpp)
+add_dependencies(mcpp_net mcpp_blur_shaders)
+target_sources(mcpp_net PRIVATE src/gpu/blur.cpp src/ui/panorama.cpp
+                                src/ui/screens/title_screen.cpp src/ui/screens/pause_screen.cpp)
+mcpp_test(title)

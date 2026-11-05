@@ -2,6 +2,7 @@
 #include "mcpp/ui/screen.hpp"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -36,17 +37,47 @@ public:
     std::string sprite_disabled;
 };
 
-// A normal button with a small picture beside its label or in place of it:
-// the language and accessibility buttons.
-class IconButton : public Button {
+// A button with a picture: in place of its label (the title screen's
+// language and accessibility buttons), or beside it.
+class SpriteIconButton : public Button {
 public:
-    IconButton(int x_, int y_, int w_, int h_, Component label, std::string icon, int icon_w,
-               int icon_h, std::function<void(Button&)> press);
+    SpriteIconButton(int w_, int h_, Component label, std::string sprite, int sprite_w,
+                     int sprite_h, bool icon_only, std::function<void(Button&)> press);
     void render(GuiGraphics& gfx, double mx, double my) override;
 
-    std::string icon;
-    int icon_w;
-    int icon_h;
+    std::string sprite;
+    int sprite_w;
+    int sprite_h;
+    bool icon_only;
+
+private:
+    void render_sprite(GuiGraphics& gfx, int sx, int sy);
+};
+
+// `CommonButtons.language` and `CommonButtons.accessibility`.
+std::unique_ptr<SpriteIconButton> language_button(int width, std::function<void(Button&)> press,
+                                                  bool icon_only);
+std::unique_ptr<SpriteIconButton> accessibility_button(int width,
+                                                       std::function<void(Button&)> press,
+                                                       bool icon_only);
+
+// Text that is a button: underlined while the pointer is on it.
+class PlainTextButton : public Button {
+public:
+    PlainTextButton(int x_, int y_, int w_, int h_, Component label,
+                    std::function<void(Button&)> press);
+    void render(GuiGraphics& gfx, double mx, double my) override;
+};
+
+// One line of text that is not interactive, cut with an ellipsis when it is
+// wider than `max_width`.
+class StringWidget : public Widget {
+public:
+    StringWidget(int x_, int y_, int w_, int h_, Component text);
+    void render(GuiGraphics& gfx, double mx, double my) override;
+    bool focusable() const override { return false; }
+
+    int max_width = 0;
 };
 
 // "Name: Value", stepping through its values on each click, backwards with

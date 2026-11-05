@@ -29,7 +29,8 @@ CONTAINERS = "assets/minecraft/textures/gui/container/"
 # Whole textures the screens draw: the menu and list backgrounds, the header
 # and footer lines, the recipe book's sheet and the title screen's logo.
 TEXTURES = "assets/minecraft/textures/gui/"
-TITLE = ("title/minecraft.png", "title/edition.png")
+TITLE = ("title/minecraft.png", "title/minceraft.png", "title/edition.png",
+         "title/background/panorama_overlay.png")
 SIDE = 2048
 PAD = 1
 

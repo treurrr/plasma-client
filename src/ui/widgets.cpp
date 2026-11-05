@@ -8,8 +8,9 @@ namespace {
 
 constexpr std::string_view kClick = "minecraft:ui.button.click";
 
+// `ARGB.color`, `ARGB.as8BitChannel`: the alpha floored to eight bits.
 uint32_t with_alpha(uint32_t argb, float alpha) {
-    const auto a = static_cast<uint32_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f);
+    const auto a = static_cast<uint32_t>(std::floor(std::clamp(alpha, 0.0f, 1.0f) * 255.0f));
     return (argb & 0x00FFFFFFu) | (a << 24);
 }
 
@@ -115,18 +116,86 @@ void SpriteButton::render(GuiGraphics& gfx, double, double) {
     gfx.blit_sprite(name, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
 }
 
-IconButton::IconButton(int x_, int y_, int w_, int h_, Component label, std::string icon_,
-                       int icon_w_, int icon_h_, std::function<void(Button&)> press)
-    : Button(x_, y_, w_, h_, std::move(label), std::move(press)), icon(std::move(icon_)),
-      icon_w(icon_w_), icon_h(icon_h_) {}
+SpriteIconButton::SpriteIconButton(int w_, int h_, Component label, std::string sprite_,
+                                   int sprite_w_, int sprite_h_, bool icon_only_,
+                                   std::function<void(Button&)> press)
+    : Button(0, 0, w_, h_, std::move(label), std::move(press)), sprite(std::move(sprite_)),
+      sprite_w(sprite_w_), sprite_h(sprite_h_), icon_only(icon_only_) {}
 
-void IconButton::render(GuiGraphics& gfx, double, double) {
-    const char* sprite = !active ? "widget/button_disabled"
-                         : highlighted() ? "widget/button_highlighted"
-                                         : "widget/button";
-    gfx.blit_sprite(sprite, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
-    gfx.blit_sprite(icon, x + (w - icon_w) / 2, y + (h - icon_h) / 2, icon_w, icon_h,
-               with_alpha(0xFFFFFFu, alpha));
+// `SpriteIconButton.renderSprite`: the icon at its own size, faded with the button.
+void SpriteIconButton::render_sprite(GuiGraphics& gfx, int sx, int sy) {
+    gfx.blit_sprite(sprite, sx, sy, sprite_w, sprite_h, with_alpha(0xFFFFFFu, alpha));
+}
+
+// `SpriteIconButton.CenteredIcon.renderContents`, `SpriteIconButton.TextAndIcon.renderContents`: the button, then the icon centred or the label with the icon at the right.
+void SpriteIconButton::render(GuiGraphics& gfx, double, double) {
+    const char* frame = !active ? "widget/button_disabled"
+                        : highlighted() ? "widget/button_highlighted"
+                                        : "widget/button";
+    gfx.blit_sprite(frame, x, y, w, h, with_alpha(0xFFFFFFu, alpha));
+    if (icon_only) {
+        render_sprite(gfx, x + w / 2 - sprite_w / 2, y + h / 2 - sprite_h / 2);
+        return;
+    }
+    const uint32_t colour = with_alpha(active ? 0xFFFFFFu : 0xA0A0A0u, alpha);
+    gfx.draw_scrolling_string(gfx.runs(message), x + w / 2, x + 2, y, x + w - sprite_w - 4, y + h,
+                              colour);
+    render_sprite(gfx, x + w - sprite_w - 2, y + h / 2 - sprite_h / 2);
+}
+
+// `CommonButtons.language`: the globe, "Language...".
+std::unique_ptr<SpriteIconButton> language_button(int width, std::function<void(Button&)> press,
+                                                  bool icon_only) {
+    return std::make_unique<SpriteIconButton>(width, 20, translatable("options.language"),
+                                              "icon/language", 15, 15, icon_only,
+                                              std::move(press));
+}
+
+// `CommonButtons.accessibility`: the figure, "Accessibility Settings...".
+std::unique_ptr<SpriteIconButton> accessibility_button(int width,
+                                                       std::function<void(Button&)> press,
+                                                       bool icon_only) {
+    return std::make_unique<SpriteIconButton>(
+        width, 20,
+        translatable(icon_only ? "options.accessibility"
+                               : "accessibility.onboarding.accessibility.button"),
+        "icon/accessibility", 15, 15, icon_only, std::move(press));
+}
+
+PlainTextButton::PlainTextButton(int x_, int y_, int w_, int h_, Component label,
+                                 std::function<void(Button&)> press)
+    : Button(x_, y_, w_, h_, std::move(label), std::move(press)) {}
+
+// `PlainTextButton.renderContents`: the text, underlined while hovered or focused.
+void PlainTextButton::render(GuiGraphics& gfx, double, double) {
+    Component shown = message;
+    if (highlighted()) shown.style.underlined = true;
+    const auto a = static_cast<uint32_t>(std::ceil(alpha * 255.0f));
+    gfx.draw_string(shown, x, y, 0xFFFFFFu | (a << 24));
+}
+
+StringWidget::StringWidget(int x_, int y_, int w_, int h_, Component text) {
+    x = x_;
+    y = y_;
+    w = w_;
+    h = h_;
+    message = std::move(text);
+    active = false;
+}
+
+// `StringWidget.visitLines`, `StringWidget.clipText`: the line centred on the height, cut with an ellipsis past the maximum width.
+void StringWidget::render(GuiGraphics& gfx, double, double) {
+    const int limit = max_width > 0 ? max_width : w;
+    const int ty = y + (h - Font::kLineHeight) / 2;
+    const uint32_t colour = with_alpha(0xFFFFFFu, alpha);
+    auto runs = gfx.runs(message);
+    if (gfx.width_of(runs) > limit) {
+        const std::string head =
+            gfx.font.plain_substr_by_width(plain(runs), limit - gfx.width_of("..."));
+        gfx.draw_string(head + "...", x, ty, colour);
+        return;
+    }
+    gfx.draw_string(runs, x, ty, colour);
 }
 
 CycleButton::CycleButton(int x_, int y_, int w_, int h_, Component name_,

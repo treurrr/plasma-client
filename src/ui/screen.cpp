@@ -1,5 +1,7 @@
 #include "mcpp/ui/screen.hpp"
 
+#include "mcpp/options.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -60,16 +62,36 @@ void Screen::render_menu_background(GuiGraphics& gfx, int x, int y, int w, int h
                    32.0f, 32.0f);
 }
 
-// `Screen.renderBackground`: transparent in game, else panorama and menu background.
+// `Screen.renderBackground`: transparent in game; else the panorama when no world is open, the blur, and the menu background.
 void Screen::render_background(GuiGraphics& gfx, double, double) {
     if (is_in_game_ui()) {
         render_transparent_background(gfx);
         return;
     }
-    if (manager != nullptr && !manager->in_world && manager->panorama) {
-        manager->panorama(gfx, true);
-    }
+    if (manager != nullptr && !manager->in_world) render_panorama(gfx);
+    render_blurred_background(gfx);
     render_menu_background(gfx, 0, 0, width, height);
+}
+
+// `Screen.renderBlurredBackground`: the blur, unless the option turns it off.
+void Screen::render_blurred_background(GuiGraphics& gfx) {
+    const int blurriness = manager != nullptr && manager->options != nullptr
+                               ? manager->options->get_int("menuBackgroundBlurriness")
+                               : 5;
+    if (blurriness >= 1) gfx.blur_before_this_stratum();
+}
+
+// `Screen.renderPanorama`: the shared panorama, turning unless the screen says not to.
+void Screen::render_panorama(GuiGraphics& gfx) {
+    if (manager == nullptr) return;
+    const double speed =
+        manager->options != nullptr ? manager->options->get_double("panoramaScrollSpeed") : 1.0;
+    manager->panorama.render(gfx, width, height, panorama_should_spin(), speed);
+}
+
+// `Screen.fadeWidgets`: the alpha of every widget.
+void Screen::fade_widgets(float alpha) {
+    for (auto& widget : widgets) widget->alpha = alpha;
 }
 
 void Screen::render(GuiGraphics& gfx, double mx, double my) {
