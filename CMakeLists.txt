@@ -106,6 +106,7 @@ add_library(mcpp_net STATIC
     src/world/mesher.cpp
     src/world/physics.cpp
     src/world/shapes.cpp
+    src/world/shape_edges.cpp
     src/world/light.cpp
     src/world/atlas.cpp
     src/world/biomes.cpp

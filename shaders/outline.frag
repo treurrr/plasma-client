@@ -2,8 +2,10 @@
 
 layout(push_constant) uniform Push {
     mat4 view_projection;
-    vec4 block;
+    vec4 eye;
+    vec4 corner;
     vec4 colour;
+    vec4 screen;
 } push;
 
 layout(location = 0) out vec4 out_color;

@@ -2,6 +2,7 @@
 #include "client/player_rules.hpp"
 
 #include "mcpp/jmath.hpp"
+#include "mcpp/world/shape_edges.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -89,6 +90,40 @@ void aim(Game& game, double partial) {
     std::copy(hit.pos, hit.pos + 3, player.aimed);
     player.hit_face = hit.face;
     std::copy(hit.location, hit.location + 3, player.hit_location);
+}
+
+// `LevelRenderer.extractBlockOutline`, `LevelRenderer.renderBlockOutline`, `ShapeRenderer.renderShape`: every edge of the aimed block's outline shape, where it stands.
+void aim_outline(Game& game) {
+    auto& player = game.player;
+    auto& outline = game.world.outline;
+    int32_t state = 0;
+    if (player.aiming) {
+        std::lock_guard lock(game.world.world_guard);
+        state = std::max(0, block_unlocked(game, player.aimed[0], player.aimed[1], player.aimed[2]));
+    }
+    const uint16_t shape = shapes().state(state).outline;
+    const bool shown = state != 0 && !shapes().empty(shape) && outline.has_value();
+    game.renderer->set_outlined_block(player.aimed, shown);
+    if (!shown) return;
+    const mcpp::gpu::Outline::Range* range = outline->find(shape);
+    mcpp::gpu::Outline::Range added;
+    if (range == nullptr) {
+        std::vector<float> edges;
+        mcpp::world::for_all_edges(shapes(), shape, [&](double x0, double y0, double z0, double x1,
+                                                        double y1, double z1) {
+            for (const double v : {x0, y0, z0, x1, y1, z1}) edges.push_back(static_cast<float>(v));
+        });
+        added = outline->add(shape, edges);
+        range = &added;
+    }
+    double offset[3];
+    shapes().offset(state, player.aimed[0], player.aimed[2], offset);
+    double corner[3];
+    for (int i = 0; i < 3; ++i) {
+        corner[i] = static_cast<double>(player.aimed[i]) + offset[i] -
+                    static_cast<double>(game.camera.eye[i]);
+    }
+    outline->aim(*range, corner, game.camera.eye, game.window->width(), game.window->height());
 }
 
 int32_t held_item(const Game& game) {
@@ -393,7 +428,6 @@ void player_draw(Game& game) {
 
     const auto pt = static_cast<float>(player.partial_tick);
     aim(game, player.partial_tick);
-    game.renderer->set_outlined_block(player.aimed, player.aiming);
 
     // Where the camera is: the body between its last two ticks, the eye at
     // its eased height.
@@ -470,6 +504,7 @@ void player_draw(Game& game) {
     player.pitch = -body.pitch;
     player.game_yaw = body.yaw;
     player.fov = fov;
+    aim_outline(game);
 }
 
 void player_stop(Game&) {}

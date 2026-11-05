@@ -8,6 +8,9 @@
 #include "mcpp/options.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/translations.hpp"
+#include "client/common.hpp"
+#include "mcpp/session.hpp"
+#include "mcpp/ui/container_screen.hpp"
 #include "mcpp/ui/screens.hpp"
 #include "mcpp/ui/world.hpp"
 #include "mcpp/world/atlas.hpp"
@@ -15,7 +18,10 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <iostream>
+#include <memory>
+#include <thread>
 
 namespace client {
 
@@ -33,6 +39,9 @@ int screenshot(const std::vector<std::string>& args) {
     double at_x = -1.0;
     double at_y = -1.0;
     bool book = true;
+    std::string server;
+    std::string server_name;
+    std::filesystem::path server_dir;
     std::vector<std::string> plain;
     for (size_t i = 1; i < args.size(); ++i) {
         if (args[i] == "--at" && i + 2 < args.size()) {
@@ -41,6 +50,11 @@ int screenshot(const std::vector<std::string>& args) {
             i += 2;
         } else if (args[i] == "--closed-book") {
             book = false;
+        } else if (args[i] == "--server" && i + 3 < args.size()) {
+            server = args[i + 1];
+            server_name = args[i + 2];
+            server_dir = args[i + 3];
+            i += 3;
         } else {
             plain.push_back(args[i]);
         }
@@ -80,6 +94,58 @@ int screenshot(const std::vector<std::string>& args) {
     world.items = &items;
     world.recipe_book.open = book;
 
+    // With a server, the book and the inventory are the ones it sends a
+    // player who knows every recipe and holds a few planks and sticks.
+    std::unique_ptr<mcpp::Session> session;
+    if (!server.empty()) {
+        const auto address = parse_address(server);
+        mcpp::SessionOptions session_options;
+        session_options.host = address.host;
+        session_options.port = address.port;
+        session_options.username = server_name;
+        mcpp::SessionEvents events;
+        events.ui.on_recipe_book_add = [&](const mcpp::proto::Value& added) {
+            world.recipe_book.add_batch(added, session->registries(), session->tags());
+        };
+        session = std::make_unique<mcpp::Session>(session_options, events);
+        session->connect();
+        const auto console = [&](const std::string& command) {
+            std::ofstream(server_dir / "console.in") << command << '\n';
+        };
+        const auto pump = [&](double seconds) {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+            while (std::chrono::steady_clock::now() < until) {
+                while (session->has_data() || session->in_bundle()) {
+                    try {
+                        if (!session->pump()) break;
+                    } catch (const mcpp::TimeoutError&) {
+                        break;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        };
+        pump(2.0);
+        console(std::format("clear {}", server_name));
+        console(std::format("recipe give {} *", server_name));
+        console(std::format("give {} minecraft:oak_planks 5", server_name));
+        console(std::format("give {} minecraft:stick 2", server_name));
+        pump(2.0);
+        world.recipe_book.rebuild_collections();
+        for (auto* menu : {&inventory_menu, &table_menu}) {
+            const auto& slots = session->inventory().slots;
+            for (size_t i = 0; i < menu->size(); ++i) {
+                const int index = menu->rule(i).inventory_index;
+                if (index >= 0 && index < 9) menu->slots[i] = slots[36 + static_cast<size_t>(index)];
+                if (index >= 9 && index < 36) menu->slots[i] = slots[static_cast<size_t>(index)];
+            }
+        }
+        console(std::format("recipe take {} *", server_name));
+        console(std::format("clear {}", server_name));
+        pump(0.5);
+        session->close();
+    }
+
     std::vector<mcpp::ui::ScreenName> todo;
     for (const auto& known : mcpp::ui::screen_names()) {
         if (which == "all" || which == known.name) todo.push_back(known);
@@ -103,6 +169,9 @@ int screenshot(const std::vector<std::string>& args) {
             manager.resize(gw, gh);
             manager.set_screen(mcpp::ui::make_screen(entry.name));
             manager.apply_pending();
+            if (auto* screen = dynamic_cast<mcpp::ui::AbstractRecipeBookScreen*>(manager.current())) {
+                screen->recipe_book.tick();
+            }
             const double mx = at_x >= 0.0 ? at_x : -100.0;
             const double my = at_y >= 0.0 ? at_y : -100.0;
             manager.move(mx, my);
