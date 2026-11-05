@@ -69,7 +69,7 @@ struct ParticleLevel {
     int32_t min_y = -64;
 };
 
-// SingleQuadParticle.Layer: which atlas a quad samples and how it blends.
+// The game's SingleQuadParticle.Layer: which atlas a quad samples, and how it blends.
 enum class QuadLayer : uint8_t { Terrain, Items, Opaque, Translucent };
 enum class ParticleKind : uint8_t { Terrain };
 
