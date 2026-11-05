@@ -14,12 +14,12 @@ struct Quat {
 float sin_f(float a) { return static_cast<float>(std::sin(static_cast<double>(a))); }
 float cos_f(float a) { return static_cast<float>(std::cos(static_cast<double>(a))); }
 
-// `Quaternionf.rotationX`: a turn about x.
+// JOML's rotationX: a turn about x.
 Quat rotation_x(float angle) {
     return {sin_f(angle * 0.5f), 0.0f, 0.0f, cos_f(angle * 0.5f)};
 }
 
-// `Quaternionf.rotationXYZ`: turns about x, then y, then z.
+// JOML's rotationXYZ: turns about x, then y, then z.
 Quat rotation_xyz(float ax, float ay, float az) {
     const float sx = sin_f(ax * 0.5f), cx = cos_f(ax * 0.5f);
     const float sy = sin_f(ay * 0.5f), cy = cos_f(ay * 0.5f);
@@ -41,7 +41,7 @@ Quat face_rotation(int face) {
     }
 }
 
-// `Quaternionf.transform`: a vector turned by a quaternion.
+// JOML's Quaternionf.transform: a vector turned by a quaternion.
 void transform(const Quat& q, float v[3]) {
     const float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z, ww = q.w * q.w;
     const float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z, xw = q.x * q.w;
@@ -141,7 +141,7 @@ void crack_quads(const BlockTable& table, int32_t state, const int32_t pos[3], c
                               corners[c][2] + static_cast<float>(offset[2])};
             CrackVertex v{};
             for (int a = 0; a < 3; ++a) v.position[a] = origin[a] + local[a];
-            // `Vector3f.rotateY`, `Vector3f.rotateX`: half a turn about y, a quarter back about x.
+            // Half a turn about y, a quarter back about x, as JOML rotates them.
             {
                 const float s = sin_f(3.1415927f), k = cos_f(3.1415927f);
                 const float x = local[0] * k + local[2] * s;

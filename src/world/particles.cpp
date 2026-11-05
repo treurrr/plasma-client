@@ -268,7 +268,7 @@ Particle terrain_particle(const ParticleLevel& level, int64_t seed, double x, do
     return p;
 }
 
-// `Camera.setRotation`, `Quaternionf.rotationYXZ`: the camera's turn.
+// `Camera.setRotation`: the camera's turn, as JOML's rotationYXZ builds it.
 void camera_rotation(float yaw, float pitch, float out[4]) {
     const float angle_y = 3.1415927f - yaw * 0.017453292f;
     const float angle_x = -pitch * 0.017453292f;
@@ -284,7 +284,7 @@ void camera_rotation(float yaw, float pitch, float out[4]) {
 
 ParticleEngine::ParticleEngine() : next_seed(unique_seed), level_random(unique_seed()) {}
 
-// `EvictingQueue.add`: in at the back, the oldest out when full.
+// `ParticleGroup.add`: in at the back of an evicting queue, the oldest out when full.
 void ParticleEngine::Group::add(const Particle& particle) {
     if (ring.empty()) ring.resize(kGroupLimit);
     if (size == kGroupLimit) {
@@ -356,7 +356,7 @@ void ParticleEngine::extract(const ParticleView& view, const ParticleLevel& leve
         q.z = static_cast<float>(lerp(p.zo, p.z) - view.camera[2]);
         std::copy(view.rotation, view.rotation + 4, q.rotation);
         if (p.roll != 0.0f) {
-            // `Quaternionf.rotateZ`: the particle's own roll on top of the camera's turn.
+            // JOML's rotateZ: the particle's own roll on top of the camera's turn.
             const float angle = p.o_roll + view.partial * (p.roll - p.o_roll);
             const auto s = static_cast<float>(std::sin(static_cast<double>(angle * 0.5f)));
             const auto c = static_cast<float>(std::cos(static_cast<double>(angle * 0.5f)));
