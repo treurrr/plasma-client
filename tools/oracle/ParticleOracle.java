@@ -39,6 +39,7 @@ import net.minecraft.world.phys.AABB;
 // is made, winds it back over the draws and prints that seed for the probe to
 // use; the level's own generator is seeded here.
 public class ParticleOracle {
+    static final java.io.PrintStream OUT = System.out;
     static final sun.misc.Unsafe U = unsafe();
     static final Map<BlockPos, BlockState> BLOCKS = new HashMap<>();
     static final long MULTIPLIER = 0x5DEECE66DL;
@@ -119,13 +120,13 @@ public class ParticleOracle {
             added.clear();
             level.addDestroyBlockEffect(at, state);
             List<Particle> made = new ArrayList<>(added);
-            System.out.println("destroy " + id + " " + made.size());
+            OUT.println("destroy " + id + " " + made.size());
             report(name, made, 9);
             for (int tick = 0; tick < 20; tick++) {
                 for (int i = 0; i < made.size(); i++) {
                     Particle p = made.get(i);
                     p.tick();
-                    System.out.println("tick " + name + "#" + i + "@" + tick + " " + motion(p));
+                    OUT.println("tick " + name + "#" + i + "@" + tick + " " + motion(p));
                 }
             }
         }
@@ -140,7 +141,7 @@ public class ParticleOracle {
                 added.clear();
                 level.addBreakingBlockEffect(at, face);
                 List<Particle> made = new ArrayList<>(added);
-                System.out.println("crack " + Block.getId(state) + "," + face.get3DDataValue() + "," + seed + " " + made.size());
+                OUT.println("crack " + Block.getId(state) + "," + face.get3DDataValue() + "," + seed + " " + made.size());
                 report(name + "/" + face, made, 9);
             }
             BLOCKS.remove(at);
@@ -150,8 +151,8 @@ public class ParticleOracle {
     static void report(String what, List<Particle> made, int draws) throws Exception {
         for (int i = 0; i < made.size(); i++) {
             Particle p = made.get(i);
-            System.out.println("seed " + what + "#" + i + " " + seedOf(p, draws));
-            System.out.println("spawn " + what + "#" + i + " " + spawn(p));
+            OUT.println("seed " + what + "#" + i + " " + seedOf(p, draws));
+            OUT.println("spawn " + what + "#" + i + " " + spawn(p));
         }
     }
 
