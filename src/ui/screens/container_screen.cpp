@@ -341,7 +341,8 @@ bool AbstractContainerScreen::mouse_released(double mx, double my, int button) {
                 for (const auto& other : slots) {
                     const ItemStack& here = m->slots[static_cast<size_t>(other.index)];
                     if (!empty(here) && m->can_quick_replace(other.index, last_quick_moved_, true) &&
-                        ((other.index >= 9) == (slot->index >= 9))) {
+                        m->rule(static_cast<size_t>(other.index)).container ==
+                            m->rule(static_cast<size_t>(slot->index)).container) {
                         slot_clicked(&other, other.index, button, ClickType::QuickMove);
                     }
                 }

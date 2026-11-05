@@ -199,7 +199,10 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
         if (packet.id == cb.set_player_inventory) {
             const int32_t slot = inventory_menu_slot(in.read_varint());
             ItemStack stack = proto::read_item_stack(in, options_.protocol);
-            if (slot >= 0) player_.inventory.slots[static_cast<size_t>(slot)] = std::move(stack);
+            if (slot >= 0) {
+                player_.inventory.slots[static_cast<size_t>(slot)] = std::move(stack);
+                mirror_to_container(slot);
+            }
             return true;
         }
         if (packet.id == cb.container_set_data) {
@@ -215,6 +218,7 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
         }
         if (packet.id == cb.update_recipes) {
             data_.recipe_sets = proto::read_named(in, "update_recipes", options_.protocol);
+            ++data_.recipe_changes;
             return true;
         }
         if (packet.id == cb.recipe_book_add) {
@@ -222,6 +226,7 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
             const auto* replace = added.field("replace");
             if (replace != nullptr && replace->as_bool().value_or(false)) data_.recipe_book.clear();
             data_.recipe_book.push_back(std::move(added));
+            ++data_.recipe_changes;
             return true;
         }
         if (packet.id == cb.recipe_book_remove) {
@@ -243,11 +248,13 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
                 if (const auto* replace = batch.field("replace")) record.push_back({"replace", *replace});
                 batch = proto::Value{std::move(record)};
             }
+            ++data_.recipe_changes;
             return true;
         }
         if (packet.id == cb.recipe_book_settings) {
             data_.recipe_book_settings =
                 proto::read_named(in, "recipe_book_settings", options_.protocol);
+            ++data_.recipe_changes;
             return true;
         }
         if (packet.id == cb.server_data) {

@@ -22,8 +22,11 @@ struct SlotRule {
     // Index in the player's own 41-slot inventory, or -1 for a container slot:
     // what a number key swaps with.
     int inventory_index = -1;
-    // A crafting result: taking from it is the server's business entirely.
+    // A crafting result: nothing goes in, and taking from it uses up the grid.
     bool result = false;
+    // Which container of the menu the slot belongs to (result, grid, the
+    // player's inventory...): a shift double click only gathers within one.
+    int container = 0;
 };
 
 class ContainerMenu {
@@ -31,6 +34,15 @@ public:
     ContainerMenu(std::vector<SlotRule> rules, const ItemTable* items);
     // The player's own inventory menu: result, grid, armour, main, hotbar, offhand.
     static ContainerMenu player_inventory(const ItemTable* items);
+    // A crafting table's menu: result, the 3x3 grid, main, hotbar.
+    static ContainerMenu crafting_table(const ItemTable* items);
+
+    enum class Kind : uint8_t { Inventory, Crafting };
+    Kind kind = Kind::Inventory;
+    // The crafting grid: its first slot and size; the result is slot 0.
+    int grid_first = 1;
+    int grid_width = 2;
+    int grid_height = 2;
 
     int32_t container_id = 0;
     int32_t state_id = 0;
@@ -64,6 +76,11 @@ public:
 private:
     void do_click(int slot, int button, ClickType type);
     ItemStack quick_move_stack(int slot);
+    ItemStack crafting_quick_move_stack(int slot);
+    bool try_remove(size_t slot, int count, int decrement, ItemStack& out);
+    void on_take(size_t slot);
+    void take_crafted();
+    bool can_take_for_pick_all(size_t slot) const { return !rules_[slot].result; }
     bool move_item_stack_to(ItemStack& stack, int from, int to, bool backwards);
     ItemStack safe_insert(size_t slot, ItemStack stack, int increment);
     ItemStack safe_take(size_t slot, int count, int decrement);

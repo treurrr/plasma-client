@@ -163,7 +163,27 @@ bool Session::handle_ui(PacketConnection::Packet& packet) {
     }
     if (packet.id == cb.container_close) {
         const int32_t container = in.read_varint();
+        if (container == player_.open_container) {
+            player_.open_container = 0;
+            player_.open_slots.clear();
+        }
         if (events_.ui.on_container_close) events_.ui.on_container_close(container);
+        return true;
+    }
+    if (packet.id == cb.open_screen) {
+        const int32_t container = in.read_varint();
+        const int32_t type = in.read_varint();
+        const nbt::Value title = nbt::read_network_tag(in);
+        player_.open_container = container;
+        player_.open_state = 0;
+        player_.open_slots.clear();
+        if (events_.ui.on_open_screen) events_.ui.on_open_screen(container, type, title);
+        return true;
+    }
+    if (packet.id == cb.place_ghost_recipe) {
+        const int32_t container = in.read_varint();
+        const proto::Value display = proto::read_named(in, "recipe_display", options_.protocol);
+        if (events_.ui.on_place_ghost_recipe) events_.ui.on_place_ghost_recipe(container, display);
         return true;
     }
     if (packet.id == cb.server_links) {
@@ -364,7 +384,8 @@ void Session::send_container_click(int32_t container, int16_t slot, int8_t butto
     if (state_ != SessionState::Play) return;
     ByteBuffer out;
     out.write_varint(container);
-    out.write_varint(player_.container_state);
+    out.write_varint(container != 0 && container == player_.open_container ? player_.open_state
+                                                                           : player_.container_state);
     out.write_u16(static_cast<uint16_t>(slot));
     out.write_u8(static_cast<uint8_t>(button));
     out.write_varint(mode);
@@ -382,6 +403,35 @@ void Session::send_container_close(int32_t container) {
     ByteBuffer out;
     out.write_varint(container);
     send(ids_->play_sb.container_close, out);
+    if (container == player_.open_container) {
+        player_.open_container = 0;
+        player_.open_slots.clear();
+    }
+}
+
+void Session::predict_container(const std::vector<ItemStack>& slots, const ItemStack& carried) {
+    if (player_.open_container == 0) return;
+    player_.open_slots = slots;
+    for (int32_t i = 0; i < static_cast<int32_t>(slots.size()); ++i) mirror_to_inventory(i);
+    player_.inventory.carried = carried;
+}
+
+void Session::send_place_recipe(int32_t container, int32_t recipe, bool use_max) {
+    if (state_ != SessionState::Play) return;
+    ByteBuffer out;
+    out.write_varint(container);
+    out.write_varint(recipe);
+    out.write_bool(use_max);
+    send(ids_->play_sb.place_recipe, out);
+}
+
+void Session::send_recipe_book_settings(int32_t book, bool open, bool filtering) {
+    if (state_ != SessionState::Play) return;
+    ByteBuffer out;
+    out.write_varint(book);
+    out.write_bool(open);
+    out.write_bool(filtering);
+    send(ids_->play_sb.recipe_book_change_settings, out);
 }
 
 void Session::send_creative_slot(int16_t slot, const ItemStack& stack) {

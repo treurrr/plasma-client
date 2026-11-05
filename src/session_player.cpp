@@ -157,22 +157,32 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
     if (packet.id == cb.container_set_content) {
         const int32_t container = in.read_varint();
         const int32_t state = in.read_varint();
-        if (container == 0) player_.container_state = state;
         const int32_t count = in.read_varint();
         if (count < 0) return true;
-        // Every container is read whole; only our own inventory is kept for now.
+        // `ClientPacketListener.handleContainerContent`: the inventory, or the open container.
         const bool ours = container == 0;
+        const bool open = container != 0 && container == player_.open_container;
+        if (ours) player_.container_state = state;
+        if (open) {
+            player_.open_state = state;
+            player_.open_slots.assign(static_cast<size_t>(count), ItemStack{});
+        }
         bool readable = true;
         std::string problem;
         for (int32_t i = 0; i < count && readable; ++i) {
             const ItemStack stack = read_slot(in, options_.protocol, readable, problem);
             if (ours && i < static_cast<int32_t>(Inventory::kSlots)) {
                 player_.inventory.slots[i] = stack;
+                mirror_to_container(i);
+            }
+            if (open) {
+                player_.open_slots[static_cast<size_t>(i)] = stack;
+                mirror_to_inventory(i);
             }
         }
         if (readable) {
             const ItemStack carried = read_slot(in, options_.protocol, readable, problem);
-            if (ours) player_.inventory.carried = carried;
+            if (ours || open) player_.inventory.carried = carried;
         }
         if (!readable && !player_.slot_format_warned) {
             player_.slot_format_warned = true;
@@ -183,7 +193,6 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
     if (packet.id == cb.container_set_slot) {
         const int32_t container = in.read_varint();
         const int32_t state = in.read_varint();
-        if (container == 0) player_.container_state = state;
         const auto slot = static_cast<int16_t>(in.read_u16());
         bool readable = true;
         std::string problem;
@@ -192,8 +201,19 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
             player_.slot_format_warned = true;
             status(std::format("a slot is not read: {}", problem));
         }
-        if (container == 0 && slot >= 0 && slot < static_cast<int32_t>(Inventory::kSlots)) {
-            player_.inventory.slots[slot] = stack;
+        // `ClientPacketListener.handleContainerSetSlot`: the inventory menu, or the open one.
+        if (container == 0) {
+            player_.container_state = state;
+            if (slot >= 0 && slot < static_cast<int32_t>(Inventory::kSlots)) {
+                player_.inventory.slots[slot] = stack;
+                mirror_to_container(slot);
+            }
+        } else if (container == player_.open_container) {
+            player_.open_state = state;
+            if (slot >= 0 && slot < static_cast<int32_t>(player_.open_slots.size())) {
+                player_.open_slots[static_cast<size_t>(slot)] = stack;
+                mirror_to_inventory(slot);
+            }
         }
         return true;
     }
@@ -202,6 +222,22 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         return true;
     }
     return false;
+}
+
+// Every vanilla menu ends with the player's 27 main slots and the hotbar, the
+// inventory menu's slots 9 to 44, and both menus hold the same stacks.
+void Session::mirror_to_container(int32_t inventory_slot) {
+    const auto size = static_cast<int32_t>(player_.open_slots.size());
+    if (player_.open_container == 0 || size < 36 || inventory_slot < 9 || inventory_slot >= 45) return;
+    player_.open_slots[static_cast<size_t>(size - 36 + inventory_slot - 9)] =
+        player_.inventory.slots[static_cast<size_t>(inventory_slot)];
+}
+
+void Session::mirror_to_inventory(int32_t container_slot) {
+    const auto size = static_cast<int32_t>(player_.open_slots.size());
+    if (size < 36 || container_slot < size - 36 || container_slot >= size) return;
+    player_.inventory.slots[static_cast<size_t>(9 + container_slot - (size - 36))] =
+        player_.open_slots[static_cast<size_t>(container_slot)];
 }
 
 void Session::send_position(double x, double y, double z, float yaw, float pitch,
