@@ -9,6 +9,7 @@
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/translations.hpp"
 #include "mcpp/ui/panorama.hpp"
+#include "mcpp/ui/pause_screen.hpp"
 #include "mcpp/ui/screens.hpp"
 #include "mcpp/ui/world.hpp"
 #include "mcpp/world/atlas.hpp"
@@ -44,6 +45,34 @@ void demo_book(mcpp::ui::RecipeBookView& book, const mcpp::ui::ItemTable& items)
 }
 
 } // namespace
+
+void draw_pause_over(mcpp::gpu::UiRenderer& quads, mcpp::gpu::WorldRenderer& renderer,
+                     uint32_t width, uint32_t height) {
+    static mcpp::Translations lang;
+    lang.load(mcpp::Translations::default_path());
+    static mcpp::Options options;
+    const mcpp::ui::Font font(quads, &lang);
+    const int scale = mcpp::ui::gui_scale(static_cast<int>(width), static_cast<int>(height),
+                                          options.get_int("guiScale"), false);
+    mcpp::ui::ScreenManager manager;
+    manager.lang = &lang;
+    manager.options = &options;
+    manager.font = &font;
+    manager.in_world = true;
+    manager.resize(mcpp::ui::gui_extent(static_cast<int>(width), scale),
+                   mcpp::ui::gui_extent(static_cast<int>(height), scale));
+    manager.set_screen(std::make_shared<mcpp::ui::PauseScreen>(true));
+    manager.apply_pending();
+    mcpp::ui::GuiGraphics gfx(quads, scale, manager.gui_width, manager.gui_height, &lang);
+    gfx.pixel_width = static_cast<int>(width);
+    gfx.pixel_height = static_cast<int>(height);
+    manager.current()->render_with_tooltip(gfx, -100.0, -100.0);
+    renderer.set_backdrop(
+        [&quads](VkCommandBuffer command, uint32_t w, uint32_t h) {
+            quads.record_under_blur(command, w, h);
+        },
+        options.get_int("menuBackgroundBlurriness"));
+}
 
 int screenshot(const std::vector<std::string>& args) {
     if (args.empty()) {

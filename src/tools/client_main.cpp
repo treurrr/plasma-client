@@ -456,7 +456,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         options.host = address.host;
         options.port = address.port;
     }
-    std::string username = "PlasmaShot";
+    std::string username = overlay_kind == "paus" ? "PlasmaT" : "PlasmaShot";
     options.profile = signed_in_profile(username);
     options.username = username;
 
@@ -765,7 +765,9 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
 
         quads->begin();
         text->begin();
-        if (overlay_kind == "menu") {
+        if (overlay_kind == "paus") {
+            client::draw_pause_over(*quads, renderer, shot_width, shot_height);
+        } else if (overlay_kind == "menu") {
             mcpp::ui::MenuState state;
             state.server = address.host;
             state.fps = static_cast<int>(1000.0 / std::max(per_frame, 0.001));
@@ -1772,7 +1774,8 @@ int main(int argc, char** argv) {
             return 1;
 #endif
         }
-        if ((command == "worldshot" || command == "menushot" || command == "hudshot") &&
+        if ((command == "worldshot" || command == "menushot" || command == "hudshot" ||
+             command == "pauseshot") &&
             argc > 2) {
             const std::string out = argc > 3 ? argv[3] : "world.png";
             const size_t limit = argc > 4 ? std::stoul(argv[4]) : 120;
