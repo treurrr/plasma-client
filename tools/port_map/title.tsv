@@ -1,0 +1,18 @@
+# A: the title and pause screens, what is left out on purpose or not yet.
+TitleScreen.createDemoMenuOptions	skip		demo mode: the trial version
+TitleScreen.checkDemoWorldPresence	skip		demo mode: the trial version
+TitleScreen.confirmDemo	skip		demo mode: the trial version
+TitleScreen.createTestWorldButton	skip		only when the game runs inside an IDE
+TitleScreen.getMultiplayerDisabledReason	absent		no ban or parental-control check yet; multiplayer is always on
+TitleScreen.realmsNotificationsEnabled	skip		Realms: a client that only joins servers has no Realms
+TitleScreen.tick	skip		Realms: only ticks the Realms notifications
+TitleScreen.added	skip		Realms: only tells the Realms notifications
+TitleScreen.removed	skip		Realms: only tells the Realms notifications
+TitleScreen.mouseClicked	skip		Realms: only adds the Realms notifications
+TitleScreen.registerTextures	skip		the textures come from the bake and the asset store
+PanoramaRenderer.registerTextures	skip		the textures come from the asset store
+CubeMap.initializeVertices	skip		the cube is ray-cast per pixel rather than drawn as geometry
+PauseScreen.render	absent		the draft-report icon and the now-playing toast are not drawn yet
+PauseScreen.tick	absent		the now-playing toast
+PauseScreen.rendersNowPlayingToast	absent		the now-playing toast
+PauseScreen.getCustomAdditions	inline	src/client/screens.cpp::screens_bind	server links only; the pause_screen_additions dialog tag is not read yet

@@ -79,7 +79,7 @@ private:
 };
 
 // The splashes and the random draws behind them, shared by every title screen.
-SplashManager& splash_manager();
+SplashManager& shared_splashes();
 jmath::LegacyRandom& title_random();
 
 } // namespace mcpp::ui

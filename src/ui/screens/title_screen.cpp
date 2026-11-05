@@ -20,7 +20,7 @@ int64_t unique_seed() {
     return uniquifier ^ std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
 }
 
-// `String.trim`: every character up to a space off both ends.
+// Java's String.trim: every character up to a space off both ends.
 std::string java_trim(std::string_view line) {
     size_t a = 0;
     size_t b = line.size();
@@ -136,7 +136,7 @@ void LogoRenderer::render_logo(GuiGraphics& gfx, int width, float alpha, int hei
     gfx.blit("gui/title/edition", edition_x, edition_y, 0.0f, 0.0f, 128, 14, 128, 16, colour);
 }
 
-SplashManager& splash_manager() {
+SplashManager& shared_splashes() {
     static SplashManager manager = [] {
         SplashManager out;
         out.load(SplashManager::default_path());
@@ -164,7 +164,7 @@ void TitleScreen::init() {
         const std::time_t now = std::time(nullptr);
         std::tm local{};
         localtime_r(&now, &local);
-        splash = splash_manager().get_splash(local.tm_mon + 1, local.tm_mday,
+        splash = shared_splashes().get_splash(local.tm_mon + 1, local.tm_mday,
                                              manager != nullptr ? manager->username : "",
                                              title_random());
     }
