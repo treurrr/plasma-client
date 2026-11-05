@@ -415,6 +415,11 @@ struct SessionEvents {
         // C: a recipe the player lacks the items for, to show as a ghost in
         // the grid: the container and the recipe's display.
         std::function<void(int32_t, const proto::Value&)> on_place_ghost_recipe;
+        // C: the recipe book packets as they come: an added batch (with its
+        // replace flag), the ids taken out, and the book's switches.
+        std::function<void(const proto::Value&)> on_recipe_book_add;
+        std::function<void(const std::vector<int32_t>&)> on_recipe_book_remove;
+        std::function<void(const proto::Value&)> on_recipe_book_settings;
     } ui;
 
     struct Sound {
@@ -655,6 +660,8 @@ public:
     void send_place_recipe(int32_t container, int32_t recipe, bool use_max);
     // C: the book's open and filter switches for one book type (crafting 0).
     void send_recipe_book_settings(int32_t book, bool open, bool filtering);
+    // C: the book has shown a recipe it was highlighting.
+    void send_recipe_seen(int32_t recipe);
     // H: the scoreboard as the server last described it.
     const Scoreboard& scoreboard() const { return ui_.scoreboard; }
 

@@ -443,20 +443,44 @@ void AbstractContainerScreen::on_close() {
 void AbstractContainerScreen::removed() {}
 
 // `RecipeBookComponent.init`: opens as the recipe book data says.
-void RecipeBookComponent::init(int width, int height, World* world, bool width_too_narrow) {
+void RecipeBookComponent::init(int width, int height, World* world, const ScreenManager* manager,
+                               bool width_too_narrow) {
     world_ = world;
+    manager_ = manager;
     width_ = width;
     height_ = height;
     width_too_narrow_ = width_too_narrow;
+    inventory_seen_ = inventory_snapshot();
     visible_ = world_ != nullptr && world_->recipe_book.open;
     if (visible_) init_visuals();
 }
 
-// `RecipeBookComponent.initVisuals`: the search box and the category tabs.
+std::vector<ItemStack> RecipeBookComponent::inventory_snapshot() const {
+    std::vector<ItemStack> out;
+    const ContainerMenu* menu = world_ != nullptr ? world_->menu : nullptr;
+    if (menu == nullptr) return out;
+    for (size_t i = 0; i < menu->size(); ++i) {
+        const int index = menu->rule(i).inventory_index;
+        if (index >= 0 && index < 36) out.push_back(menu->slots[i]);
+    }
+    return out;
+}
+
+// `RecipeBookComponent.initVisuals`: the stacked contents, the search box, the page and the tabs.
 void RecipeBookComponent::init_visuals() {
+    const bool filtering = world_ != nullptr && world_->recipe_book.filtering;
     x_offset_ = width_too_narrow_ ? 0 : 86;
     const int x = x_origin();
     const int y = y_origin();
+    stacked_.clear();
+    const ContainerMenu* menu = world_ != nullptr ? world_->menu : nullptr;
+    if (menu != nullptr) {
+        for (const auto& stack : inventory_snapshot()) stacked_.account_simple_stack(stack);
+        for (int i = 0; i < menu->grid_width * menu->grid_height; ++i) {
+            const ItemStack& stack = menu->slots[static_cast<size_t>(menu->grid_first + i)];
+            stacked_.account_stack(stack, menu->max_stack_of(stack));
+        }
+    }
     const std::string kept = search_ ? search_->value() : std::string{};
     search_ = std::make_unique<EditBox>(x + 25, y + 13, 81, 9 + 5,
                                         translatable("itemGroup.search"));
@@ -470,14 +494,15 @@ void RecipeBookComponent::init_visuals() {
 
     if (tabs_.empty() && world_ != nullptr && world_->items != nullptr) {
         const auto id = [&](std::string_view name) { return world_->items->find(name); };
-        tabs_.push_back({id("compass"), 0, -1});
-        tabs_.push_back({id("iron_axe"), id("golden_sword"), 0});
-        tabs_.push_back({id("bricks"), 0, 1});
-        tabs_.push_back({id("lava_bucket"), id("apple"), 2});
-        tabs_.push_back({id("redstone"), 0, 3});
+        tabs_.push_back({id("compass"), 0, 0});
+        tabs_.push_back({id("iron_axe"), id("golden_sword"), 1});
+        tabs_.push_back({id("bricks"), 0, 2});
+        tabs_.push_back({id("lava_bucket"), id("apple"), 3});
+        tabs_.push_back({id("redstone"), 0, 4});
     }
-    update_tabs();
-    update_collections(false);
+    select_matching_recipes();
+    update_tabs(filtering);
+    update_collections(false, filtering);
 }
 
 // `RecipeBookComponent.updateScreenPosition`: where the container goes beside the book.
@@ -501,60 +526,202 @@ void RecipeBookComponent::set_visible(bool on) {
 // `RecipeBookComponent.toggleVisibility`: flips the book.
 void RecipeBookComponent::toggle_visibility() { set_visible(!visible_); }
 
-// `RecipeBookComponent.tick`: follows the book state the server sets.
-void RecipeBookComponent::tick() {
-    if (world_ != nullptr && world_->recipe_book.open != visible_) {
-        set_visible(world_->recipe_book.open);
+// `CraftingRecipeBookComponent.isCraftingSlot`: the result or a grid slot.
+bool RecipeBookComponent::is_crafting_slot(int index) const {
+    const ContainerMenu* menu = world_ != nullptr ? world_->menu : nullptr;
+    if (menu == nullptr) return false;
+    return index == 0 ||
+           (index >= menu->grid_first && index < menu->grid_first + menu->grid_width * menu->grid_height);
+}
+
+// `RecipeBookComponent.slotClicked`: a click in the grid drops the ghost and recounts.
+void RecipeBookComponent::slot_clicked(const ScreenSlot* slot) {
+    if (slot == nullptr || !is_crafting_slot(slot->index)) return;
+    last_placed_.reset();
+    ghosts_.clear();
+    if (visible_) update_stacked_contents();
+}
+
+// `CraftingRecipeBookComponent.canDisplay`: whether a recipe fits this grid.
+bool RecipeBookComponent::fits(const RecipeDisplayEntry& entry) const {
+    const ContainerMenu* menu = world_ != nullptr ? world_->menu : nullptr;
+    const int w = menu != nullptr ? menu->grid_width : 2;
+    const int h = menu != nullptr ? menu->grid_height : 2;
+    switch (entry.kind) {
+    case RecipeDisplayEntry::Kind::Shaped: return w >= entry.width && h >= entry.height;
+    case RecipeDisplayEntry::Kind::Shapeless:
+        return static_cast<size_t>(w * h) >= entry.ingredients.size();
+    default: return false;
     }
 }
 
-// `RecipeBookComponent.updateTabs`: stacks the visible tabs down the side.
-void RecipeBookComponent::update_tabs() {
+// `RecipeBookComponent.selectMatchingRecipes`, `CraftingRecipeBookComponent.selectMatchingRecipes`: every tab's collections against the inventory.
+void RecipeBookComponent::select_matching_recipes() {
+    if (world_ == nullptr) return;
+    for (const auto& tab : tabs_) {
+        for (RecipeCollection* collection : world_->recipe_book.collection(tab.tab)) {
+            collection->select_recipes(stacked_, [this](const RecipeDisplayEntry& e) { return fits(e); });
+        }
+    }
+}
+
+bool RecipeBookComponent::matches_search(const RecipeCollection& collection,
+                                         const std::string& query) const {
+    if (world_->items == nullptr) return false;
+    for (const auto* entry : collection.recipes()) {
+        for (const auto& stack : entry->result) {
+            std::string name(world_->items->name(stack.id));
+            if (name.find(query) != std::string::npos) return true;
+            std::string shown = name;
+            const auto key = world_->items->name_key(stack.id);
+            if (manager_ != nullptr && manager_->lang != nullptr && !key.empty()) {
+                if (const auto* text = manager_->lang->find(key)) shown = *text;
+            }
+            std::ranges::transform(shown, shown.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            if (shown.find(query) != std::string::npos) return true;
+        }
+    }
+    return false;
+}
+
+// `RecipeBookComponent.updateCollections`: the tab's collections that fit, match the search and, filtering, can be made.
+void RecipeBookComponent::update_collections(bool reset_page, bool filtering) {
+    collections_.clear();
+    if (world_ == nullptr || tabs_.empty()) return;
+    for (const RecipeCollection* collection :
+         world_->recipe_book.collection(tabs_[selected_tab_].tab)) {
+        if (collection->has_any_selected()) collections_.push_back(collection);
+    }
+    std::string search = search_ ? search_->value() : std::string{};
+    std::ranges::transform(search, search.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (!search.empty()) {
+        std::erase_if(collections_, [&](const RecipeCollection* c) { return !matches_search(*c, search); });
+    }
+    if (filtering) {
+        std::erase_if(collections_, [](const RecipeCollection* c) { return !c->has_craftable(); });
+    }
+    // `RecipeBookPage.updateCollections`: the page count, back to the first page when asked.
+    pages_ = static_cast<int>(std::ceil(static_cast<double>(collections_.size()) / 20.0));
+    if (pages_ <= page_ || reset_page) page_ = 0;
+    update_buttons_for_page();
+}
+
+// `RecipeBookPage.updateButtonsForPage`, `RecipeButton.init`: what each of the twenty buttons shows.
+void RecipeBookComponent::update_buttons_for_page() {
+    const bool filtering = world_ != nullptr && world_->recipe_book.filtering;
+    for (size_t i = 0; i < buttons_.size(); ++i) {
+        Button& button = buttons_[i];
+        const size_t at = static_cast<size_t>(page_) * 20 + i;
+        button.visible = at < collections_.size();
+        if (!button.visible) continue;
+        button.collection = collections_[at];
+        button.entries.clear();
+        for (const auto* entry : button.collection->selected_recipes(
+                 filtering ? RecipeCollection::Status::Craftable : RecipeCollection::Status::Any)) {
+            button.entries.emplace_back(entry->id, entry->result);
+        }
+        // `RecipeButton.allRecipesHaveSameResultDisplay`: one item drawn twice.
+        button.same_display = true;
+        const ItemStack* first = nullptr;
+        for (const auto& [id, items] : button.entries) {
+            for (const auto& stack : items) {
+                if (first == nullptr) {
+                    first = &stack;
+                } else if (stack.id != first->id || stack.count != first->count) {
+                    button.same_display = false;
+                }
+            }
+        }
+        bool shown = false;
+        for (const auto& [id, items] : button.entries) {
+            if (world_->recipe_book.will_highlight(id)) {
+                world_->recipe_book.remove_highlight(id);
+                if (world_->recipe_seen) world_->recipe_seen(id);
+                shown = true;
+            }
+        }
+        if (shown) button.animation = 15.0f;
+    }
+}
+
+// `RecipeBookComponent.updateTabs`, `RecipeBookTabButton.updateVisibility`, `RecipeBookTabButton.startAnimation`: stacks the visible tabs down the side.
+void RecipeBookComponent::update_tabs(bool filtering) {
     const int x = (width_ - kImageWidth) / 2 - x_offset_ - 30;
     const int y = (height_ - kImageHeight) / 2 + 3;
     int index = 0;
     for (auto& tab : tabs_) {
-        if (tab.category < 0) {
+        const auto& collections = world_->recipe_book.collection(tab.tab);
+        if (tab.tab == 0) {
             tab.visible = true;
         } else {
-            tab.visible = world_ != nullptr &&
-                          !world_->recipe_book.categories[static_cast<size_t>(tab.category)].empty();
+            tab.visible = std::ranges::any_of(
+                collections, [](const RecipeCollection* c) { return c->has_any_selected(); });
+            if (!tab.visible) continue;
         }
-        if (tab.visible) {
-            tab.x = x;
-            tab.y = y + 27 * index++;
+        tab.x = x;
+        tab.y = y + 27 * index++;
+        if (tab.tab == 0) continue;
+        for (const RecipeCollection* collection : collections) {
+            for (const auto* entry : collection->selected_recipes(
+                     filtering ? RecipeCollection::Status::Craftable : RecipeCollection::Status::Any)) {
+                if (world_->recipe_book.will_highlight(entry->id)) tab.animation = 15.0f;
+            }
         }
     }
 }
 
-void RecipeBookComponent::update_collections(bool reset_page) {
-    shown_.clear();
+// `RecipeBookComponent.tick`: follows the book state, and recounts when the inventory changed.
+void RecipeBookComponent::tick() {
     if (world_ == nullptr) return;
-    const auto& book = world_->recipe_book;
-    const int category = tabs_.empty() ? -1 : tabs_[selected_tab_].category;
-    for (size_t c = 0; c < book.categories.size(); ++c) {
-        if (category >= 0 && static_cast<int>(c) != category) continue;
-        for (const auto& entry : book.categories[c]) shown_.push_back(entry);
+    if (world_->recipe_book.open != visible_) set_visible(world_->recipe_book.open);
+    if (!visible_) return;
+    auto now = inventory_snapshot();
+    const bool same = std::ranges::equal(now, inventory_seen_, [](const ItemStack& a, const ItemStack& b) {
+        return (a.count <= 0 && b.count <= 0) || (a.id == b.id && a.count == b.count);
+    });
+    if (!same) {
+        inventory_seen_ = std::move(now);
+        update_stacked_contents();
     }
-    const std::string search = search_ ? search_->value() : std::string{};
-    if (!search.empty() && world_->items != nullptr) {
-        std::string needle = search;
-        std::ranges::transform(needle, needle.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        std::erase_if(shown_, [&](const RecipeEntry& entry) {
-            std::string name(world_->items->name(entry.result));
-            std::ranges::replace(name, '_', ' ');
-            return name.find(needle) == std::string::npos;
-        });
-    }
-    if (book.filtering) std::erase_if(shown_, [](const RecipeEntry& e) { return !e.craftable; });
-    pages_ = static_cast<int>(std::ceil(static_cast<double>(shown_.size()) / 20.0));
-    if (pages_ <= page_ || reset_page) page_ = 0;
 }
 
+// `RecipeBookComponent.updateStackedContents`: recounts the inventory and the grid.
+void RecipeBookComponent::update_stacked_contents() {
+    stacked_.clear();
+    const ContainerMenu* menu = world_ != nullptr ? world_->menu : nullptr;
+    if (menu == nullptr) return;
+    for (const auto& stack : inventory_snapshot()) stacked_.account_simple_stack(stack);
+    for (int i = 0; i < menu->grid_width * menu->grid_height; ++i) {
+        const ItemStack& stack = menu->slots[static_cast<size_t>(menu->grid_first + i)];
+        stacked_.account_stack(stack, menu->max_stack_of(stack));
+    }
+    select_matching_recipes();
+    update_collections(false, world_->recipe_book.filtering);
+}
+
+// `RecipeBookComponent.recipesUpdated`: the server changed the book.
+void RecipeBookComponent::recipes_updated() {
+    if (world_ == nullptr) return;
+    select_matching_recipes();
+    update_tabs(world_->recipe_book.filtering);
+    if (visible_) update_collections(false, world_->recipe_book.filtering);
+}
+
+// `RecipeBookComponent.render`, `RecipeBookPage.render`, `RecipeBookTabButton.renderContents`, `RecipeButton.renderWidget`: the book, its tabs, filter, page and buttons.
 void RecipeBookComponent::render(GuiGraphics& gfx, double mx, double my) {
     if (!visible_) return;
+    const auto now = std::chrono::steady_clock::now();
+    float delta = 0.0f;
+    if (last_frame_.time_since_epoch().count() != 0) {
+        delta = std::chrono::duration<float>(now - last_frame_).count() * 20.0f;
+    }
+    last_frame_ = now;
+    if (manager_ == nullptr || !manager_->control_down) time_ += delta;
+
     const int x = x_origin();
     const int y = y_origin();
     gfx.blit("gui/recipe_book", x, y, 1.0f, 1.0f, kImageWidth, kImageHeight, 256, 256);
@@ -566,6 +733,14 @@ void RecipeBookComponent::render(GuiGraphics& gfx, double mx, double my) {
         if (!tab.visible) continue;
         const bool selected = i == selected_tab_;
         tab.hovered = mx >= tab.x && my >= tab.y && mx < tab.x + 35 && my < tab.y + 27;
+        const bool animating = tab.animation > 0.0f;
+        if (animating) {
+            const float s = 1.0f + 0.1f * static_cast<float>(std::sin(tab.animation / 15.0f * 3.1415927f));
+            gfx.push_pose();
+            gfx.translate(static_cast<float>(tab.x + 8), static_cast<float>(tab.y + 12));
+            gfx.scale_by(1.0f, s);
+            gfx.translate(static_cast<float>(-(tab.x + 8)), static_cast<float>(-(tab.y + 12)));
+        }
         gfx.blit_sprite(selected ? "recipe_book/tab_selected" : "recipe_book/tab",
                         tab.x - (selected ? 2 : 0), tab.y, 35, 27);
         const int shift = selected ? -2 : 0;
@@ -574,6 +749,10 @@ void RecipeBookComponent::render(GuiGraphics& gfx, double mx, double my) {
             gfx.render_item(tab.secondary, tab.x + 14 + shift, tab.y + 5);
         } else {
             gfx.render_item(tab.primary, tab.x + 9 + shift, tab.y + 5);
+        }
+        if (animating) {
+            gfx.pop_pose();
+            tab.animation -= delta;
         }
     }
 
@@ -588,22 +767,40 @@ void RecipeBookComponent::render(GuiGraphics& gfx, double mx, double my) {
             "gui.recipebook.page", {literal(std::to_string(page_ + 1)), literal(std::to_string(pages_))}));
         gfx.draw_string(label, x - gfx.width_of(label) / 2 + 73, y + 141, 0xFFFFFFFFu);
     }
-    hovered_recipe_ = -1;
+    hovered_button_ = -1;
     for (int i = 0; i < 20; ++i) {
-        const size_t at = static_cast<size_t>(page_ * 20 + i);
-        if (at >= shown_.size()) break;
-        const RecipeEntry& entry = shown_[at];
-        const int bx = x + 11 + 25 * (i % 5);
-        const int by = y + 31 + 25 * (i / 5);
-        const char* sprite = entry.craftable
-                                 ? (entry.many ? "recipe_book/slot_many_craftable"
-                                               : "recipe_book/slot_craftable")
-                                 : (entry.many ? "recipe_book/slot_many_uncraftable"
-                                               : "recipe_book/slot_uncraftable");
+        Button& button = buttons_[static_cast<size_t>(i)];
+        if (!button.visible || button.entries.empty()) continue;
+        const auto [bx, by] = button_position(i);
+        const bool many = button.entries.size() > 1;
+        const char* sprite = button.collection->has_craftable()
+                                 ? (many ? "recipe_book/slot_many_craftable" : "recipe_book/slot_craftable")
+                                 : (many ? "recipe_book/slot_many_uncraftable"
+                                         : "recipe_book/slot_uncraftable");
+        const bool animating = button.animation > 0.0f;
+        if (animating) {
+            const float s = 1.0f + 0.1f * static_cast<float>(std::sin(button.animation / 15.0f * 3.1415927f));
+            gfx.push_pose();
+            gfx.translate(static_cast<float>(bx + 8), static_cast<float>(by + 12));
+            gfx.scale_by(s, s);
+            gfx.translate(static_cast<float>(-(bx + 8)), static_cast<float>(-(by + 12)));
+            button.animation -= delta;
+        }
         gfx.blit_sprite(sprite, bx, by, 25, 25);
-        const int offset = 4;
-        gfx.render_item(entry.result, bx + offset, by + offset);
-        if (mx >= bx && my >= by && mx < bx + 25 && my < by + 25) hovered_recipe_ = i;
+        // `RecipeButton.getDisplayStack`: the recipes take turns, then each one's results.
+        const int index = current_index();
+        const int n = static_cast<int>(button.entries.size());
+        const int outer = index / n;
+        const auto& items = button.entries[static_cast<size_t>(index - n * outer)].second;
+        const int32_t shown = items.empty() ? 0 : items[static_cast<size_t>(outer) % items.size()].id;
+        int offset = 4;
+        if (many && button.same_display) {
+            gfx.render_item(shown, bx + offset + 1, by + offset + 1);
+            --offset;
+        }
+        gfx.render_item(shown, bx + offset, by + offset);
+        if (animating) gfx.pop_pose();
+        if (mx >= bx && my >= by && mx < bx + 25 && my < by + 25) hovered_button_ = i;
     }
     const bool forward = pages_ > 1 && page_ < pages_ - 1;
     const bool back = pages_ > 1 && page_ > 0;
@@ -616,34 +813,136 @@ void RecipeBookComponent::render(GuiGraphics& gfx, double mx, double my) {
     arrow(back, x + 38, "recipe_book/page_backward");
 }
 
-void RecipeBookComponent::render_tooltip(GuiGraphics& gfx, double mx, double my) {
+// `RecipeBookComponent.time`: which of a cycle's items is shown, a new one every 30 ticks.
+int RecipeBookComponent::current_index() const { return static_cast<int>(std::floor(time_ / 30.0f)); }
+
+std::pair<int, int> RecipeBookComponent::button_position(int i) const {
+    return {x_origin() + 11 + 25 * (i % 5), y_origin() + 31 + 25 * (i / 5)};
+}
+
+std::vector<RecipeBookComponent::Shown> RecipeBookComponent::page() const {
+    std::vector<Shown> out;
+    for (const auto& button : buttons_) {
+        if (!button.visible || button.entries.empty()) continue;
+        const auto& items = button.entries.front().second;
+        out.push_back({items.empty() ? 0 : items.front().id, button.collection->has_craftable(),
+                       button.entries.size() > 1});
+    }
+    return out;
+}
+
+// `RecipeBookComponent.renderTooltip`, `RecipeBookPage.renderTooltip`, `GhostSlots.renderTooltip`: the hovered recipe, or the ghost under the pointer.
+void RecipeBookComponent::render_tooltip(GuiGraphics& gfx, double mx, double my,
+                                         const ScreenSlot* hovered) {
     if (!visible_ || world_ == nullptr) return;
-    if (hovered_recipe_ >= 0) {
-        const RecipeEntry& entry = shown_[static_cast<size_t>(page_ * 20 + hovered_recipe_)];
+    const auto name_lines = [&](int32_t id) {
         Style style;
-        style.colour = world_->items != nullptr
-                           ? ItemTable::rarity_colour(world_->items->rarity(entry.result))
-                           : 0xFFFFFFu;
+        style.colour = world_->items != nullptr ? ItemTable::rarity_colour(world_->items->rarity(id))
+                                                : 0xFFFFFFu;
         std::vector<std::vector<Run>> lines;
-        lines.push_back(gfx.runs(literal(world_->item_name(gfx, entry.result), style)));
-        if (entry.many) {
+        lines.push_back(gfx.runs(literal(world_->item_name(gfx, id), style)));
+        return lines;
+    };
+    if (hovered_button_ >= 0) {
+        const Button& button = buttons_[static_cast<size_t>(hovered_button_)];
+        const int index = current_index();
+        const int n = static_cast<int>(button.entries.size());
+        const int outer = index / n;
+        const auto& items = button.entries[static_cast<size_t>(index - n * outer)].second;
+        const int32_t shown = items.empty() ? 0 : items[static_cast<size_t>(outer) % items.size()].id;
+        auto lines = name_lines(shown);
+        if (n > 1) {
             Style hint;
             hint.colour = 0xFFFF55u;
             lines.push_back(gfx.runs(translatable("gui.recipebook.moreRecipes", {}, hint)));
         }
         gfx.set_tooltip_for_next_frame(lines, static_cast<int>(mx), static_cast<int>(my));
-        return;
-    }
-    if (filter_hovered_) {
-        const bool filtering = world_->recipe_book.filtering;
+    } else if (filter_hovered_) {
         gfx.set_tooltip_for_next_frame(
-            translatable(filtering ? "gui.recipebook.toggleRecipes.craftable"
-                                   : "gui.recipebook.toggleRecipes.all"),
+            translatable(world_->recipe_book.filtering ? "gui.recipebook.toggleRecipes.craftable"
+                                                       : "gui.recipebook.toggleRecipes.all"),
             static_cast<int>(mx), static_cast<int>(my));
+    }
+    if (hovered == nullptr) return;
+    for (const auto& ghost : ghosts_) {
+        if (ghost.slot != hovered->index) continue;
+        const auto& stack = ghost.items[static_cast<size_t>(current_index()) % ghost.items.size()];
+        gfx.set_tooltip_for_next_frame(name_lines(stack.id), static_cast<int>(mx),
+                                       static_cast<int>(my));
     }
 }
 
-bool RecipeBookComponent::mouse_clicked(double mx, double my, int button) {
+// `GhostSlots.render`: the recipe's items, faded, in the slots the player has yet to fill.
+void RecipeBookComponent::render_ghost_recipe(GuiGraphics& gfx, const std::vector<ScreenSlot>& slots,
+                                              bool bigger_result) {
+    for (const auto& ghost : ghosts_) {
+        const ScreenSlot* slot = nullptr;
+        for (const auto& candidate : slots) {
+            if (candidate.index == ghost.slot) slot = &candidate;
+        }
+        if (slot == nullptr) continue;
+        const int x = slot->x;
+        const int y = slot->y;
+        if (ghost.result && bigger_result) {
+            gfx.fill(x - 4, y - 4, x + 20, y + 20, 0x30FF0000u);
+        } else {
+            gfx.fill(x, y, x + 16, y + 16, 0x30FF0000u);
+        }
+        const auto& stack = ghost.items[static_cast<size_t>(current_index()) % ghost.items.size()];
+        gfx.render_item(stack.id, x, y);
+        gfx.fill(x, y, x + 16, y + 16, 0x30FFFFFFu);
+        if (ghost.result) gfx.render_item_decorations(stack.id, stack.count, x, y, nullptr);
+    }
+}
+
+// `GhostSlots.setSlot`: a slot's ghost, when its display shows anything.
+void RecipeBookComponent::set_ghost(int slot, const std::vector<ItemStack>& items, bool result) {
+    if (items.empty()) return;
+    for (auto& ghost : ghosts_) {
+        if (ghost.slot == slot) {
+            ghost.items = items;
+            ghost.result = result;
+            return;
+        }
+    }
+    ghosts_.push_back({slot, items, result});
+}
+
+// `RecipeBookComponent.fillGhostRecipe`, `CraftingRecipeBookComponent.fillGhostRecipe`: the result and the ingredients where the recipe puts them.
+void RecipeBookComponent::fill_ghost_recipe(const RecipeDisplayEntry& display) {
+    ghosts_.clear();
+    const ContainerMenu* menu = world_ != nullptr ? world_->menu : nullptr;
+    if (menu == nullptr) return;
+    set_ghost(0, display.result, true);
+    if (display.kind == RecipeDisplayEntry::Kind::Shaped) {
+        for (const auto& [ingredient, slot] :
+             place_recipe(menu->grid_width, menu->grid_height, display.width, display.height,
+                          display.ingredients.size())) {
+            set_ghost(menu->grid_first + slot, display.ingredients[ingredient], false);
+        }
+    } else if (display.kind == RecipeDisplayEntry::Kind::Shapeless) {
+        const size_t n = std::min(display.ingredients.size(),
+                                  static_cast<size_t>(menu->grid_width * menu->grid_height));
+        for (size_t i = 0; i < n; ++i) {
+            set_ghost(menu->grid_first + static_cast<int>(i), display.ingredients[i], false);
+        }
+    }
+}
+
+// `RecipeBookComponent.tryPlaceRecipe`, `MultiPlayerGameMode.handlePlaceRecipe`: asks the server to fill the grid.
+bool RecipeBookComponent::try_place_recipe(const RecipeCollection* collection, int32_t recipe,
+                                           bool shift) {
+    if (!collection->is_craftable(recipe) && last_placed_ == recipe) return false;
+    last_placed_ = recipe;
+    ghosts_.clear();
+    if (world_->place_recipe && world_->menu != nullptr) {
+        world_->place_recipe(world_->menu->container_id, recipe, shift);
+    }
+    return true;
+}
+
+// `RecipeBookComponent.mouseClicked`, `RecipeBookPage.mouseClicked`: page arrows, a recipe, the search box, the filter, the tabs.
+bool RecipeBookComponent::mouse_clicked(double mx, double my, int button, bool shift) {
     if (!visible_ || world_ == nullptr || world_->game_mode == 3) return false;
     const int x = x_origin();
     const int y = y_origin();
@@ -652,11 +951,29 @@ bool RecipeBookComponent::mouse_clicked(double mx, double my, int button) {
     if (button == 0 && forward && mx >= x + 93 && my >= y + 137 && mx < x + 105 && my < y + 154) {
         play_sound("minecraft:ui.button.click");
         ++page_;
+        update_buttons_for_page();
         return true;
     }
     if (button == 0 && back && mx >= x + 38 && my >= y + 137 && mx < x + 50 && my < y + 154) {
         play_sound("minecraft:ui.button.click");
         --page_;
+        update_buttons_for_page();
+        return true;
+    }
+    for (int i = 0; i < 20; ++i) {
+        const Button& b = buttons_[static_cast<size_t>(i)];
+        if (!b.visible || b.entries.empty() || (button != 0 && button != 1)) continue;
+        const auto [bx, by] = button_position(i);
+        if (mx < bx || my < by || mx >= bx + 25 || my >= by + 25) continue;
+        play_sound("minecraft:ui.button.click");
+        if (button != 0) return true;
+        // `RecipeButton.getCurrentRecipe`: the recipe showing right now.
+        const int32_t recipe =
+            b.entries[static_cast<size_t>(current_index()) % b.entries.size()].first;
+        if (!try_place_recipe(b.collection, recipe, shift)) return false;
+        last_collection_ = b.collection;
+        last_recipe_ = recipe;
+        if (x_offset_ != 86) set_visible(false);
         return true;
     }
     const bool magnifier = mx >= x + 8 && mx < x + 25 && my >= y + 13 && my < y + 13 + 14;
@@ -671,7 +988,7 @@ bool RecipeBookComponent::mouse_clicked(double mx, double my, int button) {
         if (world_->recipe_book_changed) {
             world_->recipe_book_changed(visible_, world_->recipe_book.filtering);
         }
-        update_collections(false);
+        update_collections(false, world_->recipe_book.filtering);
         return true;
     }
     for (size_t i = 0; i < tabs_.size(); ++i) {
@@ -681,7 +998,7 @@ bool RecipeBookComponent::mouse_clicked(double mx, double my, int button) {
             play_sound("minecraft:ui.button.click");
             if (selected_tab_ != i) {
                 selected_tab_ = i;
-                update_collections(true);
+                update_collections(true, world_->recipe_book.filtering);
             }
             return true;
         }
@@ -689,7 +1006,7 @@ bool RecipeBookComponent::mouse_clicked(double mx, double my, int button) {
     return false;
 }
 
-// `RecipeBookComponent.keyPressed`, `RecipeBookComponent.checkSearchStringUpdate`: escape, the search box and the chat key.
+// `RecipeBookComponent.keyPressed`, `RecipeBookComponent.checkSearchStringUpdate`: escape, the search box, the chat key and placing the last recipe again.
 bool RecipeBookComponent::key_pressed(const KeyEvent& event, const ScreenManager* manager) {
     ignore_text_input_ = false;
     if (!visible_ || world_ == nullptr || world_->game_mode == 3) return false;
@@ -698,9 +1015,13 @@ bool RecipeBookComponent::key_pressed(const KeyEvent& event, const ScreenManager
         return true;
     }
     if (search_->key_pressed(event)) {
-        if (search_->value() != last_search_) {
-            last_search_ = search_->value();
-            update_collections(false);
+        std::string lower = search_->value();
+        std::ranges::transform(lower, lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (lower != last_search_) {
+            update_collections(false, world_->recipe_book.filtering);
+            last_search_ = lower;
         }
         return true;
     }
@@ -709,6 +1030,12 @@ bool RecipeBookComponent::key_pressed(const KeyEvent& event, const ScreenManager
         ignore_text_input_ = true;
         search_->set_focused(true);
         return true;
+    }
+    const bool selection = event.key == key::Enter || event.key == key::Space ||
+                           event.key == key::KeypadEnter;
+    if (selection && last_collection_ != nullptr && last_recipe_) {
+        play_sound("minecraft:ui.button.click");
+        return try_place_recipe(last_collection_, *last_recipe_, event.shift());
     }
     return false;
 }
@@ -719,9 +1046,13 @@ bool RecipeBookComponent::char_typed(uint32_t code, int mods) {
         return false;
     }
     if (search_->char_typed(code, mods)) {
-        if (search_->value() != last_search_) {
-            last_search_ = search_->value();
-            update_collections(false);
+        std::string lower = search_->value();
+        std::ranges::transform(lower, lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (lower != last_search_) {
+            update_collections(false, world_->recipe_book.filtering);
+            last_search_ = lower;
         }
         return true;
     }
@@ -738,8 +1069,92 @@ bool RecipeBookComponent::has_clicked_outside(double mx, double my, int left, in
     return outside && !beside && !on_tab;
 }
 
+// `AbstractRecipeBookScreen.init`, `AbstractRecipeBookScreen.initButton`: the book, the container beside it and its button.
+void AbstractRecipeBookScreen::init() {
+    AbstractContainerScreen::init();
+    width_too_narrow_ = width < 379;
+    recipe_book.init(width, height, world(), manager, width_too_narrow_);
+    left_pos = recipe_book.update_screen_position(width, image_width);
+    const auto [bx, by] = book_button_position();
+    add<SpriteButton>(bx, by, 20, 18, "recipe_book/button", "recipe_book/button_highlighted",
+                      Component{}, [this](Button& self) {
+                          recipe_book.toggle_visibility();
+                          left_pos = recipe_book.update_screen_position(width, image_width);
+                          const auto [x, y] = book_button_position();
+                          self.x = x;
+                          self.y = y;
+                          on_recipe_book_button_click();
+                      });
+}
+
+// `AbstractRecipeBookScreen.containerTick`: ticks the book.
+void AbstractRecipeBookScreen::tick() {
+    AbstractContainerScreen::tick();
+    recipe_book.tick();
+}
+
+// `AbstractRecipeBookScreen.render`: contents or book, carried item, then tooltips.
+void AbstractRecipeBookScreen::render(GuiGraphics& gfx, double mx, double my) {
+    if (recipe_book.visible() && width_too_narrow_) {
+        // The book covers the container on a narrow window; only it is drawn.
+    } else {
+        render_contents(gfx, mx, my);
+    }
+    recipe_book.render(gfx, mx, my);
+    render_carried_item(gfx, mx, my);
+    render_tooltip(gfx, mx, my);
+    recipe_book.render_tooltip(gfx, mx, my, hovered_slot);
+}
+
+// `AbstractRecipeBookScreen.renderSlots`: the slots, then the ghost recipe over them.
+void AbstractRecipeBookScreen::render_slots(GuiGraphics& gfx) {
+    AbstractContainerScreen::render_slots(gfx);
+    recipe_book.render_ghost_recipe(gfx, slots, is_bigger_result_slot());
+}
+
+// `AbstractRecipeBookScreen.mouseClicked`: the book first; a narrow open book takes every click.
+bool AbstractRecipeBookScreen::mouse_clicked(double mx, double my, int button) {
+    const bool shift = manager != nullptr && manager->shift_down;
+    if (recipe_book.mouse_clicked(mx, my, button, shift)) return true;
+    if (width_too_narrow_ && recipe_book.visible()) return true;
+    return AbstractContainerScreen::mouse_clicked(mx, my, button);
+}
+
+// `AbstractRecipeBookScreen.keyPressed`: the book first.
+bool AbstractRecipeBookScreen::key_pressed(const KeyEvent& event) {
+    if (recipe_book.key_pressed(event, manager)) return true;
+    return AbstractContainerScreen::key_pressed(event);
+}
+
+// `AbstractRecipeBookScreen.charTyped`: the book first.
+bool AbstractRecipeBookScreen::char_typed(uint32_t code, int mods) {
+    if (recipe_book.char_typed(code, mods)) return true;
+    return AbstractContainerScreen::char_typed(code, mods);
+}
+
+// `AbstractRecipeBookScreen.isHovering`: nothing hovers under a narrow open book.
+bool AbstractRecipeBookScreen::is_hovering(int x, int y, int w, int h, double mx, double my) const {
+    return (!width_too_narrow_ || !recipe_book.visible()) &&
+           AbstractContainerScreen::is_hovering(x, y, w, h, mx, my);
+}
+
+// `AbstractRecipeBookScreen.hasClickedOutside`: outside the container and the book.
+bool AbstractRecipeBookScreen::has_clicked_outside(double mx, double my, int left, int top) const {
+    const bool outside =
+        mx < left || my < top || mx >= left + image_width || my >= top + image_height;
+    return recipe_book.has_clicked_outside(mx, my, left_pos, top_pos, image_width, image_height) &&
+           outside;
+}
+
+// `AbstractRecipeBookScreen.slotClicked`: the click, then the book hears of it.
+void AbstractRecipeBookScreen::slot_clicked(const ScreenSlot* slot, int index, int button,
+                                            ClickType type) {
+    AbstractContainerScreen::slot_clicked(slot, index, button, type);
+    recipe_book.slot_clicked(slot);
+}
+
 InventoryScreen::InventoryScreen()
-    : AbstractContainerScreen(translatable("container.crafting"), translatable("container.inventory")) {
+    : AbstractRecipeBookScreen(translatable("container.crafting"), translatable("container.inventory")) {
     title_label_x = 97;
     slots.push_back({0, 154, 28, {}});
     for (int row = 0; row < 2; ++row) {
@@ -761,27 +1176,9 @@ InventoryScreen::InventoryScreen()
     slots.push_back({45, 77, 62, "container/slot/shield"});
 }
 
-// `AbstractRecipeBookScreen.init`, `AbstractRecipeBookScreen.initButton`: the book, the container beside it and its button.
-void InventoryScreen::init() {
-    AbstractContainerScreen::init();
-    width_too_narrow_ = width < 379;
-    recipe_book.init(width, height, world(), width_too_narrow_);
-    left_pos = recipe_book.update_screen_position(width, image_width);
-    book_button_ = &add<SpriteButton>(
-        left_pos + 104, height / 2 - 22, 20, 18, "recipe_book/button",
-        "recipe_book/button_highlighted", Component{}, [this](Button& self) {
-            recipe_book.toggle_visibility();
-            left_pos = recipe_book.update_screen_position(width, image_width);
-            self.x = left_pos + 104;
-            self.y = height / 2 - 22;
-            button_clicked_ = true;
-        });
-}
-
-// `AbstractRecipeBookScreen.containerTick`: ticks the book.
-void InventoryScreen::tick() {
-    AbstractContainerScreen::tick();
-    recipe_book.tick();
+// `InventoryScreen.getRecipeBookButtonPosition`: beside the crafting grid.
+std::pair<int, int> InventoryScreen::book_button_position() const {
+    return {left_pos + 104, height / 2 - 22};
 }
 
 // `InventoryScreen.renderLabels`: only the crafting title.
@@ -800,26 +1197,11 @@ void InventoryScreen::render_bg(GuiGraphics& gfx, double, double) {
     }
 }
 
-// `AbstractRecipeBookScreen.render`, `InventoryScreen.render`: contents or book, carried item, then tooltips.
+// `InventoryScreen.render`: the book screen, remembering the mouse for the player model.
 void InventoryScreen::render(GuiGraphics& gfx, double mx, double my) {
-    if (recipe_book.visible() && width_too_narrow_) {
-        // The book covers the inventory on a narrow window; only it is drawn.
-    } else {
-        render_contents(gfx, mx, my);
-    }
-    recipe_book.render(gfx, mx, my);
-    render_carried_item(gfx, mx, my);
-    render_tooltip(gfx, mx, my);
-    recipe_book.render_tooltip(gfx, mx, my);
+    AbstractRecipeBookScreen::render(gfx, mx, my);
     x_mouse_ = static_cast<float>(mx);
     y_mouse_ = static_cast<float>(my);
-}
-
-// `AbstractRecipeBookScreen.mouseClicked`: the book first; a narrow open book takes every click.
-bool InventoryScreen::mouse_clicked(double mx, double my, int button) {
-    if (recipe_book.mouse_clicked(mx, my, button)) return true;
-    if (width_too_narrow_ && recipe_book.visible()) return true;
-    return AbstractContainerScreen::mouse_clicked(mx, my, button);
 }
 
 // `InventoryScreen.mouseReleased`: swallows the release after the book button.
@@ -832,30 +1214,40 @@ bool InventoryScreen::mouse_released(double mx, double my, int button) {
     return AbstractContainerScreen::mouse_released(mx, my, button);
 }
 
-// `AbstractRecipeBookScreen.keyPressed`: the book first.
-bool InventoryScreen::key_pressed(const KeyEvent& event) {
-    if (recipe_book.key_pressed(event, manager)) return true;
-    return AbstractContainerScreen::key_pressed(event);
+// `CraftingMenu.CraftingMenu`, `AbstractCraftingMenu.addResultSlot`, `AbstractCraftingMenu.addCraftingGridSlots`, `AbstractContainerMenu.addStandardInventorySlots`: the result, the grid and the player's slots.
+CraftingScreen::CraftingScreen(Component title)
+    : AbstractRecipeBookScreen(std::move(title), translatable("container.inventory")) {
+    slots.push_back({0, 124, 35, {}});
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            slots.push_back({1 + column + row * 3, 30 + column * 18, 17 + row * 18, {}});
+        }
+    }
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 9; ++column) {
+            slots.push_back({10 + column + row * 9, 8 + column * 18, 84 + row * 18, {}});
+        }
+    }
+    for (int column = 0; column < 9; ++column) {
+        slots.push_back({37 + column, 8 + column * 18, 84 + 58, {}});
+    }
 }
 
-// `AbstractRecipeBookScreen.charTyped`: the book first.
-bool InventoryScreen::char_typed(uint32_t code, int mods) {
-    if (recipe_book.char_typed(code, mods)) return true;
-    return AbstractContainerScreen::char_typed(code, mods);
+// `CraftingScreen.init`: the title moves right of the book button.
+void CraftingScreen::init() {
+    AbstractRecipeBookScreen::init();
+    title_label_x = 29;
 }
 
-// `AbstractRecipeBookScreen.isHovering`: nothing hovers under a narrow open book.
-bool InventoryScreen::is_hovering(int x, int y, int w, int h, double mx, double my) const {
-    return (!width_too_narrow_ || !recipe_book.visible()) &&
-           AbstractContainerScreen::is_hovering(x, y, w, h, mx, my);
+// `CraftingScreen.getRecipeBookButtonPosition`: left of the grid.
+std::pair<int, int> CraftingScreen::book_button_position() const {
+    return {left_pos + 5, height / 2 - 49};
 }
 
-// `AbstractRecipeBookScreen.hasClickedOutside`: outside the container and the book.
-bool InventoryScreen::has_clicked_outside(double mx, double my, int left, int top) const {
-    const bool outside =
-        mx < left || my < top || mx >= left + image_width || my >= top + image_height;
-    return recipe_book.has_clicked_outside(mx, my, left_pos, top_pos, image_width, image_height) &&
-           outside;
+// `CraftingScreen.renderBg`: the crafting table image.
+void CraftingScreen::render_bg(GuiGraphics& gfx, double, double) {
+    gfx.blit("container/crafting_table", left_pos, (height - image_height) / 2, 0.0f, 0.0f,
+             image_width, image_height, 256, 256);
 }
 
 } // namespace mcpp::ui

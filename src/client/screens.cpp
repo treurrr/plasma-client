@@ -5,6 +5,7 @@
 #include "mcpp/ui/container_screen.hpp"
 #include "mcpp/ui/menu.hpp"
 #include "mcpp/ui/screens.hpp"
+#include "mcpp/ui/text_component.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -24,12 +25,33 @@ int gui_scale_of(const Game& game) {
 // session already holds the client's prediction of every click it sent.
 void sync_menu(Game& game) {
     auto& screens = game.screens;
-    const auto& inventory = game.session->inventory();
+    const auto& session = *game.session;
+    const auto& inventory = session.inventory();
     for (size_t i = 0; i < mcpp::Inventory::kSlots; ++i) screens.menu.slots[i] = inventory.slots[i];
     screens.menu.carried = inventory.carried;
-    screens.menu.state_id = game.session->container_state();
-    screens.menu.creative = game.session->vitals().game_mode == 1;
-    screens.world.game_mode = game.session->vitals().game_mode;
+    screens.menu.state_id = session.container_state();
+    screens.menu.creative = session.vitals().game_mode == 1;
+    screens.world.game_mode = session.vitals().game_mode;
+    auto& container = screens.container;
+    if (container && container->container_id == session.open_container()) {
+        const auto& held = session.container_slots();
+        for (size_t i = 0; i < container->size() && i < held.size(); ++i) container->slots[i] = held[i];
+        container->carried = inventory.carried;
+        container->creative = screens.menu.creative;
+        screens.world.menu = &*container;
+    } else {
+        container.reset();
+        screens.world.menu = &screens.menu;
+    }
+}
+
+// `ClientPacketListener.refreshRecipeBook`: regroups the book and tells an open book screen.
+void refresh_recipe_book(Game& game) {
+    auto& screens = game.screens;
+    screens.world.recipe_book.rebuild_collections();
+    if (auto* screen = dynamic_cast<mcpp::ui::AbstractRecipeBookScreen*>(screens.manager.current())) {
+        screen->recipe_book.recipes_updated();
+    }
 }
 
 void open_screen(Game& game, std::shared_ptr<mcpp::ui::Screen> screen) {
@@ -58,6 +80,59 @@ void screens_bind(Game& game, mcpp::SessionEvents& events) {
         if (dynamic_cast<mcpp::ui::AbstractContainerScreen*>(game.screens.manager.current())) {
             game.screens.manager.close();
         }
+    };
+    // `ClientPacketListener.handleOpenScreen`, `MenuScreens.create`: the crafting table's screen.
+    events.ui.on_open_screen = [&game](int32_t container, int32_t type, const mcpp::nbt::Value& title) {
+        auto& screens = game.screens;
+        const auto* menu = game.session->registries().at("minecraft:menu", static_cast<size_t>(type));
+        if (menu == nullptr || menu->name != "minecraft:crafting" || !screens.quads) return;
+        screens.container.emplace(mcpp::ui::ContainerMenu::crafting_table(&screens.items));
+        screens.container->container_id = container;
+        screens.world.menu = &*screens.container;
+        open_screen(game, std::make_shared<mcpp::ui::CraftingScreen>(mcpp::ui::from_nbt(title)));
+    };
+    // `ClientPacketListener.handlePlaceRecipe`: the ghost of a recipe the player lacks items for.
+    events.ui.on_place_ghost_recipe = [&game](int32_t container, const mcpp::proto::Value& display) {
+        auto& screens = game.screens;
+        if (screens.world.menu == nullptr || screens.world.menu->container_id != container) return;
+        if (auto* screen = dynamic_cast<mcpp::ui::AbstractRecipeBookScreen*>(screens.manager.current())) {
+            screen->recipe_book.fill_ghost_recipe(
+                mcpp::ui::read_recipe_display(display, game.session->tags()));
+        }
+    };
+    // `ClientPacketListener.handleRecipeBookAdd`: new recipes, some to highlight.
+    events.ui.on_recipe_book_add = [&game](const mcpp::proto::Value& added) {
+        auto& book = game.screens.world.recipe_book;
+        const auto* replace = added.field("replace");
+        if (replace != nullptr && replace->as_bool().value_or(false)) book.clear();
+        const auto* entries = added.field("entries");
+        if (entries != nullptr && entries->as_list() != nullptr) {
+            for (const auto& entry : *entries->as_list()) {
+                auto read = mcpp::ui::read_recipe_entry(entry, game.session->registries(),
+                                                        game.session->tags());
+                const int32_t id = read.id;
+                book.add(std::move(read));
+                const auto* flags = entry.field("flags");
+                if (flags != nullptr && (flags->as_int().value_or(0) & 2) != 0) book.add_highlight(id);
+            }
+        }
+        refresh_recipe_book(game);
+    };
+    // `ClientPacketListener.handleRecipeBookRemove`: recipes taken away.
+    events.ui.on_recipe_book_remove = [&game](const std::vector<int32_t>& gone) {
+        for (const int32_t id : gone) game.screens.world.recipe_book.remove(id);
+        refresh_recipe_book(game);
+    };
+    // `ClientPacketListener.handleRecipeBookSettings`: the crafting book's open and filter switches.
+    events.ui.on_recipe_book_settings = [&game](const mcpp::proto::Value& settings) {
+        auto& book = game.screens.world.recipe_book;
+        const auto flag = [&](std::string_view name) {
+            const auto* value = settings.field(name);
+            return value != nullptr && value->as_bool().value_or(false);
+        };
+        book.open = flag("crafting_open");
+        book.filtering = flag("crafting_filtering");
+        refresh_recipe_book(game);
     };
 }
 
@@ -94,11 +169,15 @@ void screens_start(Game& game) {
     world.items = &screens.items;
     world.click = [&game](int slot, int button, mcpp::ui::ClickType type,
                           const std::vector<std::pair<int16_t, mcpp::ItemStack>>& changed) {
-        auto& menu = game.screens.menu;
+        auto& menu = *game.screens.world.menu;
         auto& session = *game.session;
         session.send_container_click(menu.container_id, static_cast<int16_t>(slot),
                                      static_cast<int8_t>(button), static_cast<int32_t>(type),
                                      changed, menu.carried);
+        if (menu.container_id != 0) {
+            session.predict_container(menu.slots, menu.carried);
+            return;
+        }
         std::array<mcpp::ItemStack, mcpp::Inventory::kSlots> slots{};
         for (size_t i = 0; i < slots.size() && i < menu.slots.size(); ++i) slots[i] = menu.slots[i];
         session.predict_inventory(slots, menu.carried);
@@ -106,6 +185,13 @@ void screens_start(Game& game) {
     world.close_container = [&game](int container) {
         game.session->send_container_close(container);
     };
+    world.recipe_book_changed = [&game](bool open, bool filtering) {
+        game.session->send_recipe_book_settings(0, open, filtering);
+    };
+    world.place_recipe = [&game](int32_t container, int32_t recipe, bool use_max) {
+        game.session->send_place_recipe(container, recipe, use_max);
+    };
+    world.recipe_seen = [&game](int32_t recipe) { game.session->send_recipe_seen(recipe); };
     world.creative_set = [&game](int16_t slot, const mcpp::ItemStack& stack) {
         game.session->send_creative_slot(slot, stack);
     };

@@ -225,6 +225,7 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
             proto::Value added = proto::read_named(in, "recipe_book_add", options_.protocol);
             const auto* replace = added.field("replace");
             if (replace != nullptr && replace->as_bool().value_or(false)) data_.recipe_book.clear();
+            if (events_.ui.on_recipe_book_add) events_.ui.on_recipe_book_add(added);
             data_.recipe_book.push_back(std::move(added));
             ++data_.recipe_changes;
             return true;
@@ -233,6 +234,9 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
             const int32_t count = in.read_varint();
             std::vector<int64_t> gone;
             for (int32_t i = 0; i < count; ++i) gone.push_back(in.read_varint());
+            if (events_.ui.on_recipe_book_remove) {
+                events_.ui.on_recipe_book_remove(std::vector<int32_t>(gone.begin(), gone.end()));
+            }
             for (auto& batch : data_.recipe_book) {
                 const auto* entries = batch.field("entries");
                 if (entries == nullptr || entries->as_list() == nullptr) continue;
@@ -255,6 +259,9 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
             data_.recipe_book_settings =
                 proto::read_named(in, "recipe_book_settings", options_.protocol);
             ++data_.recipe_changes;
+            if (events_.ui.on_recipe_book_settings) {
+                events_.ui.on_recipe_book_settings(data_.recipe_book_settings);
+            }
             return true;
         }
         if (packet.id == cb.server_data) {

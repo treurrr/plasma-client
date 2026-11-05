@@ -130,6 +130,7 @@ add_library(mcpp_net STATIC
     src/ui/layout.cpp
     src/ui/items.cpp
     src/ui/container.cpp
+    src/ui/recipe_book.cpp
     src/ui/screens/container_screen.cpp
     src/ui/screens/registry.cpp
     src/ui/screens/creative_screen.cpp

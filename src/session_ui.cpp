@@ -425,6 +425,13 @@ void Session::send_place_recipe(int32_t container, int32_t recipe, bool use_max)
     send(ids_->play_sb.place_recipe, out);
 }
 
+void Session::send_recipe_seen(int32_t recipe) {
+    if (state_ != SessionState::Play) return;
+    ByteBuffer out;
+    out.write_varint(recipe);
+    send(ids_->play_sb.recipe_book_seen_recipe, out);
+}
+
 void Session::send_recipe_book_settings(int32_t book, bool open, bool filtering) {
     if (state_ != SessionState::Play) return;
     ByteBuffer out;

@@ -203,6 +203,8 @@ struct ScreensArea {
     mcpp::ui::ContainerMenu menu;
     mcpp::ui::World world;
     std::chrono::steady_clock::time_point opened = std::chrono::steady_clock::now();
+    // C: the menu of the container the server opened, while its screen is up.
+    std::optional<mcpp::ui::ContainerMenu> container;
 };
 
 struct SoundRuntime;

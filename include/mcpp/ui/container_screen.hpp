@@ -3,7 +3,10 @@
 #include "mcpp/ui/widgets.hpp"
 #include "mcpp/ui/world.hpp"
 
+#include <array>
+#include <chrono>
 #include <filesystem>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -85,45 +88,89 @@ private:
     ItemStack last_quick_moved_;
 };
 
-// The crafting book beside the inventory: five tabs, a search field, the
-// craftable-only toggle, twenty recipes a page and the page arrows.
+// The crafting book beside a crafting grid: five tabs, a search field, the
+// craftable-only toggle, twenty collections a page, the page arrows, and the
+// ghost of a recipe the player lacks the items for.
 class RecipeBookComponent {
 public:
     static constexpr int kImageWidth = 147;
     static constexpr int kImageHeight = 166;
 
-    void init(int width, int height, World* world, bool width_too_narrow);
+    void init(int width, int height, World* world, const ScreenManager* manager,
+              bool width_too_narrow);
     int update_screen_position(int width, int image_width) const;
     void toggle_visibility();
     bool visible() const { return visible_; }
     void render(GuiGraphics& gfx, double mx, double my);
-    void render_tooltip(GuiGraphics& gfx, double mx, double my);
-    bool mouse_clicked(double mx, double my, int button);
+    void render_tooltip(GuiGraphics& gfx, double mx, double my, const ScreenSlot* hovered);
+    void render_ghost_recipe(GuiGraphics& gfx, const std::vector<ScreenSlot>& slots,
+                             bool bigger_result);
+    bool mouse_clicked(double mx, double my, int button, bool shift);
     bool key_pressed(const KeyEvent& event, const ScreenManager* manager);
     bool char_typed(uint32_t code, int mods);
     bool has_clicked_outside(double mx, double my, int left, int top, int w, int h) const;
     void tick();
+    void slot_clicked(const ScreenSlot* slot);
+    void recipes_updated();
+    void fill_ghost_recipe(const RecipeDisplayEntry& display);
+
+    // What the page shows, for tests: each button's collection and whether
+    // it is drawn craftable.
+    struct Shown {
+        int32_t result = 0;
+        bool craftable = false;
+        bool many = false;
+    };
+    std::vector<Shown> page() const;
+    int page_index() const { return page_; }
+    int pages() const { return pages_; }
+    // Where page button `i` sits, for clicking it.
+    std::pair<int, int> button_position(int i) const;
 
 private:
     struct Tab {
         int32_t primary = 0;
         int32_t secondary = 0;
-        int category = -1;    // -1 is search
+        int tab = 0;    // ClientRecipeBook tab: 0 search, 1-4 the categories
         int x = 0;
         int y = 0;
         bool visible = true;
         bool hovered = false;
+        float animation = 0.0f;
+    };
+    struct Button {
+        const RecipeCollection* collection = nullptr;
+        std::vector<std::pair<int32_t, std::vector<ItemStack>>> entries;
+        bool same_display = true;
+        float animation = 0.0f;
+        bool visible = false;
+    };
+    struct Ghost {
+        int slot = 0;
+        std::vector<ItemStack> items;
+        bool result = false;
     };
     void init_visuals();
-    void update_tabs();
-    void update_collections(bool reset_page);
+    void update_tabs(bool filtering);
+    void update_collections(bool reset_page, bool filtering);
+    void update_buttons_for_page();
+    void update_stacked_contents();
+    void select_matching_recipes();
+    bool try_place_recipe(const RecipeCollection* collection, int32_t recipe, bool shift);
+    bool fits(const RecipeDisplayEntry& entry) const;
+    bool is_crafting_slot(int index) const;
+    bool matches_search(const RecipeCollection& collection, const std::string& query) const;
+    void set_ghost(int slot, const std::vector<ItemStack>& items, bool result);
+    int current_index() const;
     // `RecipeBookComponent.getXOrigin`: the book's left edge.
     int x_origin() const { return (width_ - kImageWidth) / 2 - x_offset_; }
     // `RecipeBookComponent.getYOrigin`: the book's top edge.
     int y_origin() const { return (height_ - kImageHeight) / 2; }
     void set_visible(bool on);
+    std::vector<ItemStack> inventory_snapshot() const;
 
     World* world_ = nullptr;
+    const ScreenManager* manager_ = nullptr;
     int width_ = 0;
     int height_ = 0;
     int x_offset_ = 0;
@@ -133,21 +180,30 @@ private:
     size_t selected_tab_ = 0;
     std::unique_ptr<EditBox> search_;
     std::string last_search_;
-    std::vector<RecipeEntry> shown_;
+    std::vector<const RecipeCollection*> collections_;
+    std::array<Button, 20> buttons_;
+    int hovered_button_ = -1;
     int page_ = 0;
     int pages_ = 0;
-    int hovered_recipe_ = -1;
     bool filter_hovered_ = false;
     bool ignore_text_input_ = false;
+    StackedItemContents stacked_;
+    std::vector<ItemStack> inventory_seen_;
+    std::optional<int32_t> last_placed_;
+    std::optional<int32_t> last_recipe_;
+    const RecipeCollection* last_collection_ = nullptr;
+    std::vector<Ghost> ghosts_;
+    float time_ = 0.0f;
+    std::chrono::steady_clock::time_point last_frame_{};
 };
 
-class InventoryScreen : public AbstractContainerScreen {
+// `AbstractRecipeBookScreen`: a container screen with the recipe book beside it.
+class AbstractRecipeBookScreen : public AbstractContainerScreen {
 public:
-    InventoryScreen();
+    using AbstractContainerScreen::AbstractContainerScreen;
     void init() override;
     void render(GuiGraphics& gfx, double mx, double my) override;
     bool mouse_clicked(double mx, double my, int button) override;
-    bool mouse_released(double mx, double my, int button) override;
     bool key_pressed(const KeyEvent& event) override;
     bool char_typed(uint32_t code, int mods) override;
     void tick() override;
@@ -155,18 +211,45 @@ public:
     RecipeBookComponent recipe_book;
 
 protected:
-    void render_labels(GuiGraphics& gfx) override;
-    void render_bg(GuiGraphics& gfx, double mx, double my) override;
+    virtual std::pair<int, int> book_button_position() const = 0;
+    virtual void on_recipe_book_button_click() {}
+    virtual bool is_bigger_result_slot() const { return true; }
+    void render_slots(GuiGraphics& gfx) override;
     bool is_hovering(int x, int y, int w, int h, double mx, double my) const override;
     bool has_clicked_outside(double mx, double my, int left, int top) const override;
+    void slot_clicked(const ScreenSlot* slot, int index, int button, ClickType type) override;
+
+    bool width_too_narrow_ = false;
+};
+
+class InventoryScreen : public AbstractRecipeBookScreen {
+public:
+    InventoryScreen();
+    void render(GuiGraphics& gfx, double mx, double my) override;
+    bool mouse_released(double mx, double my, int button) override;
+
+protected:
+    std::pair<int, int> book_button_position() const override;
+    void on_recipe_book_button_click() override { button_clicked_ = true; }
+    bool is_bigger_result_slot() const override { return false; }
+    void render_labels(GuiGraphics& gfx) override;
+    void render_bg(GuiGraphics& gfx, double mx, double my) override;
 
 private:
-    void place_book_button();
-    bool width_too_narrow_ = false;
     bool button_clicked_ = false;
-    SpriteButton* book_button_ = nullptr;
     float x_mouse_ = 0.0f;
     float y_mouse_ = 0.0f;
+};
+
+// `CraftingScreen`: the crafting table's 3x3 grid.
+class CraftingScreen : public AbstractRecipeBookScreen {
+public:
+    explicit CraftingScreen(Component title);
+    void init() override;
+
+protected:
+    std::pair<int, int> book_button_position() const override;
+    void render_bg(GuiGraphics& gfx, double mx, double my) override;
 };
 
 // The creative tabs as the game builds them, baked by tools/bake_creative.py.

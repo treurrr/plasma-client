@@ -18,31 +18,6 @@
 #include <iostream>
 
 namespace client {
-namespace {
-
-// A recipe book with something in every tab, so the book's layout - the
-// tabs, the grid, the page count - can be checked before the server's
-// recipe packets are read. Every recipe is shown uncraftable, as it is with
-// an empty inventory.
-void demo_book(mcpp::ui::RecipeBookView& book, const mcpp::ui::ItemTable& items) {
-    const char* names[4][6] = {
-        {"iron_axe", "golden_sword", "bow", "shield", "iron_helmet", "fishing_rod"},
-        {"bricks", "stone_bricks", "oak_planks", "glass", "sandstone", "polished_andesite"},
-        {"bundle", "bucket", "paper", "book", "bread", "cake"},
-        {"redstone_torch", "piston", "lever", "hopper", "observer", "repeater"},
-    };
-    for (size_t c = 0; c < 4; ++c) {
-        for (int round = 0; round < 7; ++round) {
-            for (const char* name : names[c]) {
-                const int32_t id = items.find(name);
-                if (id > 0) book.categories[c].push_back({id, 1, false, round % 3 == 0});
-            }
-        }
-    }
-    book.open = true;
-}
-
-} // namespace
 
 int screenshot(const std::vector<std::string>& args) {
     if (args.empty()) {
@@ -99,11 +74,11 @@ int screenshot(const std::vector<std::string>& args) {
     mcpp::ui::ItemTable items;
     items.load(mcpp::ui::ItemTable::default_path(mcpp::protocol::kTargetProtocol));
 
-    auto menu = mcpp::ui::ContainerMenu::player_inventory(&items);
+    auto inventory_menu = mcpp::ui::ContainerMenu::player_inventory(&items);
+    auto table_menu = mcpp::ui::ContainerMenu::crafting_table(&items);
     mcpp::ui::World world;
-    world.menu = &menu;
     world.items = &items;
-    if (book) demo_book(world.recipe_book, items);
+    world.recipe_book.open = book;
 
     std::vector<mcpp::ui::ScreenName> todo;
     for (const auto& known : mcpp::ui::screen_names()) {
@@ -116,6 +91,7 @@ int screenshot(const std::vector<std::string>& args) {
 
     for (const auto& entry : todo) {
         for (const int scale : {2, 3}) {
+            world.menu = entry.name == "crafting" ? &table_menu : &inventory_menu;
             mcpp::ui::ScreenManager manager;
             manager.lang = &lang;
             manager.options = &options;
