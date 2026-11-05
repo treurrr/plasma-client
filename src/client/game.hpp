@@ -170,7 +170,9 @@ struct PlayerArea {
     // What the crosshair is on: the block, the face it entered and where.
     int32_t hit_face = 1;
     double hit_location[3] = {0.0, 0.0, 0.0};
-    // Breaking a block over several ticks, the way the game counts it.
+    // Breaking a block over several ticks now belongs to MultiPlayerGameMode
+    // in src/client/breaking.cpp; these stay so the struct's layout does not
+    // move under another block's changes.
     bool destroying = false;
     int32_t destroy_pos[3] = {0, 0, 0};
     int32_t destroy_item = -1;
