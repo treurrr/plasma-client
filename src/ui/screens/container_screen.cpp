@@ -813,7 +813,7 @@ void RecipeBookComponent::render(GuiGraphics& gfx, double mx, double my) {
     arrow(back, x + 38, "recipe_book/page_backward");
 }
 
-// `RecipeBookComponent.time`: which of a cycle's items is shown, a new one every 30 ticks.
+// `RecipeBookComponent.RecipeBookComponent`: which of a cycle's items is shown, a new one every 30 ticks.
 int RecipeBookComponent::current_index() const { return static_cast<int>(std::floor(time_ / 30.0f)); }
 
 std::pair<int, int> RecipeBookComponent::button_position(int i) const {

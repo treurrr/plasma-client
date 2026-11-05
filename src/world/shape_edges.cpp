@@ -20,6 +20,7 @@ int cycled(int cycle, int a, int b, int c, int axis) {
 // `AxisCycle.cycle`: where an axis goes.
 int cycled_axis(int cycle, int axis) { return (axis + cycle) % 3; }
 
+// `AxisCycle.inverse`: the cycle that undoes this one.
 int inverse(int cycle) { return cycle == kNone ? kNone : cycle == kForward ? kBackward : kForward; }
 
 // The cells of an outline shape, which is baked as boxes: the grid is their

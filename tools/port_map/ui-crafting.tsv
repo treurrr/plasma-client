@@ -1,0 +1,2 @@
+# Crafting, the recipe book and block shapes (C).
+StackedItemContents.canCraft	port	src/ui/recipe_book.cpp::StackedItemContents::can_craft	same answer, our own matching rather than StackedContents
