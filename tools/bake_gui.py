@@ -168,6 +168,16 @@ def main(args):
                     pass
             sprites.append((short, image))
 
+    # Our own art replaces the game's where brand/gui holds a file of the same
+    # name, so the client can say what it is without touching the jar.
+    brand = Path(__file__).resolve().parent.parent / "brand" / "gui"
+    if brand.is_dir():
+        ours = {str(f.relative_to(brand).with_suffix("")): f for f in brand.rglob("*.png")}
+        for index, (name, _) in enumerate(sprites):
+            replacement = ours.get(name.removeprefix("gui/"))
+            if name.startswith("gui/") and replacement is not None:
+                sprites[index] = (name, Image.open(replacement).convert("RGBA"))
+
     # The font rides in the same atlas: a glyph is a sprite like any other.
     for code, image, advance, height, ascent in glyphs:
         sprites.append((f"glyph/{code}", image))

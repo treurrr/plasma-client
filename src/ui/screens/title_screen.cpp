@@ -227,7 +227,8 @@ void TitleScreen::render(GuiGraphics& gfx, double mx, double my) {
     const bool hide = manager != nullptr && manager->options != nullptr &&
                       manager->options->get_bool("hideSplashTexts");
     if (splash && !hide) splash->render(gfx, width, alpha);
-    const std::string version = "Minecraft " + std::string(protocol::kTargetVersionName);
+    const std::string version =
+        "Minecraft " + std::string(protocol::kTargetVersionName) + " (C++ Edition)";
     gfx.draw_string(version, 2, height - 10, white(alpha));
 }
 
