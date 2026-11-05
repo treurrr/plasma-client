@@ -70,6 +70,8 @@ public:
     static constexpr int kTabs = 5;
 
     void add(RecipeDisplayEntry entry);
+    // One recipe_book_add packet: a replacing batch empties the book first.
+    void add_batch(const proto::Value& added, const Registries& registries, const Tags& tags);
     void remove(int32_t id);
     void clear();
     bool will_highlight(int32_t id) const { return highlight_.contains(id); }

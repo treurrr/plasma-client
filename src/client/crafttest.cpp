@@ -4,6 +4,8 @@
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/session.hpp"
 #include "mcpp/ui/container.hpp"
+#include "mcpp/ui/container_screen.hpp"
+#include "mcpp/ui/world.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -272,6 +274,217 @@ int crafttest(const std::vector<std::string>& args) {
     console(std::format("setblock {} {} {} minecraft:air", bx + 2, by - 1, bz));
     console(std::format("setblock {} {} {} minecraft:air", bx, by - 1, bz));
     pump_for(session, standing, 0.3);
+    session.close();
+    std::cout << std::format("{} of {} checks agree with the server\n",
+                             steps - static_cast<size_t>(failures), steps);
+    return failures == 0 ? 0 : 1;
+}
+
+// The recipe book against the server: every recipe it unlocks is in the book,
+// what two planks can make is drawn craftable and the rest is not, a click on
+// the sticks has the server fill the grid, and a click on a recipe the
+// inventory lacks the items for brings back its ghost.
+int booktest(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        std::cerr << "usage: booktest <host:port> <server console dir> [name] [x y z]\n";
+        return 2;
+    }
+    const auto address = parse_address(args[0]);
+    const std::filesystem::path server = args[1];
+    const std::string name = args.size() > 2 ? args[2] : "PlasmaK";
+    const int bx = args.size() > 5 ? std::stoi(args[3]) : -15000;
+    const int by = args.size() > 5 ? std::stoi(args[4]) : 100;
+    const int bz = args.size() > 5 ? std::stoi(args[5]) : 15000;
+    const auto console = [&](const std::string& command) {
+        std::ofstream(server / "console.in") << command << '\n';
+    };
+
+    mcpp::ui::ItemTable items;
+    if (!items.load(mcpp::ui::ItemTable::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cerr << "no item table; bake one with tools/bake_all.py\n";
+        return 1;
+    }
+    auto menu = mcpp::ui::ContainerMenu::player_inventory(&items);
+    mcpp::ui::World world;
+    world.menu = &menu;
+    world.items = &items;
+    size_t sent_entries = 0;
+    std::vector<int32_t> placed;
+    size_t ghosts = 0;
+    mcpp::ui::RecipeBookComponent book;
+
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    options.username = name;
+    mcpp::SessionEvents events;
+    Standing standing;
+    events.player.on_position = [&](double x, double y, double z, float, float) {
+        standing.x = x;
+        standing.y = y;
+        standing.z = z;
+        standing.known = true;
+    };
+    mcpp::Session* live = nullptr;
+    events.ui.on_recipe_book_add = [&](const mcpp::proto::Value& added) {
+        const auto* replace = added.field("replace");
+        if (replace != nullptr && replace->as_bool().value_or(false)) sent_entries = 0;
+        if (const auto* entries = added.field("entries"); entries && entries->as_list()) {
+            sent_entries += entries->as_list()->size();
+        }
+        world.recipe_book.add_batch(added, live->registries(), live->tags());
+        world.recipe_book.rebuild_collections();
+        book.recipes_updated();
+    };
+    events.ui.on_recipe_book_remove = [&](const std::vector<int32_t>& gone) {
+        for (const int32_t id : gone) world.recipe_book.remove(id);
+        sent_entries -= gone.size();
+        world.recipe_book.rebuild_collections();
+        book.recipes_updated();
+    };
+    events.ui.on_place_ghost_recipe = [&](int32_t, const mcpp::proto::Value& display) {
+        book.fill_ghost_recipe(mcpp::ui::read_recipe_display(display, live->tags()));
+        ghosts = book.ghost_slots();
+    };
+    mcpp::Session session(options, events);
+    live = &session;
+    world.place_recipe = [&](int32_t container, int32_t recipe, bool use_max) {
+        placed.push_back(recipe);
+        session.send_place_recipe(container, recipe, use_max);
+    };
+    session.connect();
+    pump_for(session, standing, 3.0);
+    console(std::format("gamemode survival {}", name));
+    console(std::format("tp {} {} {} {}", name, bx + 0.5, by, bz + 0.5));
+    pump_for(session, standing, 1.5);
+    console(std::format("setblock {} {} {} minecraft:stone", bx, by - 1, bz));
+    console(std::format("clear {}", name));
+    console(std::format("recipe take {} *", name));
+    pump_for(session, standing, 1.0);
+    console(std::format("recipe give {} *", name));
+    console(std::format("give {} minecraft:oak_planks 2", name));
+    pump_for(session, standing, 2.0);
+
+    int failures = 0;
+    size_t steps = 0;
+    const auto check = [&](const std::string& what, bool ok, const std::string& detail) {
+        ++steps;
+        if (!ok) ++failures;
+        std::cout << std::format("{:<56} {} {}\n", what, ok ? "ok     " : "WRONG  ", detail);
+    };
+    const auto sync = [&] {
+        for (size_t i = 0; i < mcpp::Inventory::kSlots; ++i) menu.slots[i] = session.inventory().slots[i];
+        menu.carried = session.inventory().carried;
+    };
+    sync();
+    world.recipe_book.open = true;
+    book.init(430, 240, &world, nullptr, false);
+    book.tick();
+
+    check("every recipe the server sent is in the book", world.recipe_book.size() == sent_entries,
+          std::format("{} in the book, {} sent", world.recipe_book.size(), sent_entries));
+    size_t collections = world.recipe_book.collection(0).size();
+    check("the crafting tabs hold collections", collections > 100,
+          std::format("{} collections", collections));
+
+    // Every page of the search tab, walked with the forward arrow.
+    const int32_t stick = items.find("stick");
+    const int32_t table = items.find("crafting_table");
+    int stick_page = -1;
+    int stick_button = -1;
+    int table_page = -1;
+    int table_button = -1;
+    size_t shown = 0;
+    size_t craftable = 0;
+    const int pages = book.pages();
+    for (int page = 0; page < pages; ++page) {
+        const auto on_page = book.page();
+        for (size_t i = 0; i < on_page.size(); ++i) {
+            ++shown;
+            if (on_page[i].craftable) ++craftable;
+            if (on_page[i].result == stick && stick_page < 0) {
+                stick_page = page;
+                stick_button = static_cast<int>(i);
+                check("the sticks are drawn craftable", on_page[i].craftable, "");
+            }
+            if (on_page[i].result == table && table_page < 0) {
+                table_page = page;
+                table_button = static_cast<int>(i);
+                check("the crafting table is drawn uncraftable (red)", !on_page[i].craftable, "");
+            }
+        }
+        if (page + 1 < pages) {
+            const auto [ax, ay] = book.button_position(0);
+            book.mouse_clicked(ax - 11 + 93 + 2, ay - 31 + 137 + 2, 0, false);
+        }
+    }
+    check("the pages show every collection that fits the 2x2 grid", shown > 0 && pages > 1,
+          std::format("{} collections on {} pages, {} craftable", shown, pages, craftable));
+    check("found the sticks and the crafting table", stick_page >= 0 && table_page >= 0, "");
+
+    const auto to_page = [&](int page) {
+        const auto [ax, ay] = book.button_position(0);
+        while (book.page_index() > page) book.mouse_clicked(ax - 11 + 38 + 2, ay - 31 + 137 + 2, 0, false);
+        while (book.page_index() < page) book.mouse_clicked(ax - 11 + 93 + 2, ay - 31 + 137 + 2, 0, false);
+    };
+    // The filter shows only what can be made.
+    {
+        const auto [fx, fy] = book.button_position(0);
+        book.mouse_clicked(fx - 11 + 110 + 2, fy - 31 + 12 + 2, 0, false);
+        to_page(0);
+        size_t filtered = 0;
+        bool all_craftable = true;
+        for (int page = 0; page < book.pages(); ++page) {
+            for (const auto& entry : book.page()) {
+                ++filtered;
+                all_craftable = all_craftable && entry.craftable;
+            }
+            if (page + 1 < book.pages()) {
+                const auto [ax, ay] = book.button_position(0);
+                book.mouse_clicked(ax - 11 + 93 + 2, ay - 31 + 137 + 2, 0, false);
+            }
+        }
+        check("the craftable filter keeps exactly the craftable ones",
+              filtered == craftable && all_craftable,
+              std::format("{} shown, {} craftable before", filtered, craftable));
+        book.mouse_clicked(fx - 11 + 110 + 2, fy - 31 + 12 + 2, 0, false);
+    }
+
+    // Back to the stick's page and click it.
+    const auto go_to = [&](int page) {
+        sync();
+        book.tick();
+        to_page(page);
+    };
+    if (stick_page >= 0) {
+        go_to(stick_page);
+        const auto [sx, sy] = book.button_position(stick_button);
+        book.mouse_clicked(sx + 5, sy + 5, 0, false);
+        pump_for(session, standing, 1.0);
+        const auto& inv = session.inventory();
+        check("a click sends place_recipe", placed.size() == 1, std::format("{}", placed.size()));
+        const bool grid = inv.slots[1].count == 1 && items.name(inv.slots[1].id) == "oak_planks" &&
+                          inv.slots[3].count == 1 && items.name(inv.slots[3].id) == "oak_planks";
+        check("the server put the planks in the grid", grid,
+              std::format("{} {} / {} {}", describe(inv.slots[1], items), describe(inv.slots[2], items),
+                          describe(inv.slots[3], items), describe(inv.slots[4], items)));
+        check("and offers four sticks", inv.slots[0].count == 4 && inv.slots[0].id == stick,
+              describe(inv.slots[0], items));
+    }
+    if (table_page >= 0) {
+        sync();
+        go_to(table_page);
+        const auto [tx, ty] = book.button_position(table_button);
+        book.mouse_clicked(tx + 5, ty + 5, 0, false);
+        pump_for(session, standing, 1.0);
+        check("a recipe the inventory cannot make comes back as a ghost", ghosts == 5,
+              std::format("{} ghost slots (4 planks and the result)", ghosts));
+    }
+
+    console(std::format("recipe take {} *", name));
+    console(std::format("clear {}", name));
+    console(std::format("setblock {} {} {} minecraft:air", bx, by - 1, bz));
+    pump_for(session, standing, 0.5);
     session.close();
     std::cout << std::format("{} of {} checks agree with the server\n",
                              steps - static_cast<size_t>(failures), steps);

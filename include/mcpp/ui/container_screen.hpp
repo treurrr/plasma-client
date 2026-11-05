@@ -123,6 +123,7 @@ public:
     };
     std::vector<Shown> page() const;
     int page_index() const { return page_; }
+    size_t ghost_slots() const { return ghosts_.size(); }
     int pages() const { return pages_; }
     // Where page button `i` sits, for clicking it.
     std::pair<int, int> button_position(int i) const;

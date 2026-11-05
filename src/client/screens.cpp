@@ -100,22 +100,9 @@ void screens_bind(Game& game, mcpp::SessionEvents& events) {
                 mcpp::ui::read_recipe_display(display, game.session->tags()));
         }
     };
-    // `ClientPacketListener.handleRecipeBookAdd`: new recipes, some to highlight.
     events.ui.on_recipe_book_add = [&game](const mcpp::proto::Value& added) {
-        auto& book = game.screens.world.recipe_book;
-        const auto* replace = added.field("replace");
-        if (replace != nullptr && replace->as_bool().value_or(false)) book.clear();
-        const auto* entries = added.field("entries");
-        if (entries != nullptr && entries->as_list() != nullptr) {
-            for (const auto& entry : *entries->as_list()) {
-                auto read = mcpp::ui::read_recipe_entry(entry, game.session->registries(),
-                                                        game.session->tags());
-                const int32_t id = read.id;
-                book.add(std::move(read));
-                const auto* flags = entry.field("flags");
-                if (flags != nullptr && (flags->as_int().value_or(0) & 2) != 0) book.add_highlight(id);
-            }
-        }
+        game.screens.world.recipe_book.add_batch(added, game.session->registries(),
+                                                 game.session->tags());
         refresh_recipe_book(game);
     };
     // `ClientPacketListener.handleRecipeBookRemove`: recipes taken away.

@@ -1799,6 +1799,9 @@ int main(int argc, char** argv) {
         if (command == "crafttest") {
             return client::crafttest(std::vector<std::string>(argv + 2, argv + argc));
         }
+        if (command == "booktest") {
+            return client::booktest(std::vector<std::string>(argv + 2, argv + argc));
+        }
         if (command == "screenshot") {
             return client::screenshot(std::vector<std::string>(argv + 2, argv + argc));
         }

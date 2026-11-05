@@ -183,6 +183,21 @@ void ClientRecipeBook::add(RecipeDisplayEntry entry) {
     if (static_cast<double>(known_.size()) > static_cast<double>(buckets_.size()) * 0.75) resize();
 }
 
+// `ClientPacketListener.handleRecipeBookAdd`: a batch of recipes, some to highlight.
+void ClientRecipeBook::add_batch(const proto::Value& added, const Registries& registries,
+                                 const Tags& tags) {
+    const auto* replace = added.field("replace");
+    if (replace != nullptr && replace->as_bool().value_or(false)) clear();
+    const auto* entries = added.field("entries");
+    if (entries == nullptr || entries->as_list() == nullptr) return;
+    for (const auto& entry : *entries->as_list()) {
+        RecipeDisplayEntry read = read_recipe_entry(entry, registries, tags);
+        const int32_t id = read.id;
+        add(std::move(read));
+        if ((int_of(entry.field("flags")) & 2) != 0) add_highlight(id);
+    }
+}
+
 // `ClientRecipeBook.remove`: a recipe leaves the book.
 void ClientRecipeBook::remove(int32_t id) {
     if (known_.erase(id) == 0) return;
