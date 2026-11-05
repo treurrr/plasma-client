@@ -218,6 +218,8 @@ struct SoundArea {
 
 // H: the hud's own state, kept in src/client/hud.cpp.
 struct HudArea;
+// B: digging, cracks and particles, kept in src/client/breaking.cpp.
+struct BreakingArea;
 
 struct Game {
     explicit Game(size_t limit) : chunk_limit(limit), world(table) {}
@@ -248,6 +250,7 @@ struct Game {
     ScreensArea screens;
     SoundArea sound;
     std::shared_ptr<HudArea> hud;
+    std::shared_ptr<BreakingArea> breaking;
 };
 
 // Opens a window on a server and plays until it is closed.

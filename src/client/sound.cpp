@@ -6,6 +6,7 @@
 #include "audio/engine.hpp"
 #include "audio/footsteps.hpp"
 #include "audio/level_events.hpp"
+#include "client/breaking.hpp"
 
 #include "mcpp/assets/object_store.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -138,6 +139,7 @@ void sound_bind(Game& game, mcpp::SessionEvents& events) {
     };
     events.sound.on_level_event = [&game](int32_t type, int32_t x, int32_t y, int32_t z, int32_t data,
                                           bool global) {
+        breaking_level_event(game, type, x, y, z, data);
         auto* sound = runtime(game);
         if (sound == nullptr) return;
         mcpp::audio::LevelEvent event;
