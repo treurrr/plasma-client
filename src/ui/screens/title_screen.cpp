@@ -168,7 +168,7 @@ void TitleScreen::init() {
                                              manager != nullptr ? manager->username : "",
                                              title_random());
     }
-    Component copyright = translatable("title.credits");
+    Component copyright = literal("Not affiliated with Mojang or Microsoft");
     const int copyright_width =
         manager != nullptr && manager->font != nullptr ? manager->font->width(copyright) : 0;
     const int copyright_x = width - copyright_width - 2;
