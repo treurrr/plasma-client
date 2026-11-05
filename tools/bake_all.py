@@ -4,7 +4,8 @@
 Usage: bake_all.py <client.jar> <reports/blocks.json> <protocol> [out-dir]
 
 Out come block geometry, the texture array, the colour maps biome tints are
-looked up in, the sky, items, the gui, the built-in registries and the language.
+looked up in, the sky, items, the gui, the particles a broken block throws,
+the crack textures, the built-in registries and the language.
 All of it is read from the installation the player already owns; none of it is
 committed here or shipped. The tables only the game's code knows (entity sizes
 and the like) come from exporters compiled against the remapped client jar,
@@ -71,6 +72,8 @@ def main(args):
     ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")
     ask_the_game("gen_block_sounds.py", out / f"block_sounds-{protocol}.txt")
     ask_the_game("bake_creative.py", out / f"creative-{protocol}.txt")
+    ask_the_game("bake_particles.py", jar, report, out / f"particles-{protocol}.txt",
+                 out / f"cracks-{protocol}")
     models = out / f"entity_models-{protocol}.txt"
     if ask_the_game("export/export_models.py", models):
         run("bake_entities.py", jar, models, out / f"entities-{protocol}.plen")
