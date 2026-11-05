@@ -36,7 +36,13 @@ notice what they lost. Everything below serves that.
    big network such as CubeCraft: a test server with a strict anticheat (Grim) flags nothing,
    and the first join is made on a spare account.
 4. **The advantage**, below.
-5. **The Plasma profile and mods**, on top of a base that is already exact.
+5. **The Plasma profile and mods**, on top of a base that is already exact. The in-game Plasma
+   menu is rebuilt to the design, not the placeholder it is now: the brand's blue-to-magenta
+   accents (`brand/tokens.css`), icon tabs, search, a live preview on every feature card, and
+   the server-lock state shown on the card itself. The reference pair is
+   `~/plasma-work/refs/plasma-menu-ONTWERP-doel.png` (the target) against
+   `plasma-menu-NU-lelijk.png` (today). Anything a player opens has to look finished, or it
+   makes the whole client look cheap.
 
 ## The advantage
 
