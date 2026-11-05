@@ -1,5 +1,6 @@
 #include "client/game_mode.hpp"
 
+#include "mcpp/jmath.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/proto/components.hpp"
 
@@ -352,7 +353,7 @@ bool MultiPlayerGameMode::continue_destroy_block(const int32_t pos[3], int32_t f
 
 // `MultiPlayerGameMode.getDestroyStage`: the crack, 0 to 9, or none.
 int32_t MultiPlayerGameMode::destroy_stage() const {
-    return destroy_progress_ > 0.0f ? static_cast<int32_t>(destroy_progress_ * 10.0f) : -1;
+    return destroy_progress_ > 0.0f ? mcpp::jmath::to_int(destroy_progress_ * 10.0f) : -1;
 }
 
 } // namespace client
