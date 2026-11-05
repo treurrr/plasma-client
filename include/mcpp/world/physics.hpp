@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace mcpp::world {
@@ -178,5 +179,21 @@ void input_vector(double ix, double iy, double iz, float speed, float yaw, doubl
 
 // Whether the body fits in a pose where it stands.
 bool fits(const Body& body, Pose pose, const World& world);
+
+// Boxes moved through the blocks by nobody in particular: particles. One
+// mover per tick, so the blocks it reads are the tick's.
+class BoxMover {
+public:
+    explicit BoxMover(const World& world);
+    ~BoxMover();
+    BoxMover(const BoxMover&) = delete;
+    BoxMover& operator=(const BoxMover&) = delete;
+    // How far of the move the box gets, written back into the move.
+    void collide(const Aabb& box, double move[3]);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 } // namespace mcpp::world

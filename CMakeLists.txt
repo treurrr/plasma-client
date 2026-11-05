@@ -242,3 +242,7 @@ mcpp_test(title)
 if(glfw3_FOUND)
     target_sources(plasma-client PRIVATE src/client/title.cpp)
 endif()
+
+# B: breaking blocks and particles.
+target_sources(mcpp_net PRIVATE src/world/particles.cpp src/world/destruction.cpp)
+target_sources(plasma-client PRIVATE src/client/game_mode.cpp)

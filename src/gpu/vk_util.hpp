@@ -41,7 +41,7 @@ void record_image_update(VkCommandBuffer command, VkImage image, VkBuffer source
 
 VkSampler sampler(VkDevice device, VkFilter filter, VkSamplerAddressMode address);
 
-enum class Blend : uint8_t { None, Translucent, Overlay };
+enum class Blend : uint8_t { None, Translucent, Overlay, Multiply };
 
 struct PipelineDesc {
     std::span<const uint32_t> vertex;
@@ -58,6 +58,10 @@ struct PipelineDesc {
     Blend blend = Blend::None;
     VkFormat colour_format = VK_FORMAT_R8G8B8A8_UNORM;
     VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
+    VkVertexInputRate input_rate = VK_VERTEX_INPUT_RATE_VERTEX;
+    // Pulls the depth towards the viewer; zero leaves it off.
+    float depth_bias_constant = 0.0f;
+    float depth_bias_slope = 0.0f;
 };
 VkPipeline pipeline(const Device& device, const PipelineDesc& desc);
 

@@ -227,7 +227,7 @@ VkPipeline pipeline(const Device& device, const PipelineDesc& desc) {
 
     VkVertexInputBindingDescription binding{};
     binding.stride = desc.stride;
-    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    binding.inputRate = desc.input_rate;
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     if (desc.stride > 0) {
@@ -250,6 +250,11 @@ VkPipeline pipeline(const Device& device, const PipelineDesc& desc) {
     raster.cullMode = desc.cull;
     raster.frontFace = desc.front;
     raster.lineWidth = 1.0f;
+    if (desc.depth_bias_constant != 0.0f || desc.depth_bias_slope != 0.0f) {
+        raster.depthBiasEnable = VK_TRUE;
+        raster.depthBiasConstantFactor = desc.depth_bias_constant;
+        raster.depthBiasSlopeFactor = desc.depth_bias_slope;
+    }
     VkPipelineMultisampleStateCreateInfo multisample{};
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -268,7 +273,12 @@ VkPipeline pipeline(const Device& device, const PipelineDesc& desc) {
         attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
         attachment.colorBlendOp = VK_BLEND_OP_ADD;
         attachment.alphaBlendOp = VK_BLEND_OP_ADD;
-        if (desc.blend == Blend::Translucent) {
+        if (desc.blend == Blend::Multiply) {
+            attachment.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+            attachment.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+            attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        } else if (desc.blend == Blend::Translucent) {
             attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
             attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;

@@ -1510,4 +1510,25 @@ void tick(Body& b, const Keys& keys, const Stats& stats, const World& world) {
     }
 }
 
+struct BoxMover::Impl {
+    explicit Impl(const World& world) : level(world) {}
+    Level level;
+    std::vector<Placed> shapes;
+};
+
+BoxMover::BoxMover(const World& world) : impl_(std::make_unique<Impl>(world)) {}
+BoxMover::~BoxMover() = default;
+
+// `Entity.collideBoundingBox`, `Entity.collectColliders`: a box moved against the blocks, nobody asking.
+void BoxMover::collide(const Aabb& box, double move[3]) {
+    const Context nobody{false, -std::numeric_limits<double>::max(), 0.0, false};
+    const Box b{{box.min[0], box.min[1], box.min[2]}, {box.max[0], box.max[1], box.max[2]}};
+    const Vec m{move[0], move[1], move[2]};
+    collect(impl_->level, nobody, b.expand_towards(m.x, m.y, m.z), impl_->shapes);
+    const Vec out = collide_with_shapes(impl_->level, m, b, impl_->shapes);
+    move[0] = out.x;
+    move[1] = out.y;
+    move[2] = out.z;
+}
+
 } // namespace mcpp::world
