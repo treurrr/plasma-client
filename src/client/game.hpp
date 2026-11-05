@@ -203,6 +203,11 @@ struct ScreensArea {
     mcpp::ui::ContainerMenu menu;
     mcpp::ui::World world;
     std::chrono::steady_clock::time_point opened = std::chrono::steady_clock::now();
+    // A: what the title and pause screens need.
+    std::optional<mcpp::ui::Font> font;
+    bool server_links = false;
+    bool leave = false;
+    std::chrono::steady_clock::time_point last_drawn = std::chrono::steady_clock::now();
 };
 
 struct SoundRuntime;
@@ -247,6 +252,8 @@ struct Game {
 
 // Opens a window on a server and plays until it is closed.
 int play(const std::string& target, size_t chunk_limit);
+// Opens the window on the title screen; true when Multiplayer was pressed.
+bool title_screen(Game& game);
 
 // Each area's hooks, in the order play.cpp calls them:
 //   bind   before connecting: the area hangs its handlers on the session's events

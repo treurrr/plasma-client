@@ -46,8 +46,8 @@ int32_t java_string_hash(std::string_view utf8);
 class LogoRenderer {
 public:
     static constexpr int kDefaultHeightOffset = 30;
-    LogoRenderer(bool keep_logo_through_fade, bool easter_egg)
-        : show_easter_egg(easter_egg), keep_logo_through_fade(keep_logo_through_fade) {}
+    LogoRenderer(bool keep_through_fade, bool easter_egg)
+        : show_easter_egg(easter_egg), keep_logo_through_fade(keep_through_fade) {}
     // One in ten thousand logos reads "Minceraft".
     static bool roll_easter_egg(jmath::LegacyRandom& random);
     void render_logo(GuiGraphics& gfx, int width, float alpha,

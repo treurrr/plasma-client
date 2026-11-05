@@ -4,6 +4,7 @@
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/ui/container_screen.hpp"
 #include "mcpp/ui/menu.hpp"
+#include "mcpp/ui/pause_screen.hpp"
 #include "mcpp/ui/screens.hpp"
 
 #include <GLFW/glfw3.h>
@@ -54,6 +55,9 @@ void screens_bind(Game& game, mcpp::SessionEvents& events) {
         screens.chat.emplace_back(line);
         if (screens.chat.size() > 64) screens.chat.erase(screens.chat.begin());
     };
+    events.ui.on_server_links = [&game](const auto& links) {
+        game.screens.server_links = !links.empty();
+    };
     events.ui.on_container_close = [&game](int32_t) {
         if (dynamic_cast<mcpp::ui::AbstractContainerScreen*>(game.screens.manager.current())) {
             game.screens.manager.close();
@@ -78,7 +82,11 @@ void screens_start(Game& game) {
     screens.keybinds.load(screens.options);
     screens.items.load(mcpp::ui::ItemTable::default_path(mcpp::protocol::kTargetProtocol));
 
+    screens.font.emplace(*screens.quads, &screens.lang);
     auto& manager = screens.manager;
+    manager.font = &*screens.font;
+    manager.username = game.options.username;
+    manager.host.disconnect = [&game] { game.screens.leave = true; };
     manager.lang = &screens.lang;
     manager.options = &screens.options;
     manager.keybinds = &screens.keybinds;
@@ -134,6 +142,7 @@ void screens_input(Game& game) {
     sync_menu(game);
 
     const double now = std::chrono::duration<double>(game.now.time_since_epoch()).count();
+    bool escape = false;
     for (const auto& event : window.take_events()) {
         using Type = mcpp::gpu::InputEvent::Type;
         const double gx = event.x * pixels / scale;
@@ -146,7 +155,19 @@ void screens_input(Game& game) {
                 manager.control_down = event.action != GLFW_RELEASE;
             }
         }
+        if (event.type == Type::Key && event.key == GLFW_KEY_ESCAPE) escape = true;
         if (manager.current() == nullptr) {
+            // `Minecraft.pauseGame`: Escape over the world opens the game menu.
+            if (event.type == Type::Key && event.action == GLFW_PRESS &&
+                event.key == GLFW_KEY_ESCAPE && !window.typing()) {
+                if (screens.menu_open) {
+                    screens.menu_open = false;
+                } else {
+                    open_screen(game, std::make_shared<mcpp::ui::PauseScreen>(
+                                          true, screens.server_links));
+                }
+                continue;
+            }
             if (event.type == Type::Key && event.action == GLFW_PRESS && !window.typing() &&
                 !screens.menu_open && bound(game, "key.inventory", event.key)) {
                 if (game.session->vitals().game_mode == 1) {
@@ -192,7 +213,8 @@ void screens_input(Game& game) {
         // The Plasma feature menu exists only in the Plasma profile.
         const bool plasma = mcpp::features::Registry::instance().profile() ==
                             mcpp::features::Profile::Plasma;
-        if (input.toggle_menu && plasma) screens.menu_open = !screens.menu_open;
+        // Escape belongs to the game menu; only M toggles the feature menu.
+        if (input.toggle_menu && plasma && !escape) screens.menu_open = !screens.menu_open;
         if (input.quit) screens.menu_open = false;
         if (input.start_typing && !screens.menu_open) window.begin_typing();
     }
@@ -302,7 +324,25 @@ void screens_draw(Game& game) {
         gfx.key_name = screens.manager.key_name;
         gfx.seconds =
             std::chrono::duration<double>(game.now - screens.opened).count();
+        gfx.millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+        gfx.realtime_delta_ticks =
+            std::chrono::duration<float, std::milli>(game.now - screens.last_drawn).count() /
+            50.0f;
+        gfx.pixel_width = static_cast<int>(window.width());
+        gfx.pixel_height = static_cast<int>(window.height());
         screen->render_with_tooltip(gfx, screens.manager.mouse_x, screens.manager.mouse_y);
+    }
+    screens.last_drawn = game.now;
+    if (quads.blur_marked()) {
+        game.renderer->set_backdrop(
+            [&quads](VkCommandBuffer command, uint32_t w, uint32_t h) {
+                quads.record_under_blur(command, w, h);
+            },
+            screens.options.get_int("menuBackgroundBlurriness"));
+    } else {
+        game.renderer->set_backdrop({}, 0);
     }
 
     if (screens.menu_open) {

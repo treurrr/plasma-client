@@ -43,6 +43,10 @@ int play(const std::string& target, size_t chunk_limit) {
     sound_bind(game, events);
     hud_bind(game, events);
 
+    // The title screen first; its Multiplayer button goes on to the server
+    // named on the command line.
+    if (!title_screen(game)) return 0;
+
     auto& session = game.session.emplace(game.options, events);
     session.connect();
     while (!game.world.enough.load()) {
@@ -60,19 +64,8 @@ int play(const std::string& target, size_t chunk_limit) {
 
     world_load(game);
 
-    mcpp::gpu::Device::Options gpu_options;
-    gpu_options.instance_extensions = mcpp::gpu::Window::required_instance_extensions();
-    gpu_options.swapchain = true;
-    game.device.create(gpu_options);
-
-    if (!game.atlas.open(mcpp::world::Atlas::default_path(mcpp::protocol::kTargetProtocol))) {
-        std::cerr << "no atlas; bake one with tools/bake_atlas.py\n";
-        return 1;
-    }
-
-    auto& window = game.window.emplace(game.device, 1600, 900, "Plasma Client");
-    auto& renderer =
-        game.renderer.emplace(game.device, window.width(), window.height(), game.atlas);
+    auto& window = *game.window;
+    auto& renderer = *game.renderer;
 
     world_start(game);
     std::cout << std::format("- health {:.1f}, food {}, level {}\n", session.vitals().health,
@@ -88,7 +81,7 @@ int play(const std::string& target, size_t chunk_limit) {
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
                  "  left control to sprint, f to fly, t to chat, m for the feature menu,\n"
-                 "  escape to leave\n";
+                 "  escape for the game menu\n";
 
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
@@ -105,7 +98,7 @@ int play(const std::string& target, size_t chunk_limit) {
     // what the world was; then the server's packets land; then everything
     // that acts on the world as it now is; then the game tick's position;
     // then the picture.
-    while (window.open() && !g_stop.load()) {
+    while (window.open() && !g_stop.load() && !game.screens.leave) {
         game.input = window.poll();
         screens_input(game);
         player_input(game);

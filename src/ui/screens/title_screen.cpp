@@ -217,8 +217,7 @@ void TitleScreen::render(GuiGraphics& gfx, double mx, double my) {
             fading = false;
         } else {
             t = std::clamp(t, 0.0f, 1.0f);
-            const float f = (t - 0.5f) / (1.0f - 0.5f);
-            alpha = f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : 0.0f + f * (1.0f - 0.0f);
+            alpha = std::clamp((t - 0.5f) / (1.0f - 0.5f), 0.0f, 1.0f);
         }
         fade_widgets(alpha);
     }

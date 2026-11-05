@@ -239,3 +239,6 @@ add_dependencies(mcpp_net mcpp_blur_shaders)
 target_sources(mcpp_net PRIVATE src/gpu/blur.cpp src/ui/panorama.cpp
                                 src/ui/screens/title_screen.cpp src/ui/screens/pause_screen.cpp)
 mcpp_test(title)
+if(glfw3_FOUND)
+    target_sources(plasma-client PRIVATE src/client/title.cpp)
+endif()
