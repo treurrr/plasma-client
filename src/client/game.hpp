@@ -34,6 +34,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -323,6 +324,18 @@ void player_move(Game& game);
 bool player_send(Game& game);
 // Screens: records the interface over the finished world.
 void screens_record(Game& game, VkCommandBuffer command, uint32_t width, uint32_t height);
+// World: where a chunk is, for the sky of a tool that keeps its own world.
+using ChunkAt = std::function<const mcpp::world::Chunk*(int32_t, int32_t)>;
+// World: the two halves of the client's own sky, for a tool that runs a world
+// of its own: the attributes at the camera, which the client reads once a
+// tick, and the inputs a frame between two ticks is drawn with.
+mcpp::world::AttributeValues world_attributes_at(const mcpp::Session& session, int64_t day_time,
+                                                 const double eye[3], const ChunkAt& chunk_at,
+                                                 const mcpp::Weather& weather);
+mcpp::world::AtmosphereInputs world_atmosphere_inputs(const mcpp::Session& session,
+                                                      const mcpp::gpu::Camera& camera,
+                                                      int32_t render_distance,
+                                                      const mcpp::Weather& weather);
 // World: the sky, fog and lightmap a worldshot of a recorded world is drawn
 // with. Options after an '@' in the view: t=<day time>, rain=, thunder=, rd=.
 mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
@@ -332,7 +345,7 @@ mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
 // World: the renderer's benchmark: fixed flights over a recorded world at
 // each render distance, reported the way docs/METHOD.md asks.
 int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
-                const std::vector<int32_t>& distances);
+                const std::vector<int32_t>& distances, int64_t day_time);
 // World: a block the player changed, drawn before the server confirms it.
 void world_predict_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t state);
 

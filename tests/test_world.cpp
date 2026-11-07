@@ -1,11 +1,13 @@
 #include "mcpp/json.hpp"
 #include "mcpp/session.hpp"
 #include "mcpp/world/atlas.hpp"
+#include "mcpp/world/atmosphere.hpp"
 #include "mcpp/world/environment.hpp"
 #include "mcpp/world/light.hpp"
 #include "mcpp/world/render_table.hpp"
 #include "mcpp/world/shapes.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -362,6 +364,52 @@ void test_relight() {
     check(shaft.sky_light_at(8, 7, 8) == 11, "three blocks under it, three more");
 }
 
+// A frame's lightmap is kept between ticks, so every table a frame is drawn
+// with has to be the table its own factors ask for, over a whole day and
+// whatever the flicker, the gamma and the night vision do in between.
+void test_lightmap() {
+    Environment environment;
+    if (!load_datapack(environment)) return;
+    check(environment.select("minecraft:overworld"), "the overworld is there for the lightmap");
+    const std::vector<BiomeWeight> plains{{1, 1.0}};
+    AttributeProbe probe;
+    probe.reset(environment.evaluate(0, plains, 1));
+    int frames = 0;
+    for (int64_t tick = 0; tick < 24000; tick += 37) {
+        probe.tick(environment.evaluate(tick, plains, 1, {tick % 7 == 0 ? 1.0f : 0.0f, 0.0f}));
+        for (const float partial : {0.0f, 0.3f, 0.6f, 0.95f}) {
+            AtmosphereInputs in;
+            in.block_flicker = static_cast<float>(tick % 11) * 0.003f;
+            in.gamma = static_cast<float>(tick % 5) * 0.25f;
+            in.night_vision = tick % 13 == 0 ? 0.7f : 0.0f;
+            in.darken_world = tick % 17 == 0 ? 0.4f : 0.0f;
+            in.ambient_light = tick % 19 == 0 ? 0.1f : 0.0f;
+            in.eye[1] = 70.0 + static_cast<double>(tick % 23);
+            in.forward[0] = static_cast<float>(tick % 3) - 1.0f;
+            const auto air = atmosphere(probe, partial, in);
+            for (int32_t sky = 0; sky < 16; ++sky) {
+                for (int32_t block = 0; block < 16; ++block) {
+                    float rgb[3];
+                    lightmap_texel(air, block, sky, rgb);
+                    const uint8_t* texel = &air.lightmap[static_cast<size_t>(sky * 16 + block) * 4];
+                    for (int i = 0; i < 3; ++i) {
+                        const auto want = static_cast<uint8_t>(
+                            std::lround(std::clamp(rgb[i], 0.0f, 1.0f) * 255.0f));
+                        if (texel[i] != want) {
+                            check(false, std::format("lightmap texel {},{} channel {} at tick {} "
+                                                     "partial {}: {} not {}",
+                                                     block, sky, i, tick, partial, texel[i], want));
+                            return;
+                        }
+                    }
+                }
+            }
+            ++frames;
+        }
+    }
+    check(frames == 2596, std::format("every frame's lightmap matches its factors ({})", frames));
+}
+
 } // namespace
 
 int main() {
@@ -370,6 +418,7 @@ int main() {
     test_datapack();
     test_recording();
     test_relight();
+    test_lightmap();
     if (failures == 0) {
         std::cout << std::format("all world tests passed ({} skipped)\n", skipped);
         return 0;
