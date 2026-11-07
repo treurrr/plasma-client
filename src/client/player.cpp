@@ -152,6 +152,39 @@ void interact(Game& game) {
     if (player.right_click_delay > 0) --player.right_click_delay;
     if (player.miss_time > 0) --player.miss_time;
 
+    // `KeyMapping.releaseAll`: a screen takes the keyboard, and the presses
+    // nobody has taken yet go with it.
+    if (!free) player.drop_clicks = player.swap_clicks = player.pick_clicks = 0;
+
+    // `Minecraft.handleKeybinds`: swapping hands, dropping and picking the
+    // block being looked at are presses, each taken once, and a spectator
+    // does none of them. Control is read now rather than when the key went
+    // down, the way `hasControlDown` is read inside the tick.
+    if (free && session.vitals().game_mode != 3) {
+        while (player.swap_clicks > 0) {
+            --player.swap_clicks;
+            session.send_player_action(6);
+        }
+        // `LocalPlayer.drop`: control throws the whole stack, and the arm
+        // swings only when there was something to throw.
+        while (player.drop_clicks > 0) {
+            --player.drop_clicks;
+            const auto& inventory = session.inventory();
+            const int32_t slot = std::clamp(inventory.held, 0, 8);
+            const bool had = inventory.hotbar(static_cast<size_t>(slot)).count > 0;
+            session.send_player_action(input.control ? 3 : 4);
+            if (had) session.send_swing();
+        }
+        // `Minecraft.pickBlock`: only a block under the crosshair, and control
+        // asks for the block entity's data with it.
+        while (player.pick_clicks > 0) {
+            --player.pick_clicks;
+            if (!player.aiming) continue;
+            session.send_pick_item_from_block(player.aimed[0], player.aimed[1], player.aimed[2],
+                                              input.control);
+        }
+    }
+
     // `Minecraft.handleKeybinds`: a press starts an attack, then using, then
     // holding attack carries a dig on.
     const bool pressed = attack && !player.attack_was;
@@ -264,7 +297,15 @@ void player_start(Game& game) {
     hand_start(game);
 }
 
-void player_input(Game&) {}
+// `KeyMapping.click`: a press is counted the moment it happens and taken by a
+// later tick, because a frame can fall between two ticks or carry two of them.
+void player_input(Game& game) {
+    auto& player = game.player;
+    const auto& input = game.input;
+    if (input.drop) ++player.drop_clicks;
+    if (input.swap_offhand) ++player.swap_clicks;
+    player.pick_clicks += input.pick_item_clicks;
+}
 
 void player_move(Game&) {}
 

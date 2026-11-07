@@ -82,6 +82,14 @@ Two things about the harness are worth knowing before trusting a frame.
   ticks two frames in three carry no tick at all, so reading the edge inside
   the tick would have thrown most taps away.
 
+  **The second run that would show this working has not happened.** The
+  machine ran out of memory before the client could be built again - the
+  watchdog in `plasma-work/memguard.sh` kills whatever is in `plasma.slice`
+  while the machine has under 1500 MB free, and it has been under that for
+  hours - so the `drop` phase has not yet been looked at with the fix in. What
+  it should say is `held 36x60 offhand <ladder>x1` and three item entities on
+  the floor.
+
 ## Seen, and still open
 
 ### 1. The inventory screen's player panel is a black rectangle

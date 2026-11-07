@@ -201,6 +201,12 @@ struct PlayerArea {
     float destroy_progress = 0.0f;
     float destroy_ticks = 0.0f;
     int destroy_delay = 0;
+    // M: `KeyMapping.consumeClick`: presses waiting for a tick to take them, so
+    // a tap on a frame that carries no tick is not lost and one that carries
+    // two does not count twice.
+    int drop_clicks = 0;
+    int swap_clicks = 0;
+    int pick_clicks = 0;
     int miss_time = 0;
     int right_click_delay = 0;
     bool attack_was = false;

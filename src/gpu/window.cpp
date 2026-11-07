@@ -446,7 +446,8 @@ FrameInput Window::poll() {
     const bool drop_now = bound("key.drop", GLFW_KEY_Q);
     input.drop = drop_now && !drop_key_down_;
     // `Minecraft.handleKeybinds`: control and drop throws the whole stack.
-    input.drop_stack = input.drop && (down(GLFW_KEY_LEFT_CONTROL) || down(GLFW_KEY_RIGHT_CONTROL));
+    input.control = down(GLFW_KEY_LEFT_CONTROL) || down(GLFW_KEY_RIGHT_CONTROL);
+    input.drop_stack = input.drop && input.control;
     drop_key_down_ = drop_now;
 
     const bool swap_now = bound("key.swapOffhand", GLFW_KEY_F);

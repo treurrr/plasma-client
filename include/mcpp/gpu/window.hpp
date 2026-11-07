@@ -61,6 +61,8 @@ struct FrameInput {
     bool swap_offhand = false;
     // Drop with the control key held throws the whole stack.
     bool drop_stack = false;
+    // `Minecraft.hasControlDown`: drop and pick-block both read it.
+    bool control = false;
     // The sprint binding alone; `sprint` also counts a double-tapped forward.
     bool sprint_key = false;
     bool jump = false;

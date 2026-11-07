@@ -169,6 +169,11 @@ int livetest(const std::vector<std::string>& args) {
         window.send_button(button, GLFW_PRESS);
         tapped_buttons.push_back(button);
     };
+    // A screen nobody closed swallows every phase after it, so a close phase
+    // presses Escape only when there is something to close.
+    const auto close_screen = [&] {
+        if (game.screens.manager.current() != nullptr) tap(GLFW_KEY_ESCAPE);
+    };
 
     // Where the player stands for the whole session, and the site built around
     // it. Everything is in one small box far from spawn, and taken down again.
@@ -187,12 +192,15 @@ int livetest(const std::vector<std::string>& args) {
 
     phase({"site", 40, [&] {
                say(std::format("forceload add {} {} {} {}", sx - 20, sz - 20, sx + 20, sz + 20));
-               say(std::format("fill {} {} {} {} {} {} minecraft:air", sx - 11, sy, sz - 11,
-                               sx + 11, sy + 9, sz + 11));
+               say(std::format("fill {} {} {} {} {} {} minecraft:air", sx - 18, sy, sz - 11,
+                               sx + 18, sy + 9, sz + 11));
                // Six deep, so a pool can be carved out of it and still hold.
-               say(std::format("fill {} {} {} {} {} {} minecraft:stone", sx - 11, sy - 6, sz - 11,
-                               sx + 11, sy - 1, sz + 11));
+               say(std::format("fill {} {} {} {} {} {} minecraft:stone", sx - 18, sy - 6, sz - 11,
+                               sx + 18, sy - 1, sz + 11));
                say(std::format("gamemode survival {}", username));
+               // The server's time is not ours to change, so the player gets
+               // his own eyes instead: without this the site is unreadable.
+               say(std::format("effect give {} minecraft:night_vision 3600 0 true", username));
                say(std::format("tp {} {}.5 {} {}.5 180 0", username, sx, sy, sz));
            }, {}, {}, {30}, false});
 
@@ -258,21 +266,32 @@ int livetest(const std::vector<std::string>& args) {
                                       "minecraft:conduit[waterlogged=false]",
                                       "minecraft:enchanting_table",
                                       "minecraft:trial_spawner"};
-               int32_t at = sx - 8;
+               int32_t at = sx - 17;
                for (const char* prop : props) {
-                   say(std::format("setblock {} {} {} {}", at, sy, sz + 6, prop));
-                   ++at;
+                   say(std::format("setblock {} {} {} {}", at, sy, sz + 8, prop));
+                   at += 2;
                }
                say(std::format("give {} minecraft:golden_apple 4", username));
            }, {}, {}, {50}, true});
 
-    // The row of block-entity props, from in front and from both sides. A hole
-    // in the row is a block the client draws nothing for.
-    phase({"props", 70,
-           [&] { say(std::format("tp {} {}.5 {} {} 0 15", username, sx - 1, sy, sz + 2)); }, {}, {},
-           {40, 65}, true});
+    // The row of block-entity props, one prop at a time, straight at it from
+    // four blocks away. A frame with nothing but floor in it is a block the
+    // client draws nothing for.
+    {
+        Phase walk_props{"props", 18 * 10, {}, {}, {}, {}, false};
+        walk_props.each = [&, sx, sy, sz](int frame) {
+            if (frame % 10 != 0) return;
+            const int32_t at = sx - 17 + (frame / 10) * 2;
+            say(std::format("tp {} {}.5 {} {}.5 0 8", username, at, sy, sz + 4));
+        };
+        for (int i = 0; i < 18; ++i) walk_props.shots.push_back(i * 10 + 8);
+        phase(std::move(walk_props));
+    }
 
-    phase({"stand", 30, {}, {}, {}, {20}, true});
+    // Away from the row again, with eleven clear blocks to walk into.
+    phase({"stand", 30,
+           [&] { say(std::format("tp {} {}.5 {} {}.5 180 5", username, sx, sy, sz + 2)); }, {}, {},
+           {20}, true});
 
     phase({"walk", 60, [&] { hold(GLFW_KEY_W, true); }, {}, [&] { hold(GLFW_KEY_W, false); },
            {20, 50}, false});
@@ -390,11 +409,11 @@ int livetest(const std::vector<std::string>& args) {
            },
            {}, {15, 60, 120}, false});
 
-    phase({"craft-close", 20, [&] { tap(GLFW_KEY_ESCAPE); }, {}, {}, {15}, false});
+    phase({"craft-close", 20, close_screen, {}, {}, {15}, false});
 
     phase({"chest", 150,
            [&] {
-               say(std::format("tp {} {}.5 {} {} 180 35", username, sx + 1, sy, sz - 2));
+               say(std::format("tp {} {}.5 {} {} 180 45", username, sx + 1, sy, sz - 2));
            },
            [&](int frame) {
                if (frame == 20) window.send_button(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS);
@@ -403,7 +422,7 @@ int livetest(const std::vector<std::string>& args) {
            },
            {}, {15, 60, 120}, true});
 
-    phase({"chest-close", 20, [&] { tap(GLFW_KEY_ESCAPE); }, {}, {}, {15}, false});
+    phase({"chest-close", 20, close_screen, {}, {}, {15}, false});
 
     phase({"mobs", 80,
            [&] { say(std::format("tp {} {}.5 {} {}.5 0 5", username, sx, sy, sz - 2)); }, {}, {},
@@ -570,8 +589,8 @@ int livetest(const std::vector<std::string>& args) {
     hud_stop(game);
     session.close();
 
-    say(std::format("kill @e[type=!player,x={},y={},z={},distance=..25]", sx, sy, sz));
-    say(std::format("fill {} {} {} {} {} {} minecraft:air", sx - 11, sy - 6, sz - 11, sx + 11,
+    say(std::format("kill @e[type=!player,x={},y={},z={},distance=..40]", sx, sy, sz));
+    say(std::format("fill {} {} {} {} {} {} minecraft:air", sx - 18, sy - 6, sz - 11, sx + 18,
                     sy + 9, sz + 11));
     say(std::format("forceload remove {} {} {} {}", sx - 20, sz - 20, sx + 20, sz + 20));
 
