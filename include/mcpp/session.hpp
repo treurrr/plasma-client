@@ -116,6 +116,26 @@ struct WorldBorder {
     int32_t warning_seconds = 15;
 };
 
+// level_particles as it came: where, how many and how far they scatter, the
+// type as the server's particle_type registry names it, and the fields that
+// type's `ParticleOptions` adds. An item's stack is kept whole because what
+// it looks like is the client's own question.
+struct LevelParticles {
+    std::string type;
+    bool override_limiter = false;
+    bool always_show = false;
+    double x = 0.0, y = 0.0, z = 0.0;
+    float x_dist = 0.0f, y_dist = 0.0f, z_dist = 0.0f;
+    float max_speed = 0.0f;
+    int32_t count = 0;
+    int32_t block_state = -1;
+    uint32_t colour = 0xFFFFFFFFu;
+    uint32_t to_colour = 0xFFFFFFFFu;
+    float scale = 1.0f;
+    float power = 1.0f;
+    int32_t item = -1;   // the item's registry id, -1 when the type carries none
+};
+
 // Everything the server says about another thing in the world, as of the last
 // packet about it. Angles are in degrees; velocity is in blocks per tick,
 // which is the unit the game moves in.
@@ -338,6 +358,9 @@ struct SessionEvents {
         // The world border: centre, diameter now, diameter it is moving to and
         // in how many milliseconds, and the two warning settings.
         std::function<void(const WorldBorder&)> on_border;
+        // J: level_particles, read whole: which type, what it carries and the
+        // cloud it asks for.
+        std::function<void(const LevelParticles&)> on_particles;
     } world;
 
     struct Entities {

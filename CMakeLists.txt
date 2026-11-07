@@ -223,6 +223,7 @@ mcpp_test(hud)
 mcpp_test(entities)
 mcpp_test(sound)
 mcpp_test(breaking)
+mcpp_test(particles)
 add_subdirectory(src/audio)
 
 # The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Bake every texture the block table references into a layered array texture.
 
-Usage: bake_atlas.py <client.jar> <blocks.plbk> <out.plat>
+Usage: bake_atlas.py <client.jar> <blocks.plbk> <out.plat> [particle_sprites.txt]
 
 Texture ids come from the block table and become array layers, so the two files
 stay aligned by construction and a lookup needs no arithmetic at all. A layer
 per texture also means mip levels are built per texture: a grid atlas bleeds
 between neighbouring tiles as soon as minification filters across their shared
 edge, which no amount of padding fully fixes.
+
+The particle sprites, when their file is given, are appended behind the block
+textures in the order it lists them, so a particle samples the same array as a
+block does and its layer is the block texture count plus its index there. They
+count as textures, not as further animation frames, so each keeps the identity
+frame the renderer fills in by default.
 
 The levels themselves are the game's: `MipmapGenerator.generateMipLevels` with
 the mipmapLevels option at its default of 4, so a block in the distance shows
@@ -327,6 +333,21 @@ def upscale(level, factor):
     return np.repeat(np.repeat(level, factor, axis=0), factor, axis=1)
 
 
+def to_power_of_two(strip):
+    """A sprite whose side is not a power of two - several of the particle
+    textures are 3x3 or 5x5 - resampled up to the next one, nearest texel. A
+    layer is a power of two either way, and the shader samples across the whole
+    of it, so every uv still lands on the texel the game would show."""
+    native = strip.shape[1]
+    if native & (native - 1) == 0:
+        return strip
+    side = 1 << (native - 1).bit_length()
+    frames = frame_count(strip)
+    rows = np.minimum((np.arange(side * frames) * native) // side, native * frames - 1)
+    columns = np.minimum((np.arange(side) * native) // side, native - 1)
+    return strip[rows][:, columns]
+
+
 def chain_for(archive, name, strip, tile_size, levels_in_atlas):
     """One frame per level per layer. A sprite smaller than the layer is
     repeated up to its size, which leaves every level below unchanged, so each
@@ -347,12 +368,22 @@ def chain_for(archive, name, strip, tile_size, levels_in_atlas):
     return per_level, frames
 
 
+def read_sprite_textures(path):
+    """The T lines bake_particle_sprites.py wrote: the textures the particle
+    sprite sets index into, in the order they are appended here."""
+    return [line.split()[1] for line in Path(path).read_text().splitlines()
+            if line.startswith("T ")]
+
+
 def main(args):
-    if len(args) != 3:
+    if not 3 <= len(args) <= 4:
         sys.exit(__doc__)
-    jar, table_path, out_path = args
+    jar, table_path, out_path = args[0], args[1], args[2]
 
     protocol, names = read_texture_names(table_path)
+    blocks = len(names)
+    if len(args) == 4:
+        names = names + read_sprite_textures(args[3])
     archive = zipfile.ZipFile(jar)
 
     strips = []
@@ -363,6 +394,7 @@ def main(args):
         if strip is None:
             missing += 1
         else:
+            strip = to_power_of_two(strip)
             tile_size = max(tile_size, strip.shape[1])
         strips.append(strip)
 
@@ -414,6 +446,8 @@ def main(args):
     print(f"{out_path}: {(len(header) + len(pixels)) / 1e6:.2f} MB")
     print(f"  {len(layers[0])} layers of {tile_size}px, {levels_in_atlas} mip levels, "
           f"{len(animations)} animated")
+    if len(names) > blocks:
+        print(f"  {blocks} block textures, {len(names) - blocks} particle sprite layers behind them")
     if missing:
         print(f"  {missing} textures not found; those got the missing-texture tile")
 

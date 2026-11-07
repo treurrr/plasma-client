@@ -76,6 +76,9 @@ public:
     int32_t protocol() const { return protocol_; }
     size_t state_count() const { return state_count_; }
     size_t quad_count() const { return quad_count_; }
+    // How many textures the table names, which is how many atlas layers the
+    // blocks take before anything else is appended behind them.
+    size_t texture_count() const { return texture_count_; }
     size_t mapped_bytes() const { return size_; }
 
     std::span<const BakedQuad> quads(int32_t state) const;

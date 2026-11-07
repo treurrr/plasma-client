@@ -31,6 +31,30 @@ std::string motion(const w::Particle& p) {
                        p.on_ground ? 1 : 0, p.alive() ? 1 : 0);
 }
 
+// What the oracle's `born` prints: the fields a particle is made with, its
+// sprite given as which of its set was picked.
+std::string born(const w::Particle& p, const w::ParticleSprites& sprites) {
+    // Which of the set the sprite is: the sets share layers, so a set's
+    // layers are not one run and the index has to be looked for.
+    int32_t index = -1;
+    for (size_t at = 0; at < sprites.size(p.sprite_set); ++at) {
+        if (sprites.layer(p.sprite_set, at) == p.texture) {
+            index = static_cast<int32_t>(at);
+            break;
+        }
+    }
+    const std::string sprite =
+        p.layer == w::QuadLayer::Terrain ? std::string("-") : std::to_string(index);
+    const bool quad = p.kind != w::ParticleKind::ExplosionSeed;
+    return std::format("{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}", d(p.x), d(p.y), d(p.z), d(p.xd),
+                       d(p.yd), d(p.zd), p.lifetime,
+                       quad ? f(p.size_at(0.0f)) : std::string("-"),
+                       quad ? std::format("{}:{}:{}:{}", f(p.r), f(p.g), f(p.b), f(p.alpha))
+                            : std::string("-"),
+                       quad ? sprite : std::string("-"), f(p.gravity), f(p.friction), d(p.bb.min[0]),
+                       d(p.bb.max[1]));
+}
+
 } // namespace
 
 int main() {
@@ -52,9 +76,15 @@ int main() {
         if (x == 102 && y >= 64 && y <= 66 && z >= 196 && z <= 204) return stone;
         return 0;
     };
+    w::ParticleSprites sprites;
+    if (!sprites.open(w::ParticleSprites::default_path(protocol),
+                      static_cast<uint32_t>(blocks.texture_count()))) {
+        std::cerr << "no particle sprites; run tools/bake_particle_sprites.py\n";
+        return 1;
+    }
     const w::ParticleLevel level{block_at, shapes, table, [](int32_t, int32_t, int32_t) { return 0; },
                                  [](w::ParticleTable::Colour, int32_t, int32_t, int32_t) { return 0xFFFFFFu; },
-                                 -64};
+                                 -64, &sprites};
 
     std::vector<std::string> lines;
     for (std::string line; std::getline(std::cin, line);) {
@@ -74,6 +104,7 @@ int main() {
         return s;
     };
     std::vector<w::Particle> made;
+    std::vector<std::string> requests;
     const auto take = [&](size_t from, size_t count) {
         seeds.clear();
         for (size_t j = from; j < lines.size() && seeds.size() < count; ++j) {
@@ -110,6 +141,42 @@ int main() {
             collect();
             placed = 0;
             std::cout << made.size() << '\n';
+        } else if (line.starts_with("make ")) {
+            engine.clear();
+            placed = 0;
+            std::stringstream parts(input(line));
+            std::string name;
+            std::string engine_seed;
+            std::getline(parts, name, ',');
+            std::getline(parts, engine_seed, ',');
+            engine.level_random = mcpp::jmath::LegacyRandom(std::stoll(engine_seed));
+            engine.spell_random = mcpp::jmath::LegacyRandom(std::stoll(engine_seed));
+            take(i + 1, std::stoul(value(line)));
+            const auto type = w::particle_type_from_name("minecraft:" + name);
+            w::ParticleOptions options;
+            if (name == "dust") {
+                options.colour = 0xFF4C1A99u;
+                options.scale = 1.5f;
+            } else if (name == "dust_color_transition") {
+                options.colour = 0xFF4C1A99u;
+                options.to_colour = 0xFF19B2CCu;
+                options.scale = 1.5f;
+            } else if (name == "entity_effect") {
+                options.colour = 0x80CC3366u;
+            } else if (name == "effect") {
+                options.colour = 0xFF2266CCu;
+                options.power = 1.3f;
+            } else if (name == "instant_effect") {
+                options.colour = 0xFFCC2266u;
+                options.power = 0.7f;
+            }
+            engine.spawn(level, type, options, 100.5, 65.3, 200.5, 0.2, 0.3, -0.1);
+            collect();
+            std::cout << made.size() << '\n';
+        } else if (line.starts_with("born ")) {
+            const auto name = input(line);
+            const size_t n = std::stoul(name.substr(name.rfind('#') + 1));
+            std::cout << (n < made.size() ? born(made[n], sprites) : std::string("missing")) << '\n';
         } else if (line.starts_with("seed ")) {
             std::cout << value(line) << '\n';
         } else if (line.starts_with("spawn ")) {
@@ -124,8 +191,25 @@ int main() {
                 continue;
             }
             w::BoxMover mover(w::World{block_at, shapes, nullptr, -64});
-            made[n].tick(mover);
+            requests.clear();
+            made[n].tick(mover, level, [&](const w::Particle::Spawn& s) {
+                const auto full = w::particle_type_name(static_cast<w::ParticleType>(s.type));
+                requests.push_back(std::format("{}:{}:{}:{}:{}:{}:{}",
+                                               full.substr(full.find(':') + 1), d(s.x), d(s.y), d(s.z),
+                                               d(s.xd), d(s.yd), d(s.zd)));
+            });
             std::cout << motion(made[n]) << '\n';
+        } else if (line.starts_with("emit ")) {
+            if (requests.empty()) {
+                std::cout << "-\n";
+                continue;
+            }
+            std::string joined;
+            for (const auto& request : requests) {
+                if (!joined.empty()) joined += '|';
+                joined += request;
+            }
+            std::cout << joined << '\n';
         }
     }
     return 0;

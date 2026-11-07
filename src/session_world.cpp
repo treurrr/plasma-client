@@ -1,5 +1,6 @@
 #include "mcpp/session.hpp"
 
+#include "mcpp/proto/components.hpp"
 #include "mcpp/world/chunk.hpp"
 
 #include <algorithm>
@@ -22,6 +23,62 @@ void unpack_position(int64_t packed, int32_t& x, int32_t& y, int32_t& z) {
 }
 
 constexpr float kChunksPerTick = 32.0f;    // the server throttles to what we claim
+
+// The `ParticleOptions` behind a type's id. A type the game gives no codec of
+// its own writes nothing, so most of them land in the default case.
+void read_particle_options(ByteBuffer& in, LevelParticles& particles, int32_t protocol) {
+    const std::string_view type = particles.type;
+    if (type == "minecraft:block" || type == "minecraft:block_marker" ||
+        type == "minecraft:falling_dust" || type == "minecraft:dust_pillar" ||
+        type == "minecraft:block_crumble") {
+        // `BlockParticleOption`: the block state's id.
+        particles.block_state = in.read_varint();
+    } else if (type == "minecraft:item") {
+        // `ItemParticleOption`: a whole stack, of which we keep the item.
+        const ItemStack stack = proto::read_item_stack(in, protocol);
+        particles.item = stack.count > 0 ? stack.id : -1;
+    } else if (type == "minecraft:dust") {
+        // `DustParticleOptions`: the colour and how big the mote is.
+        particles.colour = static_cast<uint32_t>(in.read_i32());
+        particles.scale = in.read_f32();
+    } else if (type == "minecraft:dust_color_transition") {
+        // `DustColorTransitionOptions`: the colour it starts and ends on.
+        particles.colour = static_cast<uint32_t>(in.read_i32());
+        particles.to_colour = static_cast<uint32_t>(in.read_i32());
+        particles.scale = in.read_f32();
+    } else if (type == "minecraft:entity_effect" || type == "minecraft:tinted_leaves" ||
+               type == "minecraft:flash") {
+        // `ColorParticleOption`: one colour, alpha and all.
+        particles.colour = static_cast<uint32_t>(in.read_i32());
+    } else if (type == "minecraft:effect" || type == "minecraft:instant_effect") {
+        // `SpellParticleOption`: a colour and how hard it is thrown.
+        particles.colour = static_cast<uint32_t>(in.read_i32());
+        particles.power = in.read_f32();
+    } else if (type == "minecraft:dragon_breath" || type == "minecraft:sculk_charge") {
+        // `PowerParticleOption`, `SculkChargeParticleOptions`: one float.
+        particles.power = in.read_f32();
+    } else if (type == "minecraft:shriek") {
+        // `ShriekParticleOption`: how many ticks before it shows.
+        in.read_varint();
+    } else if (type == "minecraft:trail") {
+        // `TrailParticleOption`: where it flies to, its colour and for how long.
+        in.read_f64();
+        in.read_f64();
+        in.read_f64();
+        particles.colour = static_cast<uint32_t>(in.read_i32());
+        in.read_varint();
+    } else if (type == "minecraft:vibration") {
+        // `VibrationParticleOption`: a `PositionSource`, which is a block
+        // position or an entity and an eye offset, and when it arrives.
+        if (in.read_varint() == 0) {
+            in.read_i64();
+        } else {
+            in.read_varint();
+            in.read_f32();
+        }
+        in.read_varint();
+    }
+}
 
 } // namespace
 
@@ -275,6 +332,29 @@ bool Session::handle_world(PacketConnection::Packet& packet) {
         default: break;
         }
         if (events_.world.on_game_event) events_.world.on_game_event(event, value);
+        return true;
+    }
+    if (packet.id == cb.level_particles) {
+        // `ClientboundLevelParticlesPacket`: the cloud, then the type's own
+        // `ParticleOptions` behind its registry id.
+        LevelParticles particles;
+        particles.override_limiter = in.read_bool();
+        particles.always_show = in.read_bool();
+        particles.x = in.read_f64();
+        particles.y = in.read_f64();
+        particles.z = in.read_f64();
+        particles.x_dist = in.read_f32();
+        particles.y_dist = in.read_f32();
+        particles.z_dist = in.read_f32();
+        particles.max_speed = in.read_f32();
+        particles.count = in.read_i32();
+        const int32_t type = in.read_varint();
+        if (const auto* entry = data_.registries.at("minecraft:particle_type",
+                                                    static_cast<size_t>(std::max(0, type)))) {
+            particles.type = entry->name;
+        }
+        read_particle_options(in, particles, options_.protocol);
+        if (events_.world.on_particles) events_.world.on_particles(particles);
         return true;
     }
     if (packet.id == cb.set_time) {
