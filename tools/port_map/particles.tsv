@@ -1,0 +1,104 @@
+# J: the particle types. One switch in src/world/particles.cpp makes every
+# type a player meets and one more ticks it, so a class's constructor, tick,
+# size and light each fold into the arm of a switch rather than into a type of
+# their own. The classes with no arm yet are absent, with what they are for.
+#
+# Class.method	verdict	our symbol (file::fn)	note
+
+# The shape of a particle, which every class shares.
+Particle.setParticleSpeed	skip		nothing of ours sets a particle's speed after it is made
+Particle.getParticleLimit	absent		the per-type limit a firework and an item pickup are capped by
+SingleQuadParticle.extractRotatedQuad	inline	src/world/particles.cpp::ParticleEngine::extract	the quad is built straight into the instance row
+SingleQuadParticle.setSpriteFromAge	port	src/world/particles.cpp::Particle::sprite_from_age
+SingleQuadParticle.FacingCameraMode	skip		every type a player meets faces the camera on all three axes
+Particle.toString	skip		a crash report's line about a particle
+SingleQuadParticle.toString	skip		a crash report's line about a particle
+
+# The engine. Ours keeps one fixed pool instead of a group per render type,
+# because every type we draw is a single quad.
+ParticleEngine.createParticle	port	src/world/particles.cpp::ParticleEngine::spawn
+ParticleEngine.createParticleGroup	skip		one pool: every type we draw is a single quad
+ParticleEngine.setLevel	skip		the level is handed to each call instead of held
+ParticleEngine.updateCount	absent		the per-type limit a firework and an item pickup are capped by
+ParticleEngine.hasSpaceInParticleLimit	absent		the per-type limit a firework and an item pickup are capped by
+ParticleEngine.createTrackingEmitter	absent		an emitter that follows an entity: the elder guardian's and a firework's
+ParticleGroup.tickParticle	inline	src/world/particles.cpp::ParticleEngine::Group::tick
+ParticleGroup.isEmpty	skip		the pool's size says so
+ParticleGroup.size	skip		the pool's size says so
+NoRenderParticle.NoRenderParticle	inline	src/world/particles.cpp::provide	the explosion emitter, the one no-render type we make
+ParticleResources.registerProviders	port	src/world/particles.cpp::provide
+ParticleResources.MutableSpriteSet.get	port	include/mcpp/world/particles.hpp::ParticleSprites::at_age
+ParticleResources.MutableSpriteSet.first	port	include/mcpp/world/particles.hpp::ParticleSprites::first
+ParticleResources.MutableSpriteSet.rebind	port	src/world/particles.cpp::ParticleSprites::open
+ParticleDescription.fromJson	skip		the sprite lists are baked by tools/bake_particle_sprites.py, not read at every reload
+ParticleDescription.getTextures	skip		the sprite lists are baked by tools/bake_particle_sprites.py
+
+# The types we make: each class folds into its arm of the two switches.
+BaseAshSmokeParticle	inline	src/world/particles.cpp::ash_smoke
+SmokeParticle	inline	src/world/particles.cpp::provide
+LargeSmokeParticle	inline	src/world/particles.cpp::provide
+WhiteSmokeParticle	inline	src/world/particles.cpp::provide
+AshParticle	inline	src/world/particles.cpp::provide
+WhiteAshParticle	inline	src/world/particles.cpp::provide
+DustPlumeParticle	inline	src/world/particles.cpp::provide
+CampfireSmokeParticle	inline	src/world/particles.cpp::provide
+RisingParticle	inline	src/world/particles.cpp::rising
+FlameParticle	inline	src/world/particles.cpp::rising
+ExplodeParticle	inline	src/world/particles.cpp::provide
+HugeExplosionParticle	inline	src/world/particles.cpp::provide
+HugeExplosionSeedParticle	inline	src/world/particles.cpp::provide
+CritParticle	inline	src/world/particles.cpp::crit
+BreakingItemParticle	inline	src/world/particles.cpp::provide	its sprite is resolved by the caller, not here
+SpellParticle	inline	src/world/particles.cpp::spell
+SimpleAnimatedParticle	inline	src/world/particles.cpp::provide	the totem, the one animated type we make
+TotemParticle	inline	src/world/particles.cpp::provide
+WaterDropParticle	inline	src/world/particles.cpp::water_drop
+SplashParticle	inline	src/world/particles.cpp::provide
+BubbleParticle	inline	src/world/particles.cpp::provide
+BubbleColumnUpParticle	inline	src/world/particles.cpp::provide
+BubblePopParticle	inline	src/world/particles.cpp::provide
+NoteParticle	inline	src/world/particles.cpp::provide
+HeartParticle	inline	src/world/particles.cpp::provide
+PortalParticle	inline	src/world/particles.cpp::provide
+ReversePortalParticle	inline	src/world/particles.cpp::provide
+DustParticleBase	inline	src/world/particles.cpp::provide
+DustParticle	inline	src/world/particles.cpp::provide
+DustColorTransitionParticle	inline	src/world/particles.cpp::provide
+DripParticle	inline	src/world/particles.cpp::drip
+
+# The types nothing of ours makes yet, and what each one is for.
+AttackSweepParticle	absent		the arc a sweeping hit draws
+BlockMarker	absent		the marker the debug screen puts on a block
+DragonBreathParticle	absent		the dragon's breath and the cloud it leaves
+ElderGuardianParticle	absent		the elder guardian's curse over the whole screen
+ElderGuardianParticleGroup	absent		the elder guardian's curse over the whole screen
+EndRodParticle	absent		the end rod's and the shulker bullet's trail
+FallingDustParticle	absent		the dust falling out from under a floating block
+FallingLeavesParticle	absent		cherry, pale oak and tinted leaves coming off a tree
+FireflyParticle	absent		the fireflies over a swamp
+FireworkParticles	absent		a firework's stars, flash and spark
+FlyStraightTowardsParticle	absent		the ominous spawning drawn towards a trial spawner
+FlyTowardsPositionParticle	absent		an enchanting table's glyphs, a nautilus shell, a vault's link
+GlowParticle	absent		a glow squid's ink, waxing and scraping copper, an electric spark
+GustParticle	absent		the breeze's gust and its small one
+GustSeedParticle	absent		the emitter behind a breeze's gust
+ItemPickupParticle	absent		the item flying into the player who picked it up
+ItemPickupParticleGroup	absent		the item flying into the player who picked it up
+LavaParticle	absent		the lava pop over a lava surface
+PlayerCloudParticle	absent		the cloud a player leaves and a panda's sneeze
+SculkChargeParticle	absent		the sculk spreading and its pop
+SculkChargePopParticle	absent		the sculk spreading and its pop
+ShriekParticle	absent		the shrieker's call
+SnowflakeParticle	absent		the snowflakes powder snow throws
+SonicBoomParticle	absent		the warden's sonic boom
+SoulParticle	absent		soul sand's souls and the sculk soul
+SpitParticle	absent		a llama's spit
+SquidInkParticle	absent		a squid's ink
+SuspendedParticle	absent		the motes under water, in a warped forest and under a spore blossom
+SuspendedTownParticle	absent		a villager's happiness, a composter's fill, an egg cracking
+TrackingEmitter	absent		an emitter that follows an entity
+TrailParticle	absent		the trail a mace's wind burst and an ominous item leave
+TrialSpawnerDetectionParticle	absent		the trial spawner noticing a player
+VibrationSignalParticle	absent		the vibration a sculk sensor follows
+WakeParticle	absent		the wake a fishing bobber leaves
+WaterCurrentDownParticle	absent		the pull of a downward bubble column
