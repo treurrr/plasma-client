@@ -2,6 +2,7 @@
 
 #include "client/breaking.hpp"
 #include "client/sound.hpp"
+#include "mcpp/gpu/weather.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/jmath.hpp"
 #include "mcpp/world/biomes.hpp"
@@ -279,6 +280,13 @@ void world_start(Game& game) {
     }
     if (!biome_tints(game).colour.empty()) {
         renderer.set_biome_colours(game.world.biome_tints.colour);
+    }
+    if (std::filesystem::exists(sky_path)) {
+        game.world.weather_renderer =
+            std::make_shared<mcpp::gpu::WeatherRenderer>(game.device, renderer, sky_path);
+        if (game.world.weather_renderer->ready()) {
+            renderer.set_weather(game.world.weather_renderer.get());
+        }
     }
     game.world.render.open(
         mcpp::world::RenderTable::default_path(mcpp::protocol::kTargetProtocol));
@@ -595,7 +603,14 @@ void world_tick(Game& game) {
     advance_weather(game);
 }
 
-void world_draw(Game&) {}
+// The columns extracted this tick, turned into corners about the camera the
+// frame is drawn from.
+void world_draw(Game& game) {
+    auto& area = game.world;
+    if (!area.weather_renderer) return;
+    const double camera[3] = {game.camera.eye[0], game.camera.eye[1], game.camera.eye[2]};
+    area.weather_renderer->set_frame(area.weather, camera);
+}
 
 void world_stop(Game& game) {
     game.world.streaming.store(false);
@@ -628,6 +643,68 @@ void world_predict_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t st
 } // namespace client
 
 namespace client {
+
+mcpp::world::WeatherState world_shot_weather(const mcpp::Session& session,
+                                             const std::vector<mcpp::world::Chunk>& chunks,
+                                             const mcpp::gpu::Camera& camera,
+                                             std::string_view options) {
+    float rain = session.weather().rain_level;
+    int32_t radius = 10;
+    bool snow = false;
+    int32_t ticks = 0;
+    while (!options.empty()) {
+        const size_t comma = options.find(',');
+        const std::string_view option = options.substr(0, comma);
+        options = comma == std::string_view::npos ? std::string_view{} : options.substr(comma + 1);
+        const size_t equals = option.find('=');
+        if (equals == std::string_view::npos) continue;
+        const std::string key(option.substr(0, equals));
+        const std::string value(option.substr(equals + 1));
+        if (key == "rain") rain = std::stof(value);
+        if (key == "snow") snow = std::stof(value) > 0.0f;
+        if (key == "wr") radius = std::stoi(value);
+        if (key == "wt") ticks = std::stoi(value);
+    }
+    mcpp::world::WeatherState state;
+    if (rain <= 0.0f) return state;
+
+    const auto find_chunk = [&](int32_t cx, int32_t cz) -> const mcpp::world::Chunk* {
+        for (const auto& chunk : chunks) {
+            if (chunk.x == cx && chunk.z == cz) return &chunk;
+        }
+        return nullptr;
+    };
+    const int32_t sea_level = session.dimension().sea_level;
+    mcpp::world::WeatherLevel level;
+    level.min_y = session.dimension().min_y;
+    level.height = [&](int32_t x, int32_t z) {
+        const auto* chunk = find_chunk(x >> 4, z >> 4);
+        return chunk == nullptr ? level.min_y : chunk->motion_blocking_at(x & 15, z & 15);
+    };
+    level.precipitation = [&](int32_t x, int32_t y, int32_t z) {
+        const auto* chunk = find_chunk(x >> 4, z >> 4);
+        if (chunk == nullptr) return mcpp::world::Precipitation::None;
+        if (snow) return mcpp::world::Precipitation::Snow;
+        const int32_t rows = static_cast<int32_t>(chunk->sections.size()) * 16;
+        const int32_t row = std::clamp(chunk->index_of(y), 0, rows - 1);
+        const auto* biome = session.biomes().at(
+            static_cast<size_t>(std::max(chunk->biome_at(x & 15, row, z & 15), 0)));
+        if (biome == nullptr) return mcpp::world::Precipitation::None;
+        return mcpp::world::precipitation_at(biome->has_precipitation, biome->temperature, y, sea_level);
+    };
+    level.light = [&](int32_t x, int32_t y, int32_t z) {
+        const auto* chunk = find_chunk(x >> 4, z >> 4);
+        if (chunk == nullptr) return 0;
+        const int32_t index = chunk->index_of(y);
+        const int32_t rows = static_cast<int32_t>(chunk->sections.size()) * 16;
+        if (index < 0 || index >= rows) return mcpp::world::light_pack(0, 15);
+        return mcpp::world::light_pack(chunk->block_light_at(x & 15, index, z & 15),
+                                       chunk->sky_light_at(x & 15, index, z & 15));
+    };
+    const double eye[3] = {camera.eye[0], camera.eye[1], camera.eye[2]};
+    mcpp::world::extract_weather(level, ticks, 0.0f, eye, rain, std::clamp(radius, 2, 15), state);
+    return state;
+}
 
 mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
                                              const std::vector<mcpp::world::Chunk>& chunks,

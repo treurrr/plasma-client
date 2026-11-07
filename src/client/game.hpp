@@ -45,6 +45,10 @@
 #include <utility>
 #include <vector>
 
+namespace mcpp::gpu {
+class WeatherRenderer;
+}
+
 namespace client {
 
 using ChunkKey = std::pair<int32_t, int32_t>;
@@ -116,6 +120,8 @@ struct WorldArea {
     mcpp::world::WeatherState weather;
     int32_t rain_sound_time = 0;
     int32_t weather_ticks = 0;
+    // Held by pointer so the gpu header stays out of every client file.
+    std::shared_ptr<mcpp::gpu::WeatherRenderer> weather_renderer;
 };
 
 struct EntitiesArea {
@@ -334,6 +340,14 @@ bool player_send(Game& game);
 void screens_record(Game& game, VkCommandBuffer command, uint32_t width, uint32_t height);
 // World: the sky, fog and lightmap a worldshot of a recorded world is drawn
 // with. Options after an '@' in the view: t=<day time>, rain=, thunder=, rd=.
+// J: the weather a shot is taken under, from the same options: rain= turns it
+// on, snow= makes every column snow whatever the biome says, which no chunk
+// around an arbitrary shot is guaranteed to do.
+mcpp::world::WeatherState world_shot_weather(const mcpp::Session& session,
+                                             const std::vector<mcpp::world::Chunk>& chunks,
+                                             const mcpp::gpu::Camera& camera,
+                                             std::string_view options);
+
 mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
                                              const std::vector<mcpp::world::Chunk>& chunks,
                                              const mcpp::gpu::Camera& camera,

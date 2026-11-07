@@ -277,6 +277,14 @@ target_sources(plasma-client PRIVATE src/client/game_mode.cpp src/client/digtest
 if(glfw3_FOUND)
     target_sources(plasma-client PRIVATE src/client/breaking.cpp)
 endif()
+# J: rain and snow.
+set(MCPP_SHADER_HEADERS)
+mcpp_shader(weather.vert WeatherVert)
+mcpp_shader(weather.frag WeatherFrag)
+add_custom_target(mcpp_shaders_weather DEPENDS ${MCPP_SHADER_HEADERS})
+add_dependencies(mcpp_net mcpp_shaders_weather)
+target_sources(mcpp_net PRIVATE src/gpu/weather.cpp)
+
 mcpp_probe(particle_probe)
 mcpp_probe(dig_probe)
 target_sources(dig_probe PRIVATE src/client/player_rules.cpp src/client/game_mode.cpp)
