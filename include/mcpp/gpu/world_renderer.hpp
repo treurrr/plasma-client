@@ -95,8 +95,12 @@ public:
     void set_sky(Sky* sky) { sky_ = sky; }
     // The block to draw a box around, or nothing when the crosshair is on sky.
     void set_outline(const Outline* outline) { outline_ = outline; }
-    void set_outlined_block(const int32_t block[3], bool present) {
+    // `translucent` is whether the aimed block's chunk render type sorts on
+    // upload, which decides which side of the translucent pass its outline is
+    // drawn on.
+    void set_outlined_block(const int32_t block[3], bool present, bool translucent = false) {
         outlined_present_ = present;
+        outlined_translucent_ = translucent;
         if (present) {
             outlined_[0] = block[0];
             outlined_[1] = block[1];
@@ -169,6 +173,8 @@ private:
     void draw_geometry(VkCommandBuffer command, struct PushConstants& push, const Camera& camera);
     void draw_in_world(VkCommandBuffer command, const struct PushConstants& push,
                        const Camera& camera);
+    void draw_outline(VkCommandBuffer command, const struct PushConstants& push,
+                      bool translucent_pass);
     void destroy_mesh();
 
     Device& device_;
@@ -176,6 +182,7 @@ private:
     const Outline* outline_ = nullptr;
     int32_t outlined_[3]{};
     bool outlined_present_ = false;
+    bool outlined_translucent_ = false;
     world::Atmosphere atmosphere_ = [] {
         world::Atmosphere noon;
         noon.fog_colour[0] = 0.7529f;

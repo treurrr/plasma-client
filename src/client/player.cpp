@@ -105,7 +105,13 @@ void aim_outline(Game& game) {
     }
     const uint16_t shape = shapes().state(state).outline;
     const bool shown = state != 0 && !shapes().empty(shape) && outline.has_value();
-    game.renderer->set_outlined_block(player.aimed, shown);
+    // `ItemBlockRenderTypes.getChunkRenderType`, `ChunkSectionLayer.sortOnUpload`:
+    // the two layers that sort on upload are the ones whose outline is drawn
+    // after the translucent pass instead of before it.
+    const mcpp::world::RenderLayer layer = game.world.render.at(state).layer;
+    game.renderer->set_outlined_block(player.aimed, shown,
+                                      layer == mcpp::world::RenderLayer::Translucent ||
+                                          layer == mcpp::world::RenderLayer::Tripwire);
     if (!shown) return;
     const mcpp::gpu::Outline::Range* range = outline->find(shape);
     mcpp::gpu::Outline::Range added;
