@@ -594,8 +594,9 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
         return 1;
     }
 
-    const uint32_t shot_width = view == "macro" ? 1920u : 1600u;
-    const uint32_t shot_height = view == "macro" ? 1080u : 900u;
+    const bool full_hd = view == "macro" || view.starts_with("at:");
+    const uint32_t shot_width = full_hd ? 1920u : 1600u;
+    const uint32_t shot_height = full_hd ? 1080u : 900u;
     mcpp::gpu::WorldRenderer renderer(device, shot_width, shot_height, atlas);
     renderer.upload(combined);
 
@@ -1438,7 +1439,20 @@ int do_showcase(const std::string& out_path, const std::vector<int32_t>& samples
     renderer.upload(mesh);
 
     mcpp::gpu::Camera camera{};
-    if (view == "front") {
+    if (view.starts_with("at:")) {
+        float values[6]{};
+        size_t at_comma = 3;
+        for (float& value : values) {
+            const size_t comma = view.find(',', at_comma);
+            value = std::stof(view.substr(at_comma, comma - at_comma));
+            at_comma = comma == std::string::npos ? view.size() : comma + 1;
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            camera.eye[axis] = values[axis];
+            camera.target[axis] = values[3 + axis];
+        }
+        camera.fov_degrees = 70.0f;
+    } else if (view == "front") {
         // Straight at the south face of the first sample, nothing else in frame.
         camera.eye[0] = 2.5f;
         camera.eye[1] = 2.5f;
@@ -1871,7 +1885,7 @@ int main(int argc, char** argv) {
             for (int i = 3; i < argc; ++i) {
                 const std::string argument = argv[i];
                 if (argument == "front" || argument == "top" || argument == "angled" ||
-                    argument == "east") {
+                    argument == "east" || argument.starts_with("at:")) {
                     view = argument;
                 } else {
                     samples.push_back(std::stoi(argument));

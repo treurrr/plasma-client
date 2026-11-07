@@ -16,14 +16,17 @@ namespace {
 constexpr float kBlock = static_cast<float>(kUnitsPerBlock);
 constexpr int kSection = 16;
 
-// One block of padding on every side: ambient occlusion reads diagonals, so the
-// inner loop needs a ring of neighbours. With it the loop never tests a bound
-// or crosses into another chunk again.
-constexpr int kPadded = kSection + 2;
+// Two blocks of padding on every side: ambient occlusion reads diagonals, and
+// the test for whether a corner's diagonal can be seen at all reaches two
+// blocks out along the face's own direction. With it the loop never tests a
+// bound or crosses into another chunk again.
+constexpr int kPad = 2;
+constexpr int kPadded = kSection + 2 * kPad;
 constexpr size_t kPaddedCells = kPadded * kPadded * kPadded;
 
 constexpr size_t padded_index(int x, int y, int z) {
-    return static_cast<size_t>((y + 1) * kPadded * kPadded + (z + 1) * kPadded + (x + 1));
+    return static_cast<size_t>((y + kPad) * kPadded * kPadded + (z + kPad) * kPadded +
+                               (x + kPad));
 }
 
 struct Offset {
@@ -50,12 +53,81 @@ constexpr float kCornerUv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
 // The two axes that vary across each face; the third is the face's own normal.
 constexpr int kFaceAxes[6][2] = {{0, 2}, {0, 2}, {0, 1}, {0, 1}, {1, 2}, {1, 2}};
 
-// Minecraft's smooth lighting: a corner is darkest when both edge neighbours
-// are solid, and then the diagonal no longer matters because it cannot be seen.
-int corner_shadow(bool side_a, bool side_b, bool diagonal) {
-    if (side_a && side_b) return 0;
-    return 3 - (static_cast<int>(side_a) + static_cast<int>(side_b) +
-                static_cast<int>(diagonal));
+// `ClientLevel.getShade`: how dark a face is for pointing the way it does.
+constexpr float kFaceShade[6] = {0.5f, 1.0f, 0.8f, 0.8f, 0.6f, 0.6f};
+
+// `ModelBlockRenderer.AdjacencyInfo.AdjacencyInfo`: the four neighbours in
+// the plane of each face, in the order the corner blending expects them.
+constexpr int kAdjacent[6][4] = {
+    {4, 5, 2, 3},   // down:  west, east, north, south
+    {5, 4, 2, 3},   // up
+    {1, 0, 5, 4},   // north: up, down, east, west
+    {4, 5, 0, 1},   // south
+    {1, 0, 2, 3},   // west
+    {0, 1, 2, 3},   // east
+};
+
+// `ModelBlockRenderer.SizeInfo.SizeInfo`: where each extent of the quad sits
+// in the shape array, the second six being one minus the first six.
+enum : int { kSizeDown, kSizeUp, kSizeNorth, kSizeSouth, kSizeWest, kSizeEast };
+constexpr int kSizeCount = 12;
+
+// `ModelBlockRenderer.AdjacencyInfo.AdjacencyInfo`: for each face, for each of
+// the four blended corners, the four pairs of extents whose product weights
+// that corner into this vertex.
+constexpr int kCornerWeights[6][4][8] = {
+    {{10, 3, 10, 9, 4, 9, 4, 3}, {10, 2, 10, 8, 4, 8, 4, 2},
+     {11, 2, 11, 8, 5, 8, 5, 2}, {11, 3, 11, 9, 5, 9, 5, 3}},   // down
+    {{5, 3, 5, 9, 11, 9, 11, 3}, {5, 2, 5, 8, 11, 8, 11, 2},
+     {4, 2, 4, 8, 10, 8, 10, 2}, {4, 3, 4, 9, 10, 9, 10, 3}},   // up
+    {{1, 10, 1, 4, 7, 4, 7, 10}, {1, 11, 1, 5, 7, 5, 7, 11},
+     {0, 11, 0, 5, 6, 5, 6, 11}, {0, 10, 0, 4, 6, 4, 6, 10}},   // north
+    {{1, 10, 7, 10, 7, 4, 1, 4}, {0, 10, 6, 10, 6, 4, 0, 4},
+     {0, 11, 6, 11, 6, 5, 0, 5}, {1, 11, 7, 11, 7, 5, 1, 5}},   // south
+    {{1, 3, 1, 9, 7, 9, 7, 3}, {1, 2, 1, 8, 7, 8, 7, 2},
+     {0, 2, 0, 8, 6, 8, 6, 2}, {0, 3, 0, 9, 6, 9, 6, 3}},       // west
+    {{6, 3, 6, 9, 0, 9, 0, 3}, {6, 2, 6, 8, 0, 8, 0, 2},
+     {7, 2, 7, 8, 1, 8, 1, 2}, {7, 3, 7, 9, 1, 9, 1, 3}},       // east
+};
+
+// `ModelBlockRenderer.AmbientVertexRemap.AmbientVertexRemap`, read backwards:
+// which of the four blended corners a quad corner is, by the side it lies on
+// along the face's two axes.
+constexpr int kCornerOrder[6][4] = {
+    {1, 0, 2, 3},   // down
+    {2, 3, 1, 0},   // up
+    {3, 0, 2, 1},   // north
+    {1, 0, 2, 3},   // south
+    {2, 3, 1, 0},   // west
+    {1, 0, 2, 3},   // east
+};
+
+// `LightTexture.pack`: block light in bits 4..7, sky light in bits 20..23.
+constexpr uint32_t pack_light(uint32_t block, uint32_t sky) {
+    return (block << 4) | (sky << 20);
+}
+constexpr uint32_t kFullBright = pack_light(15, 15);
+
+// `ModelBlockRenderer.AmbientOcclusionRenderStorage.blend`: four packed lights
+// averaged, where a corner that is dark because it is inside a block takes the
+// light of the face itself instead.
+constexpr uint32_t blend_light(uint32_t a, uint32_t b, uint32_t c, uint32_t own) {
+    if (a == 0) a = own;
+    if (b == 0) b = own;
+    if (c == 0) c = own;
+    return ((a + b + c + own) >> 2) & 0x00FF00FFu;
+}
+
+// The same four, weighted, for a face that does not span its whole side.
+inline uint32_t blend_light(const uint32_t light[4], const float weight[4]) {
+    const auto channel = [&](int shift) {
+        float total = 0.0f;
+        for (int i = 0; i < 4; ++i) {
+            total += static_cast<float>((light[i] >> shift) & 0xFFu) * weight[i];
+        }
+        return static_cast<uint32_t>(static_cast<int>(total)) & 0xFFu;
+    };
+    return (channel(16) << 16) | channel(0);
 }
 
 // A quarter turn about the block centre, in the same order the assets use.
@@ -444,11 +516,18 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                                        const BlockTable& table, const Neighbours& neighbours) {
     std::vector<SectionMesh> meshes;
     const auto section_count = static_cast<int32_t>(blocks.section_count());
+    const RenderTable& render = render_table();
 
     std::vector<int32_t> padded_state(kPaddedCells);
     std::vector<uint8_t> padded_solid(kPaddedCells);
     std::vector<uint8_t> padded_light(kPaddedCells);
     std::vector<uint16_t> padded_biome(kPaddedCells);
+    // What ambient occlusion and smooth lighting read, once per cell instead
+    // of once per corner of every quad that touches it.
+    std::vector<uint32_t> padded_packed(kPaddedCells);
+    std::vector<float> padded_shade(kPaddedCells);
+    std::vector<uint8_t> padded_open(kPaddedCells);
+    std::vector<uint8_t> padded_full(kPaddedCells);
 
     const auto state_at = [&](int32_t x, int32_t y, int32_t z) -> int32_t {
         const bool past_x = x < 0 || x > 15;
@@ -504,16 +583,33 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
     for (int32_t section = 0; section < section_count; ++section) {
         if (chunk.sections[static_cast<size_t>(section)].non_air_count == 0) continue;
 
-        // Fill the padded cube once: 5832 reads here instead of 27 per block.
-        for (int32_t py = -1; py <= kSection; ++py) {
-            for (int32_t pz = -1; pz <= kSection; ++pz) {
-                for (int32_t px = -1; px <= kSection; ++px) {
+        // Fill the padded cube once, instead of 27 reads per block.
+        for (int32_t py = -kPad; py < kSection + kPad; ++py) {
+            for (int32_t pz = -kPad; pz < kSection + kPad; ++pz) {
+                for (int32_t px = -kPad; px < kSection + kPad; ++px) {
                     const int32_t state = state_at(px, section * kSection + py, pz);
                     const auto cell = padded_index(px, py, pz);
                     padded_state[cell] = state;
                     padded_solid[cell] = state >= 0 && table.occludes(state);
-                    padded_light[cell] = light_at(px, section * kSection + py, pz);
+                    const uint8_t nibbles = light_at(px, section * kSection + py, pz);
+                    padded_light[cell] = nibbles;
                     padded_biome[cell] = biome_at(px, section * kSection + py, pz);
+
+                    // `LevelRenderer.getLightColor`: a block that renders
+                    // emissive is full bright, and one that glows lifts the
+                    // block light it stands in to its own emission.
+                    const RenderInfo& info = render.at(state);
+                    uint32_t packed = pack_light(nibbles >> 4, nibbles & 0x0Fu);
+                    if (info.has(RenderInfo::kEmissive)) {
+                        packed = kFullBright;
+                    } else if ((nibbles >> 4) < info.emission) {
+                        packed = pack_light(info.emission, nibbles & 0x0Fu);
+                    }
+                    padded_packed[cell] = packed;
+                    padded_shade[cell] = info.shade_brightness;
+                    padded_open[cell] =
+                        !info.has(RenderInfo::kViewBlocking) || info.light_block == 0;
+                    padded_full[cell] = info.has(RenderInfo::kSolidRender);
                 }
             }
         }
@@ -546,8 +642,11 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                                 vertex.uv[0] = static_cast<uint16_t>(std::clamp(corners[i].u, 0.0f, 1.0f) * 65535.0f + 0.5f);
                                 vertex.uv[1] = static_cast<uint16_t>(std::clamp(corners[i].v, 0.0f, 1.0f) * 65535.0f + 0.5f);
                                 vertex.texture = static_cast<uint16_t>(texture);
-                                vertex.packed = static_cast<uint16_t>(face | (water ? 3 << 3 : 0) | (3 << 6));
-                                vertex.light = static_cast<uint16_t>(light | (biome << 8));
+                                vertex.packed = water ? uint16_t{3} : uint16_t{0};
+                                vertex.set_brightness(kFaceShade[face]);
+                                vertex.light = static_cast<uint16_t>(
+                                    ((light >> 4) * 16u) | ((light & 0x0Fu) * 16u) << 8);
+                                vertex.biome = biome;
                                 mesh.vertices.push_back(vertex);
                             }
                             // The game winds its faces the other way round from this mesher.
@@ -568,6 +667,12 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     }
                     if (quads.empty()) continue;
 
+                    const RenderInfo& here = render.at(state);
+                    // `ModelBlockRenderer.tesselateBlock`: a plant stands a
+                    // little off the middle of its own block, by a hash of the
+                    // column it grows in, so a field is not a grid.
+                    float wander[3];
+                    block_offset(here, chunk.x * kSection + x, chunk.z * kSection + z, wander);
 
                     // A fluid also hides against its own kind, or an ocean
                     // would be full of faces between neighbouring water blocks.
@@ -619,73 +724,174 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                         const int axis_a = kFaceAxes[face][0];
                         const int axis_b = kFaceAxes[face][1];
 
+                        float placed[4][3];
                         for (int corner = 0; corner < 4; ++corner) {
                             const int* pick = kCorner[quad.face][corner];
                             const float top = submerged ? kBlock : quad.to[1];
-                            float local[3] = {
-                                (pick[0] ? quad.to[0] : quad.from[0]) / kBlock,
-                                (pick[1] ? top : quad.from[1]) / kBlock,
-                                (pick[2] ? quad.to[2] : quad.from[2]) / kBlock,
-                            };
-                            apply_element_rotation(local, quad);
-                            apply_rotation(local, quad.rotation_x, quad.rotation_y);
+                            placed[corner][0] = (pick[0] ? quad.to[0] : quad.from[0]) / kBlock;
+                            placed[corner][1] = (pick[1] ? top : quad.from[1]) / kBlock;
+                            placed[corner][2] = (pick[2] ? quad.to[2] : quad.from[2]) / kBlock;
+                            apply_element_rotation(placed[corner], quad);
+                            apply_rotation(placed[corner], quad.rotation_x, quad.rotation_y);
+                        }
 
-                            const int away[3] = {normal.x, normal.y, normal.z};
-                            const int sign_a = pick[axis_a] ? 1 : -1;
-                            const int sign_b = pick[axis_b] ? 1 : -1;
-                            const int base_cell[3] = {x + away[0], local_y + away[1], z + away[2]};
-
-                            int probe[3] = {base_cell[0], base_cell[1], base_cell[2]};
-                            const auto cell_base = padded_index(probe[0], probe[1], probe[2]);
-                            probe[axis_a] += sign_a;
-                            const auto cell_a = padded_index(probe[0], probe[1], probe[2]);
-
-                            probe[0] = base_cell[0];
-                            probe[1] = base_cell[1];
-                            probe[2] = base_cell[2];
-                            probe[axis_b] += sign_b;
-                            const auto cell_b = padded_index(probe[0], probe[1], probe[2]);
-
-                            probe[axis_a] += sign_a;
-                            const auto cell_diagonal = padded_index(probe[0], probe[1], probe[2]);
-
-                            const bool side_a = padded_solid[cell_a] != 0;
-                            const bool side_b = padded_solid[cell_b] != 0;
-                            const bool diagonal = padded_solid[cell_diagonal] != 0;
-
-                            const auto shadow =
-                                (quad.flags & kQuadNoAo) != 0
-                                    ? 3u
-                                    : static_cast<uint32_t>(corner_shadow(side_a, side_b,
-                                                                         diagonal));
-
-                            // Smooth lighting: the corner takes the average of
-                            // the four cells touching it, skipping the ones a
-                            // block is in the way of.
-                            int sky_sum = 0;
-                            int block_sum = 0;
-                            int lit = 0;
-                            for (const auto cell : {cell_base, cell_a, cell_b, cell_diagonal}) {
-                                if (padded_solid[cell] != 0) continue;
-                                sky_sum += padded_light[cell] & 0x0F;
-                                block_sum += padded_light[cell] >> 4;
-                                ++lit;
+                        // `ModelBlockRenderer.calculateShape`: how far the quad
+                        // reaches along each axis, and whether that is the
+                        // whole side of the block or only part of it.
+                        float low[3] = {32.0f, 32.0f, 32.0f};
+                        float high[3] = {-32.0f, -32.0f, -32.0f};
+                        for (const auto& corner : placed) {
+                            for (int axis = 0; axis < 3; ++axis) {
+                                low[axis] = std::min(low[axis], corner[axis]);
+                                high[axis] = std::max(high[axis], corner[axis]);
                             }
-                            if (lit == 0) {
-                                // A face hemmed in by solid blocks - a plant
-                                // leaning into a wall - is lit where it stands.
-                                const auto here = padded_light[padded_index(x, local_y, z)];
-                                sky_sum = here & 0x0F;
-                                block_sum = here >> 4;
-                                lit = 1;
-                            }
-                            const auto sky = static_cast<uint16_t>((sky_sum + lit / 2) / lit);
-                            const auto block = static_cast<uint16_t>((block_sum + lit / 2) / lit);
+                        }
+                        float shape[kSizeCount];
+                        shape[kSizeWest] = low[0];
+                        shape[kSizeEast] = high[0];
+                        shape[kSizeDown] = low[1];
+                        shape[kSizeUp] = high[1];
+                        shape[kSizeNorth] = low[2];
+                        shape[kSizeSouth] = high[2];
+                        for (int i = 0; i < 6; ++i) shape[6 + i] = 1.0f - shape[i];
 
+                        const int normal_axis = face < 2 ? 1 : (face < 4 ? 2 : 0);
+                        const bool towards_positive = (face & 1) != 0;
+                        const bool face_partial =
+                            low[axis_a] >= 1.0e-4f || low[axis_b] >= 1.0e-4f ||
+                            high[axis_a] <= 0.9999f || high[axis_b] <= 0.9999f;
+                        const bool face_cubic =
+                            low[normal_axis] == high[normal_axis] &&
+                            ((towards_positive ? high[normal_axis] > 0.9999f
+                                               : low[normal_axis] < 1.0e-4f) ||
+                             here.has(RenderInfo::kCollisionFull));
+
+                        const size_t own_cell = padded_index(x, local_y, z);
+                        const size_t front_cell =
+                            padded_index(x + normal.x, local_y + normal.y, z + normal.z);
+                        // `ModelBlockRenderer.tesselateBlock`: a block that
+                        // gives off light is lit flat, however its model asks.
+                        const bool smooth = (quad.flags & kQuadNoAo) == 0 && here.emission == 0;
+
+                        float brightness[4];
+                        uint32_t corner_light[4];
+                        // `ClientLevel.getShade`: a face is darkened for the
+                        // way it points, unless the quad asks not to be.
+                        const float shade =
+                            (quad.flags & kQuadNoShade) != 0 ? 1.0f : kFaceShade[face];
+
+                        if (smooth) {
+                            // `ModelBlockRenderer.AmbientOcclusionRenderStorage.calculate`.
+                            const int bx = x + (face_cubic ? normal.x : 0);
+                            const int by = local_y + (face_cubic ? normal.y : 0);
+                            const int bz = z + (face_cubic ? normal.z : 0);
+
+                            float side_shade[4];
+                            uint32_t side_light[4];
+                            bool side_open[4];
+                            for (int i = 0; i < 4; ++i) {
+                                const Offset d = kFaceOffset[kAdjacent[face][i]];
+                                const size_t cell = padded_index(bx + d.x, by + d.y, bz + d.z);
+                                side_shade[i] = padded_shade[cell];
+                                side_light[i] = padded_packed[cell];
+                                side_open[i] = padded_open[padded_index(bx + d.x + normal.x,
+                                                                        by + d.y + normal.y,
+                                                                        bz + d.z + normal.z)] != 0;
+                            }
+
+                            float diagonal_shade[4];
+                            uint32_t diagonal_light[4];
+                            // The four corners pair the sides (3,0), (2,0),
+                            // (2,1) and (3,1); where neither side lets light
+                            // past, the diagonal behind them cannot be seen and
+                            // the first side stands in for it.
+                            static constexpr int kPairs[4][2] = {{3, 0}, {2, 0}, {2, 1}, {3, 1}};
+                            for (int k = 0; k < 4; ++k) {
+                                const int first = kPairs[k][1];
+                                const int second = kPairs[k][0];
+                                if (!side_open[second] && !side_open[0]) {
+                                    diagonal_shade[k] = side_shade[0];
+                                    diagonal_light[k] = side_light[0];
+                                    continue;
+                                }
+                                const Offset a = kFaceOffset[kAdjacent[face][first]];
+                                const Offset b = kFaceOffset[kAdjacent[face][second]];
+                                const size_t cell = padded_index(bx + a.x + b.x, by + a.y + b.y,
+                                                                 bz + a.z + b.z);
+                                diagonal_shade[k] = padded_shade[cell];
+                                diagonal_light[k] = padded_packed[cell];
+                            }
+
+                            uint32_t centre_light = padded_packed[own_cell];
+                            if (face_cubic || padded_full[front_cell] == 0) {
+                                centre_light = padded_packed[front_cell];
+                            }
+                            const float centre_shade = padded_shade[padded_index(bx, by, bz)];
+
+                            float blended_shade[4];
+                            uint32_t blended_light[4];
+                            for (int k = 0; k < 4; ++k) {
+                                const int first = kPairs[k][1];
+                                const int second = kPairs[k][0];
+                                blended_shade[k] = (side_shade[second] + side_shade[first] +
+                                                    diagonal_shade[k] + centre_shade) * 0.25f;
+                                blended_light[k] = blend_light(side_light[second],
+                                                               side_light[first],
+                                                               diagonal_light[k], centre_light);
+                            }
+
+                            for (int corner = 0; corner < 4; ++corner) {
+                                const int* pick = kCorner[quad.face][corner];
+                                const int k = kCornerOrder[face][(pick[axis_a] ? 2 : 0) +
+                                                                 (pick[axis_b] ? 1 : 0)];
+                                if (!face_partial) {
+                                    brightness[corner] = blended_shade[k] * shade;
+                                    corner_light[corner] = blended_light[k];
+                                    continue;
+                                }
+                                float weight[4];
+                                float total = 0.0f;
+                                for (int j = 0; j < 4; ++j) {
+                                    weight[j] = shape[kCornerWeights[face][k][j * 2]] *
+                                                shape[kCornerWeights[face][k][j * 2 + 1]];
+                                    total += blended_shade[j] * weight[j];
+                                }
+                                brightness[corner] = std::clamp(total, 0.0f, 1.0f) * shade;
+                                corner_light[corner] = blend_light(blended_light, weight);
+                            }
+                        } else {
+                            // `ModelBlockRenderer.renderModelFaceFlat`: one
+                            // light for the whole quad, taken from the cell the
+                            // face looks into.
+                            const int light_face =
+                                quad.cullface >= 0
+                                    ? rotate_face(quad.cullface, quad.rotation_x,
+                                                  quad.rotation_y)
+                                    : face;
+                            const Offset towards = kFaceOffset[light_face];
+                            const size_t cell =
+                                quad.cullface >= 0 || face_cubic
+                                    ? padded_index(x + towards.x, local_y + towards.y,
+                                                   z + towards.z)
+                                    : own_cell;
+                            const uint8_t nibbles = padded_light[cell];
+                            uint32_t flat = pack_light(nibbles >> 4, nibbles & 0x0Fu);
+                            if (here.has(RenderInfo::kEmissive)) {
+                                flat = kFullBright;
+                            } else if ((nibbles >> 4) < here.emission) {
+                                flat = pack_light(here.emission, nibbles & 0x0Fu);
+                            }
+                            for (int corner = 0; corner < 4; ++corner) {
+                                brightness[corner] = shade;
+                                corner_light[corner] = flat;
+                            }
+                        }
+
+                        for (int corner = 0; corner < 4; ++corner) {
                             const float world[3] = {
-                                static_cast<float>(x) + local[0],
-                                static_cast<float>(local_y) + local[1],
-                                static_cast<float>(z) + local[2],
+                                static_cast<float>(x) + placed[corner][0] + wander[0],
+                                static_cast<float>(local_y) + placed[corner][1] + wander[1],
+                                static_cast<float>(z) + placed[corner][2] + wander[2],
                             };
 
                             Vertex vertex{};
@@ -705,16 +911,14 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                                 std::clamp(v, 0.0f, 1.0f) * 65535.0f + 0.5f);
 
                             vertex.texture = static_cast<uint16_t>(quad.texture);
-                            vertex.packed = static_cast<uint16_t>(face);
-                            if (quad.tint >= 0) {
-                                vertex.packed |= static_cast<uint16_t>((quad.tint + 1) << 3);
-                            }
-                            vertex.packed |= static_cast<uint16_t>(shadow << 6);
-                            if ((quad.flags & kQuadNoShade) != 0) vertex.packed |= 0x0100u;
-                            const uint16_t biome =
-                                padded_biome[padded_index(x, local_y, z)] & 0xFF;
-                            vertex.light = static_cast<uint16_t>(sky | (block << 4) |
-                                                                 (biome << 8));
+                            vertex.packed = quad.tint >= 0
+                                                ? static_cast<uint16_t>(quad.tint + 1)
+                                                : uint16_t{0};
+                            vertex.set_brightness(brightness[corner]);
+                            vertex.light = static_cast<uint16_t>(
+                                (corner_light[corner] & 0xFFu) |
+                                (((corner_light[corner] >> 16) & 0xFFu) << 8));
+                            vertex.biome = padded_biome[own_cell] & 0xFF;
                             mesh.vertices.push_back(vertex);
                         }
 

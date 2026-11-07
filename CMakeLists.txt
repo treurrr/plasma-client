@@ -268,6 +268,7 @@ mcpp_probe(particle_probe)
 mcpp_probe(dig_probe)
 target_sources(dig_probe PRIVATE src/client/player_rules.cpp src/client/game_mode.cpp)
 target_include_directories(dig_probe PRIVATE src)
+mcpp_probe(ao_probe)
 
 # D: the first person hand and the item in it.
 mcpp_probe(hand_probe)
