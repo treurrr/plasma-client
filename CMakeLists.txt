@@ -138,6 +138,8 @@ add_library(mcpp_net STATIC
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp
+    src/ui/entry_list.cpp
+    src/ui/screens/multiplayer.cpp
     src/ui/hud/gui.cpp
     src/ui/hud/chat.cpp
     src/ui/hud/tab_list.cpp
