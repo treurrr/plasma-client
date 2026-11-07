@@ -103,6 +103,7 @@ add_library(mcpp_net STATIC
     src/registries.cpp
     src/translations.cpp
     src/auth.cpp
+    src/auth_launcher.cpp
     src/world/chunk.cpp
     src/world/block_table.cpp
     src/world/mesher.cpp
@@ -326,3 +327,6 @@ mcpp_test(menus)
 
 # The item in the hand of something in the world, not in front of the camera.
 mcpp_test(held)
+
+# N: a session handed over by a launcher the player is already signed in to.
+mcpp_test(launcher_auth)

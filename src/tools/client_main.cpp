@@ -76,12 +76,89 @@ using client::mesh_world;
 using client::parse_address;
 using client::signed_in_profile;
 
+// Takes the session from a launcher the player is already signed in to. No
+// token is printed, here or anywhere else: it goes straight into the cache
+// `play` and `join` read.
+int do_login_from_launcher(std::string_view wanted_name) {
+    auto handover = mcpp::auth::take_from_launcher(wanted_name);
+    if (handover.result != mcpp::auth::Handover::Result::Found) {
+        const auto where = handover.launcher.empty() ? std::string("no launcher")
+                                                     : handover.launcher;
+        std::cerr << std::format("no session to take over: {} ({})\n",
+                                 mcpp::auth::describe(handover.result), where);
+        switch (handover.result) {
+        case mcpp::auth::Handover::Result::NoStore:
+            std::cerr << "looked in:\n";
+            for (const auto& store : mcpp::auth::launcher_stores()) {
+                std::cerr << std::format("  {}\n", store.path.string());
+            }
+            std::cerr << "supported: the Minecraft launcher (launcher_accounts.json), Prism "
+                         "Launcher and MultiMC (accounts.json)\n";
+            break;
+        case mcpp::auth::Handover::Result::NoAccount:
+            if (handover.names.empty()) {
+                std::cerr << "the launcher has no Microsoft account signed in\n";
+            } else {
+                std::cerr << "say which account: plasma-client login --from-launcher <name>\n";
+                for (const auto& name : handover.names) {
+                    std::cerr << std::format("  {}\n", name);
+                }
+            }
+            break;
+        case mcpp::auth::Handover::Result::NoToken:
+        case mcpp::auth::Handover::Result::Expired:
+            if (!handover.names.empty()) {
+                std::cerr << std::format("the account is {}, in {}\n", handover.names.front(),
+                                         handover.path.string());
+            }
+            std::cerr << "a launcher's session is short-lived, and its renewal belongs to that "
+                         "launcher's own application, so this client cannot renew it. Open the "
+                         "launcher once (so that it signs in again) and run this again.\n";
+            break;
+        case mcpp::auth::Handover::Result::Unreadable:
+        case mcpp::auth::Handover::Result::Found:
+            break;
+        }
+        return 1;
+    }
+
+    auto profile = handover.profile;
+#ifdef MCPP_DEV_OFFLINE
+    std::cout << "- development build: ownership not checked\n";
+#else
+    // The same question the Microsoft flow asks, and the same answer: a profile
+    // comes back only for an account that owns the game.
+    if (const auto reason = mcpp::auth::check_ownership(profile); !reason.empty()) {
+        std::cerr << std::format("the handed-over session was refused: {}\n", reason);
+        std::cerr << "open your launcher once so that it signs in again, then run this again\n";
+        return 1;
+    }
+#endif
+
+    mcpp::auth::Session account;
+    account.adopt(profile, handover.launcher);
+    const auto left = std::chrono::duration_cast<std::chrono::minutes>(
+        profile.expires - std::chrono::system_clock::now());
+    std::cout << std::format("took the session for {} ({}) from {}\n", profile.name, profile.uuid,
+                             handover.launcher);
+    std::cout << std::format("it runs out in about {} minutes and cannot be renewed here\n",
+                             std::max<long long>(left.count(), 0));
+    return 0;
+}
+
 int do_login() {
     mcpp::auth::Session account;
     if (const auto existing = account.restore()) {
         std::cout << std::format("already signed in as {} ({})\n", existing->name,
                                  existing->uuid);
         return 0;
+    }
+    if (!mcpp::auth::Session::configured()) {
+        std::cerr << "this build has no application id of its own, so it cannot run Microsoft's "
+                     "sign-in\n";
+        std::cerr << "take the session from a launcher you are already signed in to instead:\n"
+                     "  plasma-client login --from-launcher [profile name]\n";
+        return 1;
     }
     const auto profile = account.sign_in([](const mcpp::auth::DeviceCode& code) {
         std::cout << std::format("open {} and enter the code {}\n", code.verification_uri,
@@ -1905,6 +1982,9 @@ int main(int argc, char** argv) {
             return do_walktest(argv[2], argc > 3 ? std::stod(argv[3]) : 10.0);
         }
         if (command == "login") {
+            if (argc > 2 && std::string_view(argv[2]) == "--from-launcher") {
+                return do_login_from_launcher(argc > 3 ? argv[3] : "");
+            }
             return do_login();
         }
         if (command == "logout") {

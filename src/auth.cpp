@@ -1,8 +1,10 @@
 #include "mcpp/auth.hpp"
 
+#include "auth_detail.hpp"
 #include "mcpp/json.hpp"
 
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <thread>
 
@@ -107,17 +109,8 @@ std::string form_escaped(std::string_view value) {
     return out;
 }
 
-std::string field(const json::Value& root, std::string_view key) {
-    const auto* value = root.find(key);
-    return value ? value->string_or("") : std::string{};
-}
-
-// Dashed form, because that is how the rest of the client writes a uuid.
-std::string dashed(const std::string& compact) {
-    if (compact.size() != 32) return compact;
-    return compact.substr(0, 8) + "-" + compact.substr(8, 4) + "-" + compact.substr(12, 4) + "-" +
-           compact.substr(16, 4) + "-" + compact.substr(20);
-}
+using detail::dashed;
+using detail::field;
 
 std::filesystem::path state_directory() {
     std::filesystem::path base;
@@ -155,6 +148,7 @@ std::string join_server(const Profile& profile, const std::string& server_hash) 
 std::string_view describe(Failure failure) {
     switch (failure) {
     case Failure::None:            return "no error";
+    case Failure::SessionExpired:  return "the signed-in session has run out";
     case Failure::Network:         return "no connection to Microsoft";
     case Failure::Declined:        return "you declined the sign-in";
     case Failure::TimedOut:        return "the sign-in took too long";
@@ -183,6 +177,7 @@ std::string Session::client_id() {
 namespace {
 
 struct Stored {
+    std::string source;          // "microsoft", or the launcher it came from
     std::string refresh_token;
     std::string minecraft_token;
     std::string uuid;
@@ -204,6 +199,7 @@ Stored read_stored(const std::filesystem::path& path) {
                            std::istreambuf_iterator<char>());
     try {
         const auto root = json::parse(text);
+        stored.source = field(root, "source");
         stored.refresh_token = field(root, "refresh_token");
         stored.minecraft_token = field(root, "minecraft_token");
         stored.uuid = field(root, "uuid");
@@ -222,7 +218,8 @@ void write_stored(const std::filesystem::path& path, const Stored& stored) {
     std::filesystem::create_directories(path.parent_path(), ignored);
     std::ofstream file(path, std::ios::trunc);
     if (!file) return;
-    file << "{\"refresh_token\":" << json_string(stored.refresh_token)
+    file << "{\"source\":" << json_string(stored.source)
+         << ",\"refresh_token\":" << json_string(stored.refresh_token)
          << ",\"minecraft_token\":" << json_string(stored.minecraft_token)
          << ",\"uuid\":" << json_string(stored.uuid)
          << ",\"name\":" << json_string(stored.name)
@@ -344,15 +341,8 @@ struct Session::Exchange {
 std::optional<Profile> Session::restore() {
     failure_ = Failure::None;
     message_.clear();
-    if (!configured()) {
-        failure_ = Failure::NotApprovedByMojang;
-        message_ = "this build has no application id";
-        return std::nullopt;
-    }
 
     auto stored = read_stored(token_path());
-    if (stored.refresh_token.empty()) return std::nullopt;
-
     if (!stored.minecraft_token.empty() && stored.expires_at > now_seconds() + 60) {
         Profile profile;
         profile.uuid = stored.uuid;
@@ -361,6 +351,32 @@ std::optional<Profile> Session::restore() {
         profile.expires = std::chrono::system_clock::from_time_t(
             static_cast<std::time_t>(stored.expires_at));
         if (profile.valid()) return profile;
+    }
+
+    // Only a session of our own carries a refresh token. One handed over by a
+    // launcher was issued to that launcher's application, and renewing it would
+    // mean asking Microsoft in their name.
+    if (stored.refresh_token.empty()) {
+        if (!stored.uuid.empty()) {
+            failure_ = Failure::SessionExpired;
+            message_ = stored.source.empty() || stored.source == "microsoft"
+                           ? "the signed-in session has run out; sign in again"
+                           : std::format("the session handed over by {} has run out; open it "
+                                         "once and run `plasma-client login --from-launcher` again",
+                                         stored.source);
+            return std::nullopt;
+        }
+        if (!configured()) {
+            failure_ = Failure::NotApprovedByMojang;
+            message_ = "this build has no application id";
+        }
+        return std::nullopt;
+    }
+
+    if (!configured()) {
+        failure_ = Failure::NotApprovedByMojang;
+        message_ = "this build has no application id";
+        return std::nullopt;
     }
 
     Exchange exchange{*this};
@@ -459,6 +475,7 @@ std::optional<Profile> Session::sign_in(const std::function<void(const DeviceCod
     if (!exchange.to_profile(microsoft_token, profile)) return std::nullopt;
 
     Stored stored;
+    stored.source = "microsoft";
     stored.refresh_token = refresh_token;
     stored.minecraft_token = profile.access_token;
     stored.uuid = profile.uuid;
@@ -468,6 +485,36 @@ std::optional<Profile> Session::sign_in(const std::function<void(const DeviceCod
                             .count();
     write_stored(token_path(), stored);
     return profile;
+}
+
+std::string check_ownership(Profile& profile) {
+    if (profile.access_token.empty()) return "no session token";
+    const auto response = request(kProfileUrl, {}, true, profile.access_token);
+    if (response.transport_failed) return "no answer from Mojang";
+    if (response.status == 401 || response.status == 403) {
+        return "Mojang no longer accepts this session";
+    }
+    if (response.status == 404) return "this account does not own Minecraft: Java Edition";
+    if (response.status != 200) return std::format("Mojang answered {}", response.status);
+    const auto root = json::parse(response.body);
+    const std::string id = dashed(field(root, "id"));
+    const std::string name = field(root, "name");
+    if (id.empty() || name.empty()) return "Mojang gave no profile";
+    profile.uuid = id;
+    profile.name = name;
+    return {};
+}
+
+void Session::adopt(const Profile& profile, std::string_view source) {
+    Stored stored;
+    stored.source = std::string(source);
+    stored.minecraft_token = profile.access_token;
+    stored.uuid = profile.uuid;
+    stored.name = profile.name;
+    stored.expires_at = std::chrono::duration_cast<std::chrono::seconds>(
+                            profile.expires.time_since_epoch())
+                            .count();
+    write_stored(token_path(), stored);
 }
 
 std::filesystem::path Session::token_path() { return state_directory() / "account.json"; }
