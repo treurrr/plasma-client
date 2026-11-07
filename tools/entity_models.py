@@ -111,7 +111,7 @@ def parse(text):
             part = Part(path)
             if "/" in path:
                 part.parent = model.by_path[path.rsplit("/", 1)[0]]
-            elif path != "root":
+            elif path != ".":
                 part.parent = model.root
             if part.parent is not None:
                 part.parent.children.append(part)
@@ -253,6 +253,10 @@ class Rig:
         return self.poses[part.path]
 
     def set(self, path, **values):
+        # The exporter renamed the mesh root from `root` to `.`; callers written
+        # before that still ask for the old name.
+        if path not in self.poses and path == "root":
+            path = "."
         pose = self.poses[path]
         for name, value in values.items():
             setattr(pose, name, value)
