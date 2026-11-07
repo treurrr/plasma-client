@@ -238,7 +238,6 @@ void BlockEntityScene::load(const Assets& assets, const BlockEntityTable& table,
     skins_ = skins;
     assets_ = &assets;
     models_ = &assets.models();
-    font_ = &assets.font();
 }
 
 // `SkullBlockRenderer.resolveSkullRenderType`: a player head wears the skin
@@ -668,8 +667,7 @@ void BlockEntityScene::build(const BlockEntityRow& row, const BlockEntityTable& 
 }
 
 void BlockEntityScene::sign_text(const BlockEntityRow& row, const BlockEntity& entity,
-                                 const Placement& root, const Font& font,
-                                 std::vector<SignLine>& out) {
+                                 const Placement& root, std::vector<SignLine>& out) {
     const bool hanging = row.kind == BlockEntityKind::HangingSign;
     if (!hanging && row.kind != BlockEntityKind::Sign) return;
     const float line_height = hanging ? 9.0f : 10.0f;
@@ -726,7 +724,6 @@ void BlockEntityScene::sign_text(const BlockEntityRow& row, const BlockEntity& e
             out_line.place = line_place.matrix;
             out.push_back(std::move(out_line));
         }
-        (void)font;
     }
 }
 
@@ -735,9 +732,9 @@ void BlockEntityScene::draw(gpu::EntityRenderer& renderer, const View& view,
     const auto started = std::chrono::steady_clock::now();
     stats_ = {};
     stats_.tracked = entities_.size();
-    if (table_ == nullptr || models_ == nullptr || font_ == nullptr) return;
+    if (table_ == nullptr || models_ == nullptr) return;
 
-    const double reach = 64.0;
+    constexpr double reach = 64.0;
     for (auto& [key, entity] : entities_) {
         const double dx = static_cast<double>(entity.x) + 0.5 - view.eye[0];
         const double dy = static_cast<double>(entity.y) + 0.5 - view.eye[1];
@@ -806,7 +803,7 @@ void BlockEntityScene::draw(gpu::EntityRenderer& renderer, const View& view,
 
         if (row->kind == BlockEntityKind::Sign || row->kind == BlockEntityKind::HangingSign) {
             lines_.clear();
-            sign_text(*row, entity, root, *font_, lines_);
+            sign_text(*row, entity, root, lines_);
             for (const SignLine& line : lines_) {
                 const uint8_t sky = line.glowing ? 15 : lit[0];
                 const uint8_t block = line.glowing ? 15 : lit[1];

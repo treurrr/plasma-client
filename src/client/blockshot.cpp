@@ -583,7 +583,10 @@ int blockserver(const std::vector<std::string>& args) {
         around.east = at(key.first + 1, key.second);
         around.north = at(key.first, key.second - 1);
         around.south = at(key.first, key.second + 1);
-        world.upload(mcpp::world::mesh_sections(chunk, unpacked.at(key), table, around));
+        if (!world.append(mcpp::world::mesh_sections(chunk, unpacked.at(key), table, around))) {
+            std::cerr << "out of room for chunk meshes\n";
+            break;
+        }
     }
 
     std::cout << std::format("- {} chunks round the camera meshed\n", chunks.size());

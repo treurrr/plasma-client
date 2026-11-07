@@ -147,7 +147,7 @@ public:
         bool glowing = false;
     };
     static void sign_text(const BlockEntityRow& row, const BlockEntity& entity,
-                          const Placement& root, const Font& font, std::vector<SignLine>& out);
+                          const Placement& root, std::vector<SignLine>& out);
 
 private:
     struct Key {
@@ -166,7 +166,6 @@ private:
 
     const BlockEntityTable* table_ = nullptr;
     const ModelSet* models_ = nullptr;
-    const Font* font_ = nullptr;
     const Assets* assets_ = nullptr;
     skins::Cache* skins_ = nullptr;
     std::unordered_map<Key, BlockEntity, KeyHash> entities_;
