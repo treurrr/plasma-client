@@ -104,7 +104,18 @@ atlas and the skin and writes the colour straight out; there is no fog uniform
 in it at all, while `entity.frag` and `world.frag` both mix towards
 `fog.colour`. `ItemInHandRenderer` draws under the same fog as everything else.
 
-### 3. Armour trims are baked and never drawn
+### 3. The chat log is drawn straight through the keystroke display
+
+**Seen**: `live/run1/stand-020.png`, bottom left. The Plasma keystroke overlay
+puts W, A, S, D and SPACE exactly where vanilla puts the chat log, and the
+chat's background strip is drawn after it, so every line of chat cuts the key
+caps in half. Nothing is wrong with either on its own; they are simply put in
+the same place. The same corner shows the sections-and-entities readout drawn
+over the held item with its descenders clipped by the bottom of the screen.
+Both are `draw_hud` in `src/ui/menu.cpp`, which is laid out as if the vanilla
+hud were not there.
+
+### 4. Armour trims are baked and never drawn
 
 **Seen**: `live/run1/site-030.png`, the second player's head at the right of
 the frame. He is wearing an iron helmet with a redstone ward trim and it draws
@@ -116,7 +127,7 @@ file outside `src/entity/equipment.cpp` mentions the class: nothing opens it,
 
 ## Inferred, and what would settle it
 
-### 4. Item particles never exist
+### 5. Item particles never exist
 
 **Inferred.** `ParticleOptions::has_texture` is set in exactly one place in the
 tree, `tests/test_particles.cpp`. `make_particle` opens the four breaking-item
@@ -136,7 +147,7 @@ hunger on, which in vanilla throws a steady stream of item chips. It has not
 yet produced a usable frame - in the first run it was shot behind the pause
 screen.
 
-### 5. One texture per mob type
+### 6. One texture per mob type
 
 **Inferred.** `MobType` holds a single `texture`, so every pig is temperate,
 every cat a tabby, every llama creamy, every axolotl lucy. Vanilla picks the
@@ -149,7 +160,7 @@ To settle it: the `build` phase summons a temperate pig next to a
 `{variant:"minecraft:cold"}` pig and a siamese cat, and the `mobs` phase looks
 at them. The first run only ever had one pig in frame at a time.
 
-### 6. Block entities that draw nothing
+### 7. Block entities that draw nothing
 
 **Inferred from the renderer list.** `BlockEntityKind` covers 13 kinds.
 Vanilla's `BlockEntityRenderers` registers these as well, and each of them
@@ -178,7 +189,7 @@ in the order the row was built, so a frame with nothing in it but floor names
 the renderer that draws nothing. The first run had them one block apart in a
 single wide shot and they hid each other.
 
-### 7. The server list is unreachable, and `ConnectScreen` never says anything
+### 8. The server list is unreachable, and `ConnectScreen` never says anything
 
 **Inferred, from reading the whole title flow, and `livetest` cannot see it:**
 the harness is handed an address and joins it, which is the same shortcut the
@@ -198,7 +209,7 @@ status lines go to `ConnectScreen::status`, a failure puts up
 `DisconnectedScreen`, and `play.cpp`'s address argument becomes a shortcut that
 presses Join for you.
 
-### 8. The Christmas chest
+### 9. The Christmas chest
 
 **Inferred.** `tools/bake_block_entities.py` bakes one texture per chest state
 and nothing in the tree mentions `christmas`. Vanilla's `ChestRenderer` swaps
