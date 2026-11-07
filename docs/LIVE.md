@@ -216,3 +216,16 @@ his name tag and his helmet, the chest and its latch, the pause screen over a
 blurred world, the inventory and crafting screens with their item icons and
 counts, and five mob types (pig, cow, cat, horse, zombie) with their models,
 their legs moving and their shadows.
+
+Two of those were suspected first and cleared afterwards, which is the only
+reason they are worth writing down:
+
+- the hotbar's slots looked a muddy olive rather than grey. Vanilla's
+  `hud/hotbar.png` is a dark olive at 186 alpha, so over a night scene that is
+  exactly what it should look like.
+- the empty experience bar looked like nine dashes with seams between them
+  rather than one bar. Vanilla's `hud/experience_bar_background.png` is a
+  repeating row of dark green capsules, so that is right as well.
+
+Both were settled by pulling the sprite out of `client-named.jar` and looking
+at it, which is quicker than arguing about a screenshot.
