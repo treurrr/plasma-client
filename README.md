@@ -119,10 +119,12 @@ printed or logged, not even in part.
 hours, not days, and the refresh token next to it was issued to that launcher's
 application, so renewing it would mean asking Microsoft in that launcher's name.
 When the session runs out, the client says so by name and the cure is to open
-the launcher once - which signs it in again - and run the handover again. A
-launcher that is signed in but currently keeps no token in its file (the
-Minecraft launcher blanks it between runs) is reported the same way, as
-something to fix by opening the launcher, not as a mysterious failure.
+the launcher once - which signs it in again - and run the handover again. The
+same goes for a launcher that is signed in but holds no token in its file at
+that moment: the Minecraft launcher is known to leave `accessToken` empty while
+it is closed, and that is reported as what it is, with the same cure, not as a
+mysterious failure. Its `launcher_msa_credentials.bin` is not touched; the
+Microsoft tokens in it belong to the launcher's own application.
 
 Ownership is still checked: the handed-over token is put to Mojang's profile
 endpoint before anything is written, which answers only for an account that owns
