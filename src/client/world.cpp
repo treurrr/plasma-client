@@ -266,10 +266,12 @@ void world_start(Game& game) {
     for (const auto& section : game.world.first_meshes) {
         game.world.vertex_bytes += section.vertices.size() * sizeof(mcpp::world::Vertex);
     }
-    // A server with view distance 10 sends 441 chunks. Measured on real
-    // terrain the vertex and index data come out around 2.7 to 1, so an even
-    // split would run out of indices long before it ran out of room.
-    renderer.reserve(384u << 20, 160u << 20);
+    // A fixed 384 and 160 MB held 940 to 1470 chunks, which is render distance
+    // 15 to 19 whatever the one in the options says. The room a distance needs
+    // is known, and so is what the device has left, so ask for the first and
+    // keep inside the second.
+    const auto budget = geometry_budget(game.device.device_local_free(), game.options.view_distance);
+    renderer.reserve(budget.vertex_bytes, budget.index_bytes);
     renderer.append(game.world.first_meshes);
 
     const auto sky_path = mcpp::gpu::Sky::default_path(mcpp::protocol::kTargetProtocol);

@@ -57,4 +57,22 @@ std::vector<mcpp::world::SectionMesh> mesh_world(std::span<const mcpp::world::Ch
                                                  double* unpack_milliseconds = nullptr,
                                                  const mcpp::world::BiomeTints& tints = {});
 
+// Room for the world's geometry, in bytes of vertices and bytes of indices.
+struct GeometryBudget {
+    size_t vertex_bytes = 0;
+    size_t index_bytes = 0;
+    // What the sizing was worked out from, so a report can say why it is this
+    // size and not another.
+    size_t chunks_wanted = 0;
+    uint64_t device_free = 0;
+    bool whole_distance = false;
+};
+
+// How much to reserve so a render distance fits. Measured on the four
+// benchmark worlds, a chunk is 0.37 to 0.58 MB of vertices and indices
+// together, so (2d+1)^2 chunks at the widest of those is what a render
+// distance costs; the device's own free memory, less what the rest of the
+// frame needs, is the ceiling.
+GeometryBudget geometry_budget(uint64_t device_local_free, int32_t render_distance);
+
 } // namespace client

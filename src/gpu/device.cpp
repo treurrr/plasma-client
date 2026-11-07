@@ -80,6 +80,9 @@ AdapterInfo describe(VkPhysicalDevice device) {
         vulkan13.shaderDemoteToHelperInvocation == VK_TRUE;
     info.capabilities.sampler_anisotropy = features.features.samplerAnisotropy == VK_TRUE;
     info.capabilities.wide_lines = features.features.wideLines == VK_TRUE;
+    info.capabilities.draw_indirect_first_instance =
+        features.features.drawIndirectFirstInstance == VK_TRUE;
+    info.capabilities.memory_budget = has_extension(extensions, "VK_EXT_memory_budget");
     info.capabilities.max_anisotropy = properties.properties.limits.maxSamplerAnisotropy;
     return info;
 }
@@ -240,9 +243,14 @@ void Device::create(const Options& options) {
     features.pNext = &vulkan13;
     features.features.samplerAnisotropy = adapter_.capabilities.sampler_anisotropy;
     features.features.wideLines = adapter_.capabilities.wide_lines;
+    features.features.drawIndirectFirstInstance =
+        adapter_.capabilities.draw_indirect_first_instance;
 
     std::vector<const char*> wanted;
     if (options.swapchain) wanted.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    if (adapter_.capabilities.memory_budget) {
+        wanted.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    }
 
     VkDeviceCreateInfo create{};
     create.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -286,6 +294,31 @@ void Device::save_pipeline_cache() const {
     std::filesystem::create_directories(cache_path_.parent_path(), error);
     std::ofstream file(cache_path_, std::ios::binary);
     file.write(reinterpret_cast<const char*>(blob.data()), static_cast<std::streamsize>(bytes));
+}
+
+// What is left on the device heap for this process, which is what decides how
+// large a world the client can hold. `VK_EXT_memory_budget` is the only way to
+// ask: the heap's size alone counts nothing another process already holds.
+uint64_t Device::device_local_free() const {
+    if (physical_ == VK_NULL_HANDLE) return 0;
+    if (!adapter_.capabilities.memory_budget) return adapter_.device_local_bytes;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    VkPhysicalDeviceMemoryProperties2 memory{};
+    memory.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+    memory.pNext = &budget;
+    vkGetPhysicalDeviceMemoryProperties2(physical_, &memory);
+    uint64_t free_bytes = 0;
+    for (uint32_t heap = 0; heap < memory.memoryProperties.memoryHeapCount; ++heap) {
+        if ((memory.memoryProperties.memoryHeaps[heap].flags &
+             VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) {
+            continue;
+        }
+        const uint64_t allowed = budget.heapBudget[heap];
+        const uint64_t taken = budget.heapUsage[heap];
+        free_bytes += allowed > taken ? allowed - taken : 0;
+    }
+    return free_bytes;
 }
 
 void Device::destroy() {

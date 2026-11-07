@@ -10,6 +10,9 @@
 #include <map>
 #include <climits>
 #include <array>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <functional>
 #include <memory>
 #include <span>
@@ -65,7 +68,11 @@ public:
     // Appending never reallocates, so a chunk arriving mid-game cannot stall
     // the frame the way a full re-upload would.
     void reserve(size_t vertex_capacity, size_t index_capacity);
-    bool append(const std::vector<world::SectionMesh>& sections);
+    // `shift` moves every section of this batch by whole blocks, so one
+    // chunk's geometry can stand in for another's place: what the benchmark
+    // needs to hold a render distance a recording is too small to fill.
+    bool append(const std::vector<world::SectionMesh>& sections,
+                const int32_t shift[3] = nullptr);
     // Re-meshes one section in place. The old room is left behind rather than
     // compacted: one block change costs a section's worth of buffer, which is
     // cheap next to stalling the frame to shuffle everything down.
@@ -135,6 +142,9 @@ public:
     uint32_t width() const { return width_; }
     uint32_t height() const { return height_; }
     void read_timestamps();
+    // Blocks until nothing the renderer submitted is still running, which is
+    // what destroying or rewriting a buffer it reads needs.
+    void wait_for_gpu();
 
     double last_gpu_ms() const { return last_gpu_ms_; }
     size_t section_count() const { return sections_.size(); }
@@ -152,6 +162,9 @@ public:
     };
     const FrameCost& last_frame_cost() const { return cost_; }
     size_t drawn_sections() const { return drawn_sections_; }
+    // How many draw calls the world's geometry took this frame: two when the
+    // sections go through one indirect draw each pass, one per section before.
+    size_t drawn_calls() const { return drawn_calls_; }
     size_t drawn_triangles() const { return drawn_triangles_; }
     double upload_ms() const { return upload_ms_; }
     double upload_alloc_ms() const { return upload_alloc_ms_; }
@@ -274,6 +287,17 @@ private:
     VkCommandBuffer frame_command_ = VK_NULL_HANDLE;
     VkFence frame_fence_ = VK_NULL_HANDLE;
     VkQueryPool timestamps_ = VK_NULL_HANDLE;
+    // Two frames in flight: the cpu records frame n while the gpu draws n-1,
+    // instead of record, submit and wait. Each has its own command buffer,
+    // fence and pair of timestamps, and the uniform ring is three deep so
+    // neither writes over what the other is reading.
+    static constexpr uint32_t kInFlight = 2;
+    VkCommandBuffer draw_commands_[kInFlight]{};
+    VkFence draw_fences_[kInFlight]{};
+    bool draw_pending_[kInFlight]{};
+    uint32_t draw_turn_ = 0;
+    uint32_t query_base_ = 0;
+    void wait_for_frames();
 
     // One entry per section: where its geometry sits and where it is in the
     // world, so a section outside the view can be skipped entirely.
@@ -289,6 +313,33 @@ private:
         uint32_t vertex_count;
     };
     std::vector<Section> sections_;
+
+    // Sections grouped by their chunk column. One frustum test throws away a
+    // whole column before any section in it is looked at, and at render
+    // distance 16 and up that is where almost every section is.
+    struct Column {
+        float bounds_min[3];
+        float bounds_max[3];
+        uint32_t first = 0;
+        uint32_t count = 0;
+    };
+    std::vector<Column> columns_;
+    std::vector<uint32_t> column_sections_;
+    bool columns_stale_ = true;
+    void rebuild_columns();
+
+    // One indirect draw over a table of sections instead of a push constant
+    // and a draw call for each of them. Per frame in flight: the origins the
+    // vertex shader reads by gl_InstanceIndex, then the draw commands, in one
+    // buffer the host writes straight into.
+    MappedBuffer draw_data_;
+    size_t draw_room_ = 0;
+    uint32_t draw_slot_bytes_ = 0;
+    uint32_t draw_command_offset_ = 0;
+    uint32_t draw_offset_ = 0;
+    bool indirect_ = false;
+    size_t drawn_calls_ = 0;
+    void reserve_draw_room(size_t sections);
 
     // Room in the two streaming buffers, counted in vertices and in indices.
     SpanAllocator vertex_spans_;
@@ -308,25 +359,59 @@ private:
     // The see-through quads of a section, kept on the cpu so they can be put
     // back to front again as the camera moves: inside one section the mesher
     // emits them in block order, which is right from one side only.
+    // Nothing in one changes once it is built, so the worker that re-sorts it
+    // can hold it without a lock on the map it came from.
     struct Blend {
         uint32_t first = 0;               // where they sit in the index buffer
         std::vector<uint32_t> indices;    // six per quad, as uploaded
         std::vector<float> centres;       // three per quad, in world space
-        int32_t sorted_for[3]{INT32_MIN, INT32_MIN, INT32_MIN};
     };
-    std::map<std::array<int32_t, 3>, Blend> blends_;
-    // The sort's scratch, kept so a frame does not ask the allocator for it.
-    std::vector<std::pair<float, Blend*>> sort_due_;
+    using BlendRef = std::shared_ptr<const Blend>;
+    std::map<std::array<int32_t, 3>, BlendRef> blends_;
     // One quad's distance from the camera and where its indices are.
     struct Quad {
         float reach = 0.0f;
         uint32_t quad = 0;
     };
-    std::vector<Quad> sort_order_;
-    std::vector<uint32_t> sort_indices_;
-    void sort_translucent(VkCommandBuffer command, const Camera& camera);
+    // The re-sort runs on its own thread, the way vanilla sorts its
+    // translucent sections on the chunk workers. A frame only copies what the
+    // thread has finished into the command buffer, so the sorting is off the
+    // frame's budget: a per-frame budget means the faster the client runs, the
+    // more sorting it does a second, which is backwards.
+    struct SortReady {
+        std::array<int32_t, 3> origin;
+        BlendRef of;
+        uint32_t first = 0;
+        std::vector<uint32_t> indices;
+    };
+    std::thread sorter_;
+    std::mutex sort_guard_;
+    std::condition_variable sort_wake_;
+    std::condition_variable sort_rested_;
+    std::vector<SortReady> sort_ready_;
+    std::vector<std::pair<std::array<int32_t, 3>, BlendRef>> sort_snapshot_;
+    std::map<std::array<int32_t, 3>, std::array<int32_t, 3>> sorted_for_;
+    std::array<int32_t, 3> sort_cell_{INT32_MIN, INT32_MIN, INT32_MIN};
+    // The eye the quads are ranked against, which is the camera of the frame
+    // that moved into this block: the same point the frame used when it sorted
+    // them itself, so the order that comes back is the same order.
+    float sort_eye_[3]{0.0f, 0.0f, 0.0f};
+    bool sort_asked_ = false;
+    bool sort_resting_ = true;
+    bool sort_stop_ = false;
+    bool sort_snapshot_stale_ = true;
+    void sort_worker();
+    void forget_blends();
+    void drain_translucent_quiet();
+    // Blocks until the thread has nothing left to sort for the camera it was
+    // last given: what a single picture needs, so a worldshot is the same
+    // picture it was when the frame did the sorting itself.
+    void drain_translucent(const Camera& camera);
+    void ask_for_sort(const Camera& camera);
+    void sort_translucent(VkCommandBuffer command);
     void keep_blends(const std::vector<world::SectionMesh>& sections,
-                     const std::vector<size_t>& source, size_t first_section);
+                     const std::vector<size_t>& source, size_t first_section,
+                     const int32_t shift[3]);
     template <typename Drop> void drop_sections(Drop&& drop);
     void hand_back_released();
     bool culling_ = true;

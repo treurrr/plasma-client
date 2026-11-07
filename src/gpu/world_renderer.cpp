@@ -336,8 +336,15 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
     VkQueryPoolCreateInfo query{};
     query.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
     query.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    query.queryCount = 2;
+    query.queryCount = 2 * kInFlight;
     check(vkCreateQueryPool(device_.handle(), &query, nullptr, &timestamps_), "vkCreateQueryPool");
+
+    for (uint32_t turn = 0; turn < kInFlight; ++turn) {
+        check(vkAllocateCommandBuffers(device_.handle(), &reusable, &draw_commands_[turn]),
+              "vkAllocateCommandBuffers");
+        check(vkCreateFence(device_.handle(), &fence_create, nullptr, &draw_fences_[turn]),
+              "vkCreateFence");
+    }
 
     // Reading this once rather than per section per frame: a getenv in the
     // draw loop is itself a measurable cost.
@@ -346,6 +353,12 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
     create_targets();
     create_atlas(atlas);
     create_pipeline();
+
+    reserve_draw_room(1);
+    indirect_ = device_.adapter().capabilities.draw_indirect_first_instance &&
+                std::getenv("PLASMA_NOINDIRECT") == nullptr;
+
+    sorter_ = std::thread([this] { sort_worker(); });
 }
 
 void WorldRenderer::create_atlas(const world::Atlas& atlas) {
@@ -544,7 +557,11 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     check(vkCreateImageView(device_.handle(), &plain, nullptr, &lightmap_view_),
           "vkCreateImageView lightmap");
 
-    VkDescriptorSetLayoutBinding bindings[5]{};
+    VkDescriptorSetLayoutBinding bindings[6]{};
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     bindings[4].binding = 4;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
     bindings[4].descriptorCount = 1;
@@ -568,14 +585,14 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
 
     VkDescriptorSetLayoutCreateInfo layout{};
     layout.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout.bindingCount = 5;
+    layout.bindingCount = 6;
     layout.pBindings = bindings;
     check(vkCreateDescriptorSetLayout(device_.handle(), &layout, nullptr, &set_layout_),
           "vkCreateDescriptorSetLayout");
 
     VkDescriptorPoolSize sizes[4]{};
     sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
-    sizes[3].descriptorCount = 1;
+    sizes[3].descriptorCount = 2;
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     sizes[0].descriptorCount = 2;
     sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -886,6 +903,7 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
         entry.opaque_count = static_cast<uint32_t>(section.opaque_indices);
         entry.vertex_offset = static_cast<int32_t>(vertex_total);
         sections_.push_back(entry);
+        columns_stale_ = true;
         source.push_back(i);
 
         vertex_total += section.vertices.size();
@@ -895,10 +913,11 @@ void WorldRenderer::upload(const std::vector<world::SectionMesh>& sections) {
     vertex_bytes_ = vertex_total * sizeof(world::Vertex);
     index_bytes_ = index_total * sizeof(uint32_t);
     index_count_ = static_cast<uint32_t>(index_total);
-    blends_.clear();
+    forget_blends();
+    reserve_draw_room(sections_.size());
     if (index_count_ > 0) {
         upload_sections(sections, source);
-        keep_blends(sections, source, 0);
+        keep_blends(sections, source, 0, nullptr);
     }
 
     upload_ms_ = std::chrono::duration<double, std::milli>(
@@ -916,7 +935,7 @@ void WorldRenderer::reserve(size_t vertex_capacity, size_t index_capacity) {
     vertex_spans_.reset(vertex_capacity_ / sizeof(world::Vertex));
     index_spans_.reset(index_capacity_ / sizeof(uint32_t));
     releasing_.clear();
-    blends_.clear();
+    forget_blends();
 
     auto vertex = make_buffer(device_, vertex_capacity_,
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -934,15 +953,25 @@ template <typename Drop> void WorldRenderer::drop_sections(Drop&& drop) {
     // Two frames can be in flight, so room is not reused until a third has
     // been recorded after it was let go.
     constexpr uint64_t kFramesBeforeReuse = 3;
+    std::vector<std::array<int32_t, 3>> gone;
     std::erase_if(sections_, [&](const Section& entry) {
         if (!drop(entry)) return false;
-        blends_.erase({static_cast<int32_t>(entry.origin[0]), static_cast<int32_t>(entry.origin[1]),
-                       static_cast<int32_t>(entry.origin[2])});
+        gone.push_back({static_cast<int32_t>(entry.origin[0]),
+                        static_cast<int32_t>(entry.origin[1]),
+                        static_cast<int32_t>(entry.origin[2])});
         releasing_.push_back({static_cast<size_t>(entry.vertex_offset), entry.vertex_count,
                               entry.first_index, entry.index_count,
                               frames_recorded_ + kFramesBeforeReuse});
         return true;
     });
+    if (gone.empty()) return;
+    columns_stale_ = true;
+    const std::lock_guard lock(sort_guard_);
+    for (const auto& key : gone) {
+        blends_.erase(key);
+        sorted_for_.erase(key);
+    }
+    sort_snapshot_stale_ = true;
 }
 
 void WorldRenderer::hand_back_released() {
@@ -975,8 +1004,11 @@ bool WorldRenderer::replace(const std::vector<world::SectionMesh>& sections) {
     return append(sections);
 }
 
-bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
+bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections,
+                           const int32_t shift[3]) {
     if (vertex_capacity_ == 0) return false;
+    const int32_t no_shift[3]{0, 0, 0};
+    if (shift == nullptr) shift = no_shift;
     hand_back_released();
 
     const size_t first_section = sections_.size();
@@ -1008,7 +1040,7 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
 
         Section entry{};
         for (int axis = 0; axis < 3; ++axis) {
-            entry.origin[axis] = static_cast<float>(section.origin[axis]);
+            entry.origin[axis] = static_cast<float>(section.origin[axis] + shift[axis]);
             entry.bounds_min[axis] = entry.origin[axis] + section.bounds_min[axis];
             entry.bounds_max[axis] = entry.origin[axis] + section.bounds_max[axis];
         }
@@ -1018,6 +1050,7 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
         entry.vertex_offset = static_cast<int32_t>(*vertex_offset);
         entry.vertex_count = static_cast<uint32_t>(section.vertices.size());
         sections_.push_back(entry);
+        columns_stale_ = true;
         source.push_back(i);
 
         vertex_added += section.vertices.size() * sizeof(world::Vertex);
@@ -1103,31 +1136,40 @@ bool WorldRenderer::append(const std::vector<world::SectionMesh>& sections) {
     index_bytes_ = index_spans_.used() * sizeof(uint32_t);
     index_count_ = static_cast<uint32_t>(index_spans_.used());
 
-    keep_blends(sections, source, first_section);
+    reserve_draw_room(sections_.size());
+    keep_blends(sections, source, first_section, shift);
     return true;
 }
 
 void WorldRenderer::keep_blends(const std::vector<world::SectionMesh>& sections,
-                                const std::vector<size_t>& source, size_t first_section) {
+                                const std::vector<size_t>& source, size_t first_section,
+                                const int32_t shift[3]) {
+    const int32_t no_shift[3]{0, 0, 0};
+    if (shift == nullptr) shift = no_shift;
+    std::vector<std::pair<std::array<int32_t, 3>, BlendRef>> built;
+    std::vector<std::array<int32_t, 3>> gone;
     for (size_t slot = 0; slot < source.size(); ++slot) {
         const auto& section = sections[source[slot]];
         const auto& entry = sections_[first_section + slot];
-        const std::array<int32_t, 3> key{section.origin[0], section.origin[1], section.origin[2]};
+        const std::array<int32_t, 3> key{section.origin[0] + shift[0],
+                                         section.origin[1] + shift[1],
+                                         section.origin[2] + shift[2]};
         if (section.indices.size() <= section.opaque_indices) {
-            blends_.erase(key);
+            gone.push_back(key);
             continue;
         }
-        Blend blend;
-        blend.first = entry.first_index + static_cast<uint32_t>(section.opaque_indices);
-        blend.indices.assign(section.indices.begin() +
-                                 static_cast<std::ptrdiff_t>(section.opaque_indices),
-                             section.indices.end());
-        const size_t quads = blend.indices.size() / 6;
-        blend.centres.resize(quads * 3);
+        auto blend = std::make_shared<Blend>();
+        blend->first = entry.first_index + static_cast<uint32_t>(section.opaque_indices);
+        blend->indices.assign(section.indices.begin() +
+                                  static_cast<std::ptrdiff_t>(section.opaque_indices),
+                              section.indices.end());
+        const size_t quads = blend->indices.size() / 6;
+        blend->centres.resize(quads * 3);
         for (size_t quad = 0; quad < quads; ++quad) {
             // Six indices over four corners: 0, 1, 2 and the last one.
-            const uint32_t corners[4] = {blend.indices[quad * 6], blend.indices[quad * 6 + 1],
-                                         blend.indices[quad * 6 + 2], blend.indices[quad * 6 + 5]};
+            const uint32_t corners[4] = {blend->indices[quad * 6], blend->indices[quad * 6 + 1],
+                                         blend->indices[quad * 6 + 2],
+                                         blend->indices[quad * 6 + 5]};
             for (int axis = 0; axis < 3; ++axis) {
                 float sum = 0.0f;
                 for (const uint32_t corner : corners) {
@@ -1135,44 +1177,200 @@ void WorldRenderer::keep_blends(const std::vector<world::SectionMesh>& sections,
                                static_cast<float>(world::kPositionScale) -
                            static_cast<float>(world::kPositionBias);
                 }
-                blend.centres[quad * 3 + axis] =
-                    static_cast<float>(section.origin[axis]) + sum * 0.25f;
+                blend->centres[quad * 3 + axis] =
+                    static_cast<float>(section.origin[axis] + shift[axis]) + sum * 0.25f;
             }
         }
+        built.emplace_back(key, std::move(blend));
+    }
+    if (built.empty() && gone.empty()) return;
+    const std::lock_guard lock(sort_guard_);
+    for (const auto& key : gone) {
+        blends_.erase(key);
+        sorted_for_.erase(key);
+    }
+    for (auto& [key, blend] : built) {
         blends_[key] = std::move(blend);
+        sorted_for_.erase(key);
+    }
+    sort_snapshot_stale_ = true;
+    // Geometry that has just arrived is in the order the mesher emitted it,
+    // which is right from one side only: it is due a sort wherever the camera
+    // already is. Before the first frame there is no camera to sort against,
+    // and a pass run against nowhere would have to be thrown away.
+    if (!built.empty() && sort_cell_[0] != INT32_MIN) {
+        sort_asked_ = true;
+        sort_resting_ = false;
+        sort_wake_.notify_one();
     }
 }
 
-void WorldRenderer::sort_translucent(VkCommandBuffer command, const Camera& camera) {
-    const auto note_sort = ScopeCost{&cost_.sort_ms, mark_ms()};
-    cost_.sort_upload_ms = 0.0;
-    if (blends_.empty()) return;
+// The thread that puts the see-through quads back to front. Vanilla sorts a
+// translucent section on its chunk workers rather than in the frame that draws
+// it, and this is the same split: woken when the camera moves into another
+// block, it sorts the nearest sections that are not already sorted for that
+// block and leaves the finished index runs for a frame to copy in.
+void WorldRenderer::sort_worker() {
     // Near sections only, and only when the camera has moved a whole block:
     // far away the quads are too small for their order to show, and standing
-    // still they are already right.
+    // still they are already right. The same reach and the same number a pass
+    // as when the frame did it itself.
     constexpr float kReach = 64.0f;
-    constexpr size_t kPerFrame = 24;
-    const int32_t cell[3] = {static_cast<int32_t>(std::floor(camera.eye[0])),
-                             static_cast<int32_t>(std::floor(camera.eye[1])),
-                             static_cast<int32_t>(std::floor(camera.eye[2]))};
-    auto& due = sort_due_;
-    due.clear();
-    for (auto& [origin, blend] : blends_) {
-        if (blend.sorted_for[0] == cell[0] && blend.sorted_for[1] == cell[1] &&
-            blend.sorted_for[2] == cell[2]) {
+    constexpr size_t kPerPass = 24;
+    std::vector<std::pair<float, size_t>> due;
+    std::vector<Quad> order;
+    std::unique_lock lock(sort_guard_);
+    while (true) {
+        sort_resting_ = true;
+        sort_rested_.notify_all();
+        sort_wake_.wait(lock, [&] { return sort_stop_ || sort_asked_; });
+        if (sort_stop_) return;
+        sort_asked_ = false;
+        sort_resting_ = false;
+        const auto cell = sort_cell_;
+        const float eye[3] = {sort_eye_[0], sort_eye_[1], sort_eye_[2]};
+        if (sort_snapshot_stale_) {
+            sort_snapshot_.assign(blends_.begin(), blends_.end());
+            sort_snapshot_stale_ = false;
+        }
+
+        due.clear();
+        for (size_t at = 0; at < sort_snapshot_.size(); ++at) {
+            const auto& [origin, blend] = sort_snapshot_[at];
+            const auto already = sorted_for_.find(origin);
+            if (already != sorted_for_.end() && already->second == cell) continue;
+            float distance = 0.0f;
+            for (int axis = 0; axis < 3; ++axis) {
+                const float centre = static_cast<float>(origin[axis]) + 8.0f - eye[axis];
+                distance += centre * centre;
+            }
+            if (distance > kReach * kReach) continue;
+            due.emplace_back(distance, at);
+        }
+        if (due.empty()) {
+            sort_rested_.notify_all();
             continue;
         }
-        float distance = 0.0f;
-        for (int axis = 0; axis < 3; ++axis) {
-            const float centre = static_cast<float>(origin[axis]) + 8.0f - camera.eye[axis];
-            distance += centre * centre;
+        std::ranges::sort(due, {}, &std::pair<float, size_t>::first);
+        if (due.size() > kPerPass) due.resize(kPerPass);
+
+        std::vector<std::pair<std::array<int32_t, 3>, BlendRef>> picked;
+        picked.reserve(due.size());
+        for (const auto& [distance, at] : due) picked.push_back(sort_snapshot_[at]);
+        lock.unlock();
+
+        std::vector<SortReady> made;
+        made.reserve(picked.size());
+        for (auto& [origin, blend] : picked) {
+            const size_t quads = blend->indices.size() / 6;
+            order.resize(quads);
+            for (size_t quad = 0; quad < quads; ++quad) {
+                float d = 0.0f;
+                for (int axis = 0; axis < 3; ++axis) {
+                    const float delta = blend->centres[quad * 3 + axis] - eye[axis];
+                    d += delta * delta;
+                }
+                order[quad] = {d, static_cast<uint32_t>(quad)};
+            }
+            std::ranges::sort(order,
+                              [](const Quad& a, const Quad& b) { return a.reach > b.reach; });
+            SortReady ready;
+            ready.origin = origin;
+            ready.first = blend->first;
+            ready.indices.resize(blend->indices.size());
+            for (size_t slot = 0; slot < quads; ++slot) {
+                std::memcpy(&ready.indices[slot * 6], &blend->indices[order[slot].quad * 6],
+                            6 * sizeof(uint32_t));
+            }
+            ready.of = std::move(blend);
+            made.push_back(std::move(ready));
         }
-        if (distance > kReach * kReach) continue;
-        due.emplace_back(distance, &blend);
+
+        lock.lock();
+        for (auto& ready : made) {
+            sorted_for_[ready.origin] = cell;
+            sort_ready_.push_back(std::move(ready));
+        }
+        sort_rested_.notify_all();
+        // More was due than one pass takes, so come straight back round.
+        if (due.size() == kPerPass) sort_asked_ = true;
     }
-    if (due.empty()) return;
-    std::ranges::sort(due, {}, &std::pair<float, Blend*>::first);
-    if (due.size() > kPerFrame) due.resize(kPerFrame);
+}
+
+// Told where the camera is, so the thread has something to do while the frame
+// that moved it is still being recorded.
+// Everything the sort thread knows goes with the geometry it was about.
+void WorldRenderer::forget_blends() {
+    if (sorter_.joinable()) drain_translucent_quiet();
+    const std::lock_guard lock(sort_guard_);
+    blends_.clear();
+    sorted_for_.clear();
+    sort_snapshot_.clear();
+    sort_ready_.clear();
+    sort_snapshot_stale_ = true;
+}
+
+// Waits for the thread to put down whatever it is holding, without asking it
+// for anything new: what a buffer about to be destroyed needs.
+void WorldRenderer::drain_translucent_quiet() {
+    std::unique_lock lock(sort_guard_);
+    sort_rested_.wait(lock, [&] { return sort_stop_ || (sort_resting_ && !sort_asked_); });
+    sort_cell_ = {INT32_MIN, INT32_MIN, INT32_MIN};
+    sort_ready_.clear();
+}
+
+void WorldRenderer::ask_for_sort(const Camera& camera) {
+    if (!sorter_.joinable()) return;
+    const std::array<int32_t, 3> cell{static_cast<int32_t>(std::floor(camera.eye[0])),
+                                      static_cast<int32_t>(std::floor(camera.eye[1])),
+                                      static_cast<int32_t>(std::floor(camera.eye[2]))};
+    const std::lock_guard lock(sort_guard_);
+    if (cell == sort_cell_) return;
+    sort_cell_ = cell;
+    for (int axis = 0; axis < 3; ++axis) sort_eye_[axis] = camera.eye[axis];
+    sort_asked_ = true;
+    sort_resting_ = false;
+    sort_wake_.notify_one();
+}
+
+void WorldRenderer::drain_translucent(const Camera& camera) {
+    if (!sorter_.joinable()) return;
+    const std::array<int32_t, 3> cell{static_cast<int32_t>(std::floor(camera.eye[0])),
+                                      static_cast<int32_t>(std::floor(camera.eye[1])),
+                                      static_cast<int32_t>(std::floor(camera.eye[2]))};
+    std::unique_lock lock(sort_guard_);
+    if (cell != sort_cell_) {
+        sort_cell_ = cell;
+        for (int axis = 0; axis < 3; ++axis) sort_eye_[axis] = camera.eye[axis];
+        sort_asked_ = true;
+        sort_resting_ = false;
+        sort_wake_.notify_one();
+    }
+    // Everything near the camera, not the two dozen a frame used to manage:
+    // one picture has no next frame to pick up the rest in, and the thread it
+    // waits for is not spending a frame's budget.
+    sort_rested_.wait(lock, [&] { return sort_stop_ || (sort_resting_ && !sort_asked_); });
+}
+
+// What the thread has finished, copied into this frame's command buffer.
+void WorldRenderer::sort_translucent(VkCommandBuffer command) {
+    const auto note_sort = ScopeCost{&cost_.sort_ms, mark_ms()};
+    cost_.sort_upload_ms = 0.0;
+    std::vector<SortReady> ready;
+    {
+        const std::lock_guard lock(sort_guard_);
+        if (!sort_ready_.empty()) {
+            ready.swap(sort_ready_);
+            // The index run a result was sorted for may have been handed back
+            // and given to another section since: only the entry still in the
+            // map at that origin, and still the same one, may be written.
+            std::erase_if(ready, [&](const SortReady& entry) {
+                const auto held = blends_.find(entry.origin);
+                return held == blends_.end() || held->second != entry.of;
+            });
+        }
+    }
+    if (ready.empty()) return;
 
     // A frame still in flight may be reading these indices.
     VkMemoryBarrier2 before{};
@@ -1187,36 +1385,18 @@ void WorldRenderer::sort_translucent(VkCommandBuffer command, const Camera& came
     dependency.pMemoryBarriers = &before;
     vkCmdPipelineBarrier2(command, &dependency);
 
-    auto& order = sort_order_;
-    auto& sorted = sort_indices_;
-    for (const auto& [distance, blend] : due) {
-        const size_t quads = blend->indices.size() / 6;
-        order.resize(quads);
-        for (size_t quad = 0; quad < quads; ++quad) {
-            float d = 0.0f;
-            for (int axis = 0; axis < 3; ++axis) {
-                const float delta = blend->centres[quad * 3 + axis] - camera.eye[axis];
-                d += delta * delta;
-            }
-            order[quad] = {d, static_cast<uint32_t>(quad)};
-        }
-        std::ranges::sort(order, [](const Quad& a, const Quad& b) { return a.reach > b.reach; });
-        sorted.resize(blend->indices.size());
-        for (size_t at = 0; at < quads; ++at) {
-            std::memcpy(&sorted[at * 6], &blend->indices[order[at].quad * 6], 6 * sizeof(uint32_t));
-        }
-        const double upload_started = mark_ms();
+    const double upload_started = mark_ms();
+    for (const auto& entry : ready) {
         // vkCmdUpdateBuffer takes at most 64 KiB at a time.
         constexpr size_t kChunk = 65536 / sizeof(uint32_t);
-        for (size_t at = 0; at < sorted.size(); at += kChunk) {
-            const size_t count = std::min(kChunk, sorted.size() - at);
+        for (size_t at = 0; at < entry.indices.size(); at += kChunk) {
+            const size_t count = std::min(kChunk, entry.indices.size() - at);
             vkCmdUpdateBuffer(command, index_buffer_,
-                              (static_cast<VkDeviceSize>(blend->first) + at) * sizeof(uint32_t),
-                              count * sizeof(uint32_t), sorted.data() + at);
+                              (static_cast<VkDeviceSize>(entry.first) + at) * sizeof(uint32_t),
+                              count * sizeof(uint32_t), entry.indices.data() + at);
         }
-        cost_.sort_upload_ms += mark_ms() - upload_started;
-        std::copy(std::begin(cell), std::end(cell), blend->sorted_for);
     }
+    cost_.sort_upload_ms = mark_ms() - upload_started;
 
     VkMemoryBarrier2 after{};
     after.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
@@ -1405,9 +1585,9 @@ void WorldRenderer::draw_in_world(VkCommandBuffer command, const PushConstants& 
         after_entities_(command, push.view_projection.m, width_, height_, atmosphere_.fog_colour, camera);
     }
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
+    const uint32_t dynamic_offsets[3] = {frame_offset_, animation_offset_, draw_offset_};
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
-                            &descriptor_set_, 2, dynamic_offsets);
+                            &descriptor_set_, 3, dynamic_offsets);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
     vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
@@ -1424,12 +1604,106 @@ void WorldRenderer::draw_outline(VkCommandBuffer command, const PushConstants& p
     if (outlined_translucent_ != translucent_pass) return;
     outline_->record(command, push.view_projection.m, outlined_);
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
+    const uint32_t dynamic_offsets[3] = {frame_offset_, animation_offset_, draw_offset_};
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
-                            &descriptor_set_, 2, dynamic_offsets);
+                            &descriptor_set_, 3, dynamic_offsets);
     const VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
     vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
+}
+
+
+// Room for one frame's draw table: a vec4 origin a section, then a draw
+// command a section, with the translucent pass's entries after the opaque
+// pass's, three frames deep so a frame in flight is never written over.
+void WorldRenderer::reserve_draw_room(size_t sections) {
+    const size_t want = std::max<size_t>(sections * 2 + 16, 1024);
+    if (want <= draw_room_) return;
+    // Doubled rather than fitted: growing it waits for the gpu, and a world
+    // that streams in appends a chunk at a time.
+    if (draw_data_.buffer != VK_NULL_HANDLE) {
+        check(vkDeviceWaitIdle(device_.handle()), "vkDeviceWaitIdle");
+        vkUnmapMemory(device_.handle(), draw_data_.memory);
+        draw_data_.destroy(device_.handle());
+    }
+    draw_room_ = std::max(want, draw_room_ * 2);
+    const size_t origins = draw_room_ * sizeof(float) * 4;
+    draw_command_offset_ = static_cast<uint32_t>(origins);
+    const size_t slot = origins + draw_room_ * sizeof(VkDrawIndexedIndirectCommand);
+    draw_slot_bytes_ = static_cast<uint32_t>((slot + 255) & ~size_t{255});
+    // The vertex shader reads this table, so device memory the host can write
+    // is worth having where the gpu offers it; plain host memory otherwise.
+    constexpr VkBufferUsageFlags kUsage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    constexpr VkMemoryPropertyFlags kHost =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(draw_slot_bytes_) * kFrameSlots;
+    Allocated buffer;
+    try {
+        buffer = make_buffer(device_, bytes, kUsage, kHost | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    } catch (const ProtocolError&) {
+        buffer = make_buffer(device_, bytes, kUsage, kHost);
+    }
+    draw_data_.buffer = buffer.buffer;
+    draw_data_.memory = buffer.memory;
+    draw_data_.size = bytes;
+    check(vkMapMemory(device_.handle(), draw_data_.memory, 0, VK_WHOLE_SIZE, 0,
+                      &draw_data_.mapped),
+          "vkMapMemory");
+
+    VkDescriptorBufferInfo info{};
+    info.buffer = draw_data_.buffer;
+    info.range = origins;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptor_set_;
+    write.dstBinding = 5;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
+    write.pBufferInfo = &info;
+    vkUpdateDescriptorSets(device_.handle(), 1, &write, 0, nullptr);
+}
+
+// Which sections stand in which chunk column, and the box around each column.
+// Kept in the order the columns were first appended, so the sections are drawn
+// in the order they were uploaded.
+void WorldRenderer::rebuild_columns() {
+    columns_.clear();
+    column_sections_.clear();
+    columns_stale_ = false;
+    if (sections_.empty()) return;
+    std::map<std::pair<int32_t, int32_t>, std::vector<uint32_t>> by_column;
+    std::vector<std::pair<int32_t, int32_t>> order;
+    order.reserve(sections_.size());
+    for (uint32_t at = 0; at < sections_.size(); ++at) {
+        const std::pair<int32_t, int32_t> key{static_cast<int32_t>(sections_[at].origin[0]),
+                                              static_cast<int32_t>(sections_[at].origin[2])};
+        auto [slot, fresh] = by_column.try_emplace(key);
+        if (fresh) order.push_back(key);
+        slot->second.push_back(at);
+    }
+    column_sections_.reserve(sections_.size());
+    columns_.reserve(order.size());
+    for (const auto& key : order) {
+        const auto& list = by_column[key];
+        Column column{};
+        column.first = static_cast<uint32_t>(column_sections_.size());
+        column.count = static_cast<uint32_t>(list.size());
+        for (int axis = 0; axis < 3; ++axis) {
+            column.bounds_min[axis] = sections_[list.front()].bounds_min[axis];
+            column.bounds_max[axis] = sections_[list.front()].bounds_max[axis];
+        }
+        for (const uint32_t at : list) {
+            for (int axis = 0; axis < 3; ++axis) {
+                column.bounds_min[axis] =
+                    std::min(column.bounds_min[axis], sections_[at].bounds_min[axis]);
+                column.bounds_max[axis] =
+                    std::max(column.bounds_max[axis], sections_[at].bounds_max[axis]);
+            }
+            column_sections_.push_back(at);
+        }
+        columns_.push_back(column);
+    }
 }
 
 void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
@@ -1451,6 +1725,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
 
     drawn_sections_ = 0;
     drawn_triangles_ = 0;
+    drawn_calls_ = 0;
 
     if (sections_.empty()) {
         push.origin[0] = 0.0f;
@@ -1475,18 +1750,52 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
         return;
     }
 
+    if (columns_stale_) rebuild_columns();
     const Frustum frustum(push.view_projection);
+    auto* slot = static_cast<uint8_t*>(draw_data_.mapped) + draw_offset_;
+    auto* origins = reinterpret_cast<float*>(slot);
+    auto* commands = reinterpret_cast<VkDrawIndexedIndirectCommand*>(slot + draw_command_offset_);
+    uint32_t written = 0;
+    const auto record_section = [&](const Section& section, uint32_t first, uint32_t count) {
+        if (written >= draw_room_) return;
+        origins[written * 4 + 0] = section.origin[0];
+        origins[written * 4 + 1] = section.origin[1];
+        origins[written * 4 + 2] = section.origin[2];
+        origins[written * 4 + 3] = 0.0f;
+        commands[written] = {count, 1, first, section.vertex_offset, written};
+        ++written;
+    };
+
+    push.extra[2] = indirect_ ? 1.0f : 0.0f;
     send_all();
     visible_.clear();
-    for (const auto& section : sections_) {
-        if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) continue;
-        visible_.push_back(&section);
-        if (section.opaque_count == 0) continue;
-        send(section.origin);
-        vkCmdDrawIndexed(command, section.opaque_count, 1, section.first_index,
-                         section.vertex_offset, 0);
-        ++drawn_sections_;
-        drawn_triangles_ += section.opaque_count / 3;
+    const uint32_t opaque_first = written;
+    for (const auto& column : columns_) {
+        if (culling_ && !frustum.contains(column.bounds_min, column.bounds_max)) continue;
+        for (uint32_t at = column.first; at < column.first + column.count; ++at) {
+            const Section& section = sections_[column_sections_[at]];
+            if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) continue;
+            visible_.push_back(&section);
+            if (section.opaque_count == 0) continue;
+            if (indirect_) {
+                record_section(section, section.first_index, section.opaque_count);
+            } else {
+                send(section.origin);
+                vkCmdDrawIndexed(command, section.opaque_count, 1, section.first_index,
+                                 section.vertex_offset, 0);
+                ++drawn_calls_;
+            }
+            ++drawn_sections_;
+            drawn_triangles_ += section.opaque_count / 3;
+        }
+    }
+    if (indirect_ && written > opaque_first) {
+        vkCmdDrawIndexedIndirect(command, draw_data_.buffer,
+                                 draw_offset_ + draw_command_offset_ +
+                                     opaque_first * sizeof(VkDrawIndexedIndirectCommand),
+                                 written - opaque_first,
+                                 sizeof(VkDrawIndexedIndirectCommand));
+        ++drawn_calls_;
     }
     draw_in_world(command, push, camera);
     draw_outline(command, push, false);
@@ -1514,15 +1823,30 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
     push.eye[3] = kTranslucentCutout;
     send_all();
+    const uint32_t blended_first = written;
     for (const auto* section : visible_) {
         const uint32_t count = section->index_count - section->opaque_count;
         if (count == 0) continue;
-        send(section->origin);
-        vkCmdDrawIndexed(command, count, 1, section->first_index + section->opaque_count,
-                         section->vertex_offset, 0);
+        if (indirect_) {
+            record_section(*section, section->first_index + section->opaque_count, count);
+        } else {
+            send(section->origin);
+            vkCmdDrawIndexed(command, count, 1, section->first_index + section->opaque_count,
+                             section->vertex_offset, 0);
+            ++drawn_calls_;
+        }
         drawn_triangles_ += count / 3;
     }
+    if (indirect_ && written > blended_first) {
+        vkCmdDrawIndexedIndirect(command, draw_data_.buffer,
+                                 draw_offset_ + draw_command_offset_ +
+                                     blended_first * sizeof(VkDrawIndexedIndirectCommand),
+                                 written - blended_first,
+                                 sizeof(VkDrawIndexedIndirectCommand));
+        ++drawn_calls_;
+    }
     push.eye[3] = kCutout;
+    push.extra[2] = 0.0f;
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
 }
 
@@ -1533,10 +1857,10 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
 void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, bool readback,
                                  bool leave_transfer_src, const Overlay& overlay) {
     ++frames_recorded_;
-    vkCmdResetQueryPool(command, timestamps_, 0, 2);
-    vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestamps_, 0);
+    vkCmdResetQueryPool(command, timestamps_, query_base_, 2);
+    vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestamps_, query_base_);
     // Outside the pass, because the index buffer is written to.
-    sort_translucent(command, camera);
+    sort_translucent(command);
 
     // This frame's fog and lightmap, in a slot no frame still in flight reads.
     const uint32_t slot = static_cast<uint32_t>(frames_recorded_ % kFrameSlots);
@@ -1552,6 +1876,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     lightmap_ready_ = true;
     frame_offset_ = slot * kFrameSlotBytes;
     animation_offset_ = slot * animation_slot_bytes_;
+    draw_offset_ = slot * draw_slot_bytes_;
     {
         auto* entries = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(animation_data_.mapped) +
                                                     animation_offset_);
@@ -1623,9 +1948,9 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         push.extra[1] = 1.0f;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
-        const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
+        const uint32_t dynamic_offsets[3] = {frame_offset_, animation_offset_, draw_offset_};
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
-                                &descriptor_set_, 2, dynamic_offsets);
+                                &descriptor_set_, 3, dynamic_offsets);
 
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
@@ -1718,16 +2043,18 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         }
     }
 
-    vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestamps_, 1);
+    vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestamps_,
+                         query_base_ + 1);
 }
 
 void WorldRenderer::record_present(VkCommandBuffer command, const Camera& camera) {
+    ask_for_sort(camera);
     record_frame(command, camera, false, true);
 }
 
 void WorldRenderer::read_timestamps() {
     uint64_t marks[2] = {0, 0};
-    if (vkGetQueryPoolResults(device_.handle(), timestamps_, 0, 2, sizeof(marks), marks,
+    if (vkGetQueryPoolResults(device_.handle(), timestamps_, query_base_, 2, sizeof(marks), marks,
                               sizeof(uint64_t),
                               VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS) {
         last_gpu_ms_ = static_cast<double>(marks[1] - marks[0]) * timestamp_period_ / 1e6;
@@ -1752,7 +2079,7 @@ double WorldRenderer::submit(VkCommandBuffer command) {
     vkDestroyFence(device_.handle(), fence, nullptr);
 
     uint64_t marks[2] = {0, 0};
-    if (vkGetQueryPoolResults(device_.handle(), timestamps_, 0, 2, sizeof(marks), marks,
+    if (vkGetQueryPoolResults(device_.handle(), timestamps_, query_base_, 2, sizeof(marks), marks,
                               sizeof(uint64_t),
                               VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS) {
         last_gpu_ms_ = static_cast<double>(marks[1] - marks[0]) * timestamp_period_ / 1e6;
@@ -1760,37 +2087,63 @@ double WorldRenderer::submit(VkCommandBuffer command) {
     return last_gpu_ms_;
 }
 
+// Nothing here waits for the frame it submits. The frame before it is what
+// the fence at the top is about, so the gpu has a whole frame of work in hand
+// while this one is recorded, and `gpu ms` is that earlier frame's.
 double WorldRenderer::draw(const Camera& camera, const Overlay& overlay) {
+    ask_for_sort(camera);
+    const uint32_t turn = draw_turn_;
+    cost_.readback_ms = 0.0;
+    if (draw_pending_[turn]) {
+        check(vkWaitForFences(device_.handle(), 1, &draw_fences_[turn], VK_TRUE, UINT64_MAX),
+              "vkWaitForFences");
+        draw_pending_[turn] = false;
+        const double readback_started = mark_ms();
+        query_base_ = turn * 2;
+        read_timestamps();
+        cost_.readback_ms = mark_ms() - readback_started;
+    }
+
     const double record_started = mark_ms();
-    check(vkResetCommandBuffer(frame_command_, 0), "vkResetCommandBuffer");
+    check(vkResetCommandBuffer(draw_commands_[turn], 0), "vkResetCommandBuffer");
 
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    check(vkBeginCommandBuffer(frame_command_, &begin), "vkBeginCommandBuffer");
-    record_frame(frame_command_, camera, false, false, overlay);
-    check(vkEndCommandBuffer(frame_command_), "vkEndCommandBuffer");
+    check(vkBeginCommandBuffer(draw_commands_[turn], &begin), "vkBeginCommandBuffer");
+    query_base_ = turn * 2;
+    record_frame(draw_commands_[turn], camera, false, false, overlay);
+    check(vkEndCommandBuffer(draw_commands_[turn]), "vkEndCommandBuffer");
     cost_.record_ms = mark_ms() - record_started;
 
     VkCommandBufferSubmitInfo command_submit{};
     command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    command_submit.commandBuffer = frame_command_;
+    command_submit.commandBuffer = draw_commands_[turn];
     VkSubmitInfo2 submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
     submit.commandBufferInfoCount = 1;
     submit.pCommandBufferInfos = &command_submit;
 
     const double submit_started = mark_ms();
-    check(vkResetFences(device_.handle(), 1, &frame_fence_), "vkResetFences");
-    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, frame_fence_), "vkQueueSubmit2");
+    check(vkResetFences(device_.handle(), 1, &draw_fences_[turn]), "vkResetFences");
+    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, draw_fences_[turn]),
+          "vkQueueSubmit2");
     cost_.submit_ms = mark_ms() - submit_started;
-    check(vkWaitForFences(device_.handle(), 1, &frame_fence_, VK_TRUE, UINT64_MAX),
-          "vkWaitForFences");
-    const double readback_started = mark_ms();
-    read_timestamps();
-    cost_.readback_ms = mark_ms() - readback_started;
+    draw_pending_[turn] = true;
+    draw_turn_ = (turn + 1) % kInFlight;
     return last_gpu_ms_;
 }
+
+void WorldRenderer::wait_for_frames() {
+    for (uint32_t turn = 0; turn < kInFlight; ++turn) {
+        if (!draw_pending_[turn]) continue;
+        check(vkWaitForFences(device_.handle(), 1, &draw_fences_[turn], VK_TRUE, UINT64_MAX),
+              "vkWaitForFences");
+        draw_pending_[turn] = false;
+    }
+}
+
+void WorldRenderer::wait_for_gpu() { wait_for_frames(); }
 
 void WorldRenderer::set_atmosphere(const world::Atmosphere& atmosphere) {
     atmosphere_ = atmosphere;
@@ -1810,6 +2163,11 @@ VkFormat WorldRenderer::colour_format() const { return kColorFormat; }
 VkFormat WorldRenderer::depth_format() const { return kDepthFormat; }
 
 std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& overlay) {
+    // One picture, read back: there is no next frame to pick the order up in,
+    // so wait for the thread the way a frame used to do the work itself.
+    drain_translucent(camera);
+    wait_for_frames();
+    query_base_ = 0;
     VkCommandBufferAllocateInfo allocate{};
     allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocate.commandPool = pool_;
@@ -1867,6 +2225,7 @@ std::vector<uint8_t> WorldRenderer::render(const Camera& camera, const Overlay& 
 }
 
 void WorldRenderer::destroy_mesh() {
+    wait_for_frames();
     if (vertex_buffer_ != VK_NULL_HANDLE) {
         vkDestroyBuffer(device_.handle(), vertex_buffer_, nullptr);
         vkFreeMemory(device_.handle(), vertex_memory_, nullptr);
@@ -1890,6 +2249,15 @@ void WorldRenderer::OwnedImage::destroy(VkDevice device) {
 }
 
 WorldRenderer::~WorldRenderer() {
+    if (sorter_.joinable()) {
+        {
+            const std::lock_guard lock(sort_guard_);
+            sort_stop_ = true;
+        }
+        sort_wake_.notify_all();
+        sort_rested_.notify_all();
+        sorter_.join();
+    }
     if (device_.handle() == VK_NULL_HANDLE) return;
     vkDeviceWaitIdle(device_.handle());
     destroy_mesh();
@@ -1902,6 +2270,8 @@ WorldRenderer::~WorldRenderer() {
     vkDestroyDescriptorPool(device_.handle(), descriptor_pool_, nullptr);
     frame_data_.destroy(device_.handle());
     animation_data_.destroy(device_.handle());
+    if (draw_data_.mapped != nullptr) vkUnmapMemory(device_.handle(), draw_data_.memory);
+    draw_data_.destroy(device_.handle());
     if (lightmap_view_ != VK_NULL_HANDLE) vkDestroyImageView(device_.handle(), lightmap_view_, nullptr);
     lightmap_.destroy(device_.handle());
     if (lightmap_sampler_ != VK_NULL_HANDLE) vkDestroySampler(device_.handle(), lightmap_sampler_, nullptr);
@@ -1912,6 +2282,9 @@ WorldRenderer::~WorldRenderer() {
     vkFreeMemory(device_.handle(), atlas_memory_, nullptr);
     destroy_targets();
     vkDestroyQueryPool(device_.handle(), timestamps_, nullptr);
+    for (uint32_t turn = 0; turn < kInFlight; ++turn) {
+        vkDestroyFence(device_.handle(), draw_fences_[turn], nullptr);
+    }
     vkDestroyFence(device_.handle(), frame_fence_, nullptr);
     vkDestroyCommandPool(device_.handle(), pool_, nullptr);
 }
@@ -1919,8 +2292,8 @@ WorldRenderer::~WorldRenderer() {
 uint32_t WorldRenderer::world_push_size() { return sizeof(PushConstants); }
 
 void WorldRenderer::bind_world_set(VkCommandBuffer command, VkPipelineLayout layout) const {
-    const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
-    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set_, 2,
+    const uint32_t dynamic_offsets[3] = {frame_offset_, animation_offset_, draw_offset_};
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set_, 3,
                             dynamic_offsets);
 }
 

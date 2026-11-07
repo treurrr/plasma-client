@@ -369,7 +369,8 @@ mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
 // World: the renderer's benchmark: fixed flights over a recorded world at
 // each render distance, reported the way docs/METHOD.md asks.
 int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
-                const std::vector<int32_t>& distances, int64_t day_time);
+                const std::vector<int32_t>& distances, int64_t day_time,
+                size_t tile_across = 0);
 // World: a block the player changed, drawn before the server confirms it.
 void world_predict_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t state);
 

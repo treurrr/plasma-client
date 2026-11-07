@@ -10,6 +10,14 @@ layout(push_constant) uniform Push {
 // The game's lightmap: block light along u, sky light along v, filtered.
 layout(set = 0, binding = 3) uniform sampler2D lightmap;
 
+// Where each section of this frame's indirect draw stands. A draw command's
+// firstInstance is the section's row, so gl_InstanceIndex finds it without a
+// push constant or a draw call of its own. push.extra.z says whether this draw
+// came that way; the whole-world upload still pushes one origin.
+layout(set = 0, binding = 5, std430) readonly buffer Sections {
+    vec4 section_origin[];
+};
+
 layout(location = 0) in uvec4 in_position;   // xyz fixed point, w tint and brightness
 layout(location = 1) in vec2 in_uv;
 layout(location = 2) in uvec2 in_texture_light;
@@ -34,7 +42,8 @@ vec4 sample_lightmap(vec2 uv) {
 
 void main() {
     vec3 local = vec3(in_position.xyz) / kPositionScale - kPositionBias;
-    vec3 world = local + push.origin.xyz;
+    vec3 origin = push.extra.z > 0.5 ? section_origin[gl_InstanceIndex].xyz : push.origin.xyz;
+    vec3 world = local + origin;
     gl_Position = push.view_projection * vec4(world, 1.0);
     vec3 relative = world - push.eye.xyz;
     out_spherical = length(relative);

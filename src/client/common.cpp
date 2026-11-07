@@ -225,4 +225,44 @@ std::vector<mcpp::world::SectionMesh> mesh_world(std::span<const mcpp::world::Ch
     return all;
 }
 
+GeometryBudget geometry_budget(uint64_t device_local_free, int32_t render_distance) {
+    constexpr size_t kBytesPerChunk = 620u << 10;
+    // What the rest of the frame holds on the device: the colour and depth
+    // targets, the atlas and its mipmaps, the entity and interface atlases,
+    // the staging buffers, and whatever the driver keeps for itself.
+    constexpr uint64_t kHeadroom = 1024ull << 20;
+    constexpr uint64_t kCeiling = 6144ull << 20;
+    // What the client reserved before it asked the device, and what it falls
+    // back to when the device has nothing to spare.
+    constexpr size_t kFloorVertices = 384u << 20;
+    constexpr size_t kFloorIndices = 160u << 20;
+
+    GeometryBudget budget;
+    budget.device_free = device_local_free;
+    const auto across = static_cast<size_t>(2 * std::max(render_distance, 2) + 1);
+    budget.chunks_wanted = across * across;
+
+    const uint64_t room = device_local_free > kHeadroom ? device_local_free - kHeadroom : 0;
+    const uint64_t allowed = std::min<uint64_t>(room, kCeiling);
+    const uint64_t wanted = static_cast<uint64_t>(budget.chunks_wanted) * kBytesPerChunk;
+    const uint64_t total = std::min(allowed, wanted);
+    budget.whole_distance = total >= wanted;
+
+    // Measured on real terrain the vertex and index data come out around
+    // 2.7 to 1, so an even split would run out of indices long before it ran
+    // out of room.
+    budget.vertex_bytes = static_cast<size_t>(total * 73 / 100);
+    budget.index_bytes = static_cast<size_t>(total - budget.vertex_bytes);
+    if (budget.vertex_bytes < kFloorVertices) {
+        budget.vertex_bytes = kFloorVertices;
+        budget.index_bytes = kFloorIndices;
+    }
+    // Vulkan wants both buffer sizes a whole number of their element size.
+    budget.vertex_bytes &= ~size_t{31};
+    budget.index_bytes &= ~size_t{31};
+    budget.whole_distance =
+        static_cast<uint64_t>(budget.vertex_bytes + budget.index_bytes) >= wanted;
+    return budget;
+}
+
 } // namespace client

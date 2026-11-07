@@ -9,7 +9,7 @@ columns may honestly be compared. Most of them may not.
 Running it
 ----------
 
-    plasma-client worldbench replay:corpus/world-<scene>.plrc <chunks> <frames> <distances> [day time]
+    plasma-client worldbench replay:corpus/world-<scene>.plrc <chunks> <frames> <distances> [day time] [square]
     plasma-client worldbench replay:corpus/world-village.plrc 1200 400 8,16,32
 
 It replays a recorded world (corpus/README says how the four scenes are made),
@@ -268,8 +268,10 @@ stops appending - a square of 31 by 31 to 38 by 38, which is render distance
 
 That is the number to keep beside any render distance 32 row, ours or anyone
 else's. A vanilla client at 32 holds 4225 chunks, which would be 1.6 to 2.5 GB
-of geometry here. Our client cannot draw that today, whatever the frame rate of
-a flight through a quarter of it says.
+of geometry here. Our client could not draw that when this was written,
+whatever the frame rate of a flight through a quarter of it said; the last
+section of this file is the change that made the room, and the measurement of
+a full 4225-chunk render distance drawn.
 
 The sky, and what the old figure was really measuring
 ------------------------------------------------------
@@ -375,4 +377,290 @@ fixed driver work of a frame. A generator does not touch any of them. What
 touches them is structural: the translucent sort belongs on a worker thread
 (vanilla sorts there too), the per-section draws belong in one indirect draw,
 and the frustum test belongs on whole chunk columns before their sections.
-Those are the three to do before anyone writes a generator.
+Those are the three to do before anyone writes a generator. All three, and the
+room a render distance needs, are the four changes the last section of this
+file measures.
+
+Wave 5: what changed, and what it did to the numbers
+----------------------------------------------------
+
+The four changes the counters above ranked are in. The tables in this section
+are the same flights over the same recordings, the left half of each pair with
+the client at e09ab43 and the right half with the four changes, run back to
+back on the same machine.
+
+The recordings are new ones. The four the tables above were measured on were
+not on this machine any more - a recording is server output and the repository
+holds only corpus/README - so they were made again by the procedure in that
+file, four stops 64 blocks apart around the same four places. A recorded
+square is not the same square twice, so the rows above and the rows below are
+not the same world: only the two halves of a row below may be read against
+each other.
+
+### 1. Room for a whole render distance
+
+`world_start` reserved a fixed 384 MB of vertices and 160 MB of indices, which
+held 940 to 1470 chunks whatever the render distance in the options said. It
+now asks the gpu: `Device::device_local_free` reads `VK_EXT_memory_budget`, and
+`client::geometry_budget` multiplies the `(2d+1)^2` chunks a render distance
+holds by 620 kB - a little over the heaviest of the four scenes - and keeps
+inside what the device has free after a gigabyte of headroom for the targets,
+the atlases, the staging buffers and the driver.
+
+The benchmark now goes through the same path. It used to call
+`WorldRenderer::upload`, which allocates exactly the geometry it is handed and
+so could never run out of room; it now calls `reserve` and then `append` a
+chunk at a time, the way a streaming client does, and a chunk the room will
+not take is a chunk that row never drew. The `chunks` column therefore now
+says what the client held, not what the recording had.
+
+At render distance 32 the reservation is 1958 MB of vertices and 724 MB of
+indices, and the four scenes measure 403, 588, 509 and 533 kB a chunk, so that
+room holds 6646, 4560, 5273 and 5028 chunks. A vanilla render distance 32
+holds 4225. The room is there in all four.
+
+Drawing it needed a world that size, and the recordings are 27 by 27 to 31 by
+31 chunks of real terrain: a server sends what its view-distance covers, and
+corpus/README's four stops cover about render distance 16. `worldbench` takes
+one more argument for this - a square of chunks to fill - where every place
+the render distance holds that the recording has no chunk for takes one of the
+recorded chunks in turn, shifted into place. It is not the terrain a server
+would send, but it is real geometry in every place, and it weighs what the
+recording weighs a chunk rather than what its heaviest chunk weighs.
+
+    plasma-client worldbench replay:corpus/world-village.plrc 1200 300 32 6000 65
+
+| flight | chunks / want | drawn | ktris | avg FPS | 1% low | p99 ms | CPU ms | GPU ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| low pass over the water | 4225 / 4225 | 653 | 767 | 266 | 116 | 8.205 | 1.387 | 3.732 |
+| circle over the trees | 4225 / 4225 | 16846 | 18340 | 122 | 97 | 10.039 | 2.901 | 8.159 |
+| walk across the hills | 4225 / 4225 | 576 | 669 | 216 | 90 | 10.893 | 1.630 | 4.625 |
+| climb to the clouds | 4225 / 4225 | 21110 | 22921 | 100 | 81 | 11.997 | 3.446 | 9.991 |
+
+1717 MB uploaded, 406 kB a chunk. That is the first row on this page with its
+first column full: 4225 chunks held, and up to 21110 sections drawn in a
+frame. The client at e09ab43 could not be asked the question - 544 MB of room
+at 406 kB a chunk is 1340 chunks, which is render distance 18 - and the rows
+with `697 / 4225` in them below are what it answered instead.
+
+What is still out of reach on this machine is a *recorded* square that big.
+`worldbench` unpacks and meshes every chunk of the distance in one pass, and
+4225 chunks of real terrain is about 1.7 GB of meshes with the unpacked chunks
+beside them, on a 14 GB laptop the owner is using. The tiled square above is
+bounded by the geometry the gpu holds instead, which is what the change was
+about.
+
+### 2. The translucent re-sort on a worker thread
+
+Vanilla sorts a translucent section on its chunk workers; we did it in the
+frame, which meant the faster the client ran the more sorting it did a second.
+A `Blend` is now fixed once built and held by `shared_ptr`, so a thread can
+sort it without holding the map it came from: the frame says where the camera
+is, the thread sorts the two dozen nearest sections not already sorted for
+that block, and the frame copies whatever is finished into its command buffer.
+One frame, one pass, which is the rate the frame sorted at before.
+
+A single picture has no next frame to pick the order up in, so `render` -
+which every worldshot goes through - waits for one pass before it records.
+That is what keeps a still picture the picture the old frame drew.
+
+### 3. One indirect draw instead of one per section
+
+A draw command's `firstInstance` is the section's row in a table of origins
+that the vertex shader reads by `gl_InstanceIndex`, so a section no longer
+needs a push constant and a draw call of its own: the whole opaque pass is one
+`vkCmdDrawIndexedIndirect` and the whole translucent pass is another. The
+table is written straight into device memory the host can map, three frames
+deep. It needs `drawIndirectFirstInstance`, which the device now asks for;
+without it, or with `PLASMA_NOINDIRECT` set, the per-section path is still
+there and the shader takes the origin from the push constant as before.
+
+Sections are walked column by column now, with one frustum test on the box
+around a whole chunk column before any section in it is tested. At render
+distance 32 a column is up to two dozen sections, and most columns are behind
+the camera.
+
+### 4. The cpu overlapped with the gpu
+
+`draw` recorded, submitted and then waited on a fence, so wall time a frame
+was cpu plus gpu plus the driver. There are now two command buffers, two
+fences and two pairs of timestamps: a frame waits for the one submitted two
+frames ago, records, submits and returns. `gpu ms` is that earlier frame's
+reading, and the `gpu ms` numbers below are larger than the ones beside them
+for that reason - a timestamp pair now spans a submission that was queued
+behind another, not one the cpu sat waiting for. Wall time a frame, which is
+what `avg FPS` and `p99 ms` are, is what the change is about.
+
+### The two tables
+
+Every row is 300 measured frames of the same flight over the same recording,
+`drawn` and `ktris` equal in both halves, 1920 by 1080 offscreen, a fresh
+process per scene. The owner's own work was running on the machine throughout,
+which is why these rows are slower than the ones higher up the page; both
+halves of every row carry it.
+
+| scene | RD | flight | chunks / want | drawn | avg FPS before / after | 1% low before / after | p99 ms before / after | CPU ms before / after | GPU ms before / after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| village | 8 | low pass over the water | 289 / 289 | 30 | 943 / 1273 | 514 / 441 | 1.751 / 1.950 | 0.326 / 0.196 | 0.396 / 0.721 |
+| village | 8 | circle over the trees | 289 / 289 | 1153 | 746 / 836 | 406 / 350 | 2.116 / 2.615 | 0.375 / 0.307 | 0.579 / 1.155 |
+| village | 8 | walk across the hills | 289 / 289 | 15 | 984 / 1183 | 541 / 331 | 1.636 / 2.488 | 0.264 / 0.196 | 0.370 / 0.786 |
+| village | 8 | climb to the clouds | 289 / 289 | 1200 | 888 / 1117 | 516 / 493 | 1.632 / 2.000 | 0.295 / 0.240 | 0.461 / 0.861 |
+| village | 16 | low pass over the water | 697 / 1089 | 95 | 496 / 775 | 260 / 339 | 3.535 / 2.758 | 0.889 / 0.441 | 0.829 / 1.249 |
+| village | 16 | circle over the trees | 697 / 1089 | 2342 | 344 / 541 | 217 / 279 | 4.511 / 3.437 | 1.069 / 0.615 | 1.447 / 1.819 |
+| village | 16 | walk across the hills | 697 / 1089 | 97 | 457 / 667 | 224 / 267 | 4.384 / 3.594 | 0.770 / 0.427 | 1.009 / 1.471 |
+| village | 16 | climb to the clouds | 697 / 1089 | 3288 | 300 / 472 | 232 / 281 | 4.205 / 3.312 | 1.063 / 0.629 | 1.868 / 2.086 |
+| village | 32 | low pass over the water | 697 / 4225 | 0 | 603 / 1000 | 328 / 361 | 2.976 / 2.717 | 0.742 / 0.401 | 0.538 / 0.870 |
+| village | 32 | circle over the trees | 697 / 4225 | 3603 | 241 / 398 | 188 / 229 | 5.187 / 4.123 | 1.489 / 0.965 | 2.155 / 2.478 |
+| village | 32 | walk across the hills | 697 / 4225 | 0 | 446 / 632 | 199 / 207 | 4.801 / 4.015 | 0.841 / 0.519 | 0.997 / 1.486 |
+| village | 32 | climb to the clouds | 697 / 4225 | 4912 | 244 / 383 | 203 / 231 | 4.826 / 3.976 | 1.322 / 0.868 | 2.372 / 2.582 |
+| forest | 8 | low pass over the water | 289 / 289 | 21 | 721 / 1155 | 387 / 379 | 2.456 / 2.468 | 0.468 / 0.199 | 0.493 / 0.809 |
+| forest | 8 | circle over the trees | 289 / 289 | 1334 | 648 / 745 | 380 / 396 | 2.400 / 2.427 | 0.458 / 0.306 | 0.724 / 1.312 |
+| forest | 8 | walk across the hills | 289 / 289 | 7 | 874 / 1055 | 521 / 417 | 1.804 / 2.257 | 0.290 / 0.182 | 0.428 / 0.912 |
+| forest | 8 | climb to the clouds | 289 / 289 | 1433 | 686 / 878 | 418 / 487 | 2.089 / 1.809 | 0.380 / 0.238 | 0.684 / 1.117 |
+| forest | 16 | low pass over the water | 697 / 1089 | 0 | 489 / 822 | 255 / 329 | 3.898 / 2.753 | 0.795 / 0.353 | 0.925 / 1.168 |
+| forest | 16 | circle over the trees | 697 / 1089 | 3547 | 274 / 384 | 209 / 234 | 4.730 / 4.210 | 1.169 / 0.734 | 2.186 / 2.576 |
+| forest | 16 | walk across the hills | 697 / 1089 | 67 | 397 / 476 | 209 / 231 | 4.662 / 4.159 | 0.895 / 0.474 | 1.332 / 2.062 |
+| forest | 16 | climb to the clouds | 697 / 1089 | 3221 | 280 / 390 | 230 / 272 | 4.328 / 3.565 | 1.072 / 0.632 | 2.206 / 2.534 |
+| forest | 32 | low pass over the water | 697 / 4225 | 0 | 539 / 901 | 246 / 276 | 3.917 / 3.425 | 0.783 / 0.345 | 0.760 / 1.014 |
+| forest | 32 | circle over the trees | 697 / 4225 | 4947 | 203 / 274 | 151 / 174 | 6.374 / 5.467 | 1.572 / 1.173 | 3.075 / 3.619 |
+| forest | 32 | walk across the hills | 697 / 4225 | 0 | 375 / 473 | 161 / 196 | 5.979 / 5.021 | 0.941 / 0.580 | 1.417 / 2.040 |
+| forest | 32 | climb to the clouds | 697 / 4225 | 5620 | 187 / 270 | 164 / 203 | 6.072 / 4.864 | 1.573 / 1.093 | 3.535 / 3.679 |
+| ocean | 8 | low pass over the water | 289 / 289 | 29 | 757 / 1158 | 414 / 381 | 2.259 / 2.016 | 0.515 / 0.221 | 0.465 / 0.821 |
+| ocean | 8 | circle over the trees | 289 / 289 | 1186 | 499 / 721 | 329 / 365 | 2.896 / 2.594 | 0.830 / 0.384 | 0.737 / 1.329 |
+| ocean | 8 | walk across the hills | 289 / 289 | 41 | 670 / 898 | 368 / 408 | 2.587 / 2.357 | 0.573 / 0.258 | 0.549 / 1.080 |
+| ocean | 8 | climb to the clouds | 289 / 289 | 1344 | 695 / 940 | 427 / 503 | 2.047 / 1.700 | 0.404 / 0.257 | 0.635 / 1.035 |
+| ocean | 16 | low pass over the water | 835 / 1089 | 163 | 408 / 713 | 222 / 318 | 4.347 / 2.834 | 0.954 / 0.444 | 1.089 / 1.369 |
+| ocean | 16 | circle over the trees | 835 / 1089 | 3637 | 231 / 347 | 176 / 198 | 5.500 / 4.551 | 1.673 / 0.889 | 2.260 / 2.860 |
+| ocean | 16 | walk across the hills | 835 / 1089 | 121 | 374 / 499 | 202 / 252 | 4.907 / 3.776 | 1.108 / 0.528 | 1.241 / 1.970 |
+| ocean | 16 | climb to the clouds | 835 / 1089 | 4397 | 237 / 308 | 183 / 242 | 5.315 / 3.951 | 1.397 / 0.863 | 2.386 / 3.218 |
+| ocean | 32 | low pass over the water | 987 / 4225 | 0 | 371 / 631 | 197 / 240 | 4.986 / 3.812 | 1.002 / 0.476 | 1.335 / 1.508 |
+| ocean | 32 | circle over the trees | 987 / 4225 | 5391 | 158 / 237 | 129 / 163 | 7.618 / 6.036 | 2.173 / 1.356 | 3.787 / 4.195 |
+| ocean | 32 | walk across the hills | 987 / 4225 | 0 | 277 / 366 | 137 / 165 | 7.154 / 5.873 | 1.378 / 0.744 | 1.946 / 2.650 |
+| ocean | 32 | climb to the clouds | 987 / 4225 | 7463 | 164 / 218 | 142 / 172 | 6.880 / 5.778 | 2.004 / 1.382 | 3.864 / 4.561 |
+| mountain | 8 | low pass over the water | 289 / 289 | 36 | 945 / 1174 | 398 / 380 | 2.132 / 2.205 | 0.307 / 0.181 | 0.455 / 0.787 |
+| mountain | 8 | circle over the trees | 289 / 289 | 1181 | 728 / 781 | 393 / 405 | 2.119 / 2.375 | 0.451 / 0.317 | 0.650 / 1.230 |
+| mountain | 8 | walk across the hills | 289 / 289 | 1 | 1113 / 1358 | 524 / 426 | 1.853 / 1.936 | 0.219 / 0.159 | 0.347 / 0.687 |
+| mountain | 8 | climb to the clouds | 289 / 289 | 1674 | 735 / 867 | 447 / 476 | 1.999 / 1.844 | 0.406 / 0.274 | 0.655 / 1.122 |
+| mountain | 16 | low pass over the water | 697 / 1089 | 0 | 758 / 890 | 291 / 307 | 3.214 / 3.195 | 0.517 / 0.285 | 0.593 / 1.077 |
+| mountain | 16 | circle over the trees | 697 / 1089 | 3946 | 348 / 417 | 231 / 233 | 4.279 / 4.252 | 1.170 / 0.730 | 1.457 / 2.376 |
+| mountain | 16 | walk across the hills | 697 / 1089 | 2 | 556 / 652 | 235 / 229 | 4.051 / 3.783 | 0.698 / 0.399 | 0.858 / 1.497 |
+| mountain | 16 | climb to the clouds | 697 / 1089 | 3092 | 317 / 446 | 210 / 299 | 4.274 / 3.329 | 1.126 / 0.585 | 1.763 / 2.213 |
+| mountain | 32 | low pass over the water | 814 / 4225 | 0 | 763 / 1104 | 251 / 298 | 3.855 / 3.209 | 0.574 / 0.296 | 0.467 / 0.778 |
+| mountain | 32 | circle over the trees | 814 / 4225 | 5601 | 221 / 280 | 162 / 176 | 6.001 / 5.205 | 1.782 / 1.235 | 2.481 / 3.551 |
+| mountain | 32 | walk across the hills | 814 / 4225 | 0 | 421 / 585 | 184 / 218 | 5.351 / 4.417 | 0.887 / 0.509 | 1.104 / 1.623 |
+| mountain | 32 | climb to the clouds | 814 / 4225 | 6417 | 164 / 264 | 138 / 180 | 7.167 / 5.063 | 1.900 / 1.201 | 3.837 / 3.757 |
+
+Average frames a second is up in all 48 rows and cpu time a frame is down in
+all 48, by a third to a half. The 1% low and p99 columns at render distance 8
+are sometimes worse: a frame of latency is a frame of latency, and where a
+flight already runs over a thousand frames a second, one hitch now shows up a
+frame later.
+
+And inside the renderer, where it came from. `draw calls before` is the
+sections the opaque pass drew, each one a `vkCmdPushConstants` and a
+`vkCmdDrawIndexed`, and every section with translucent quads cost the same
+again in the second pass; `after` is the indirect draws, one a pass.
+
+| scene | RD | flight | renderer before / after | sort before / after | geometry before / after | draw calls before / after |
+| --- | --- | --- | --- | --- | --- | --- |
+| village | 8 | low pass over the water | 0.266 / 0.143 | 0.139 / 0.021 | 0.068 / 0.049 | 30 / 2 |
+| village | 8 | circle over the trees | 0.311 / 0.247 | 0.054 / 0.010 | 0.156 / 0.123 | 1153 / 2 |
+| village | 8 | walk across the hills | 0.202 / 0.140 | 0.061 / 0.009 | 0.072 / 0.055 | 15 / 2 |
+| village | 8 | climb to the clouds | 0.240 / 0.185 | 0.032 / 0.002 | 0.148 / 0.129 | 1200 / 2 |
+| village | 16 | low pass over the water | 0.796 / 0.370 | 0.353 / 0.063 | 0.298 / 0.193 | 95 / 2 |
+| village | 16 | circle over the trees | 0.968 / 0.542 | 0.222 / 0.016 | 0.529 / 0.338 | 2342 / 2 |
+| village | 16 | walk across the hills | 0.682 / 0.364 | 0.194 / 0.022 | 0.344 / 0.225 | 97 / 2 |
+| village | 16 | climb to the clouds | 0.952 / 0.542 | 0.138 / 0.001 | 0.698 / 0.449 | 3288 / 2 |
+| village | 32 | low pass over the water | 0.654 / 0.339 | 0.266 / 0.043 | 0.218 / 0.145 | 0 / 0 |
+| village | 32 | circle over the trees | 1.365 / 0.872 | 0.260 / 0.018 | 0.788 / 0.546 | 3603 / 2 |
+| village | 32 | walk across the hills | 0.746 / 0.448 | 0.178 / 0.023 | 0.405 / 0.274 | 0 / 0 |
+| village | 32 | climb to the clouds | 1.197 / 0.770 | 0.117 / 0.001 | 0.966 / 0.683 | 4912 / 2 |
+| forest | 8 | low pass over the water | 0.419 / 0.167 | 0.254 / 0.029 | 0.083 / 0.053 | 21 / 2 |
+| forest | 8 | circle over the trees | 0.415 / 0.273 | 0.111 / 0.011 | 0.195 / 0.148 | 1334 / 2 |
+| forest | 8 | walk across the hills | 0.255 / 0.151 | 0.113 / 0.012 | 0.073 / 0.059 | 7 / 1 |
+| forest | 8 | climb to the clouds | 0.337 / 0.208 | 0.067 / 0.003 | 0.202 / 0.149 | 1433 / 2 |
+| forest | 16 | low pass over the water | 0.747 / 0.320 | 0.333 / 0.033 | 0.282 / 0.173 | 0 / 0 |
+| forest | 16 | circle over the trees | 1.100 / 0.686 | 0.201 / 0.005 | 0.679 / 0.471 | 3547 / 2 |
+| forest | 16 | walk across the hills | 0.841 / 0.431 | 0.292 / 0.024 | 0.420 / 0.287 | 67 / 2 |
+| forest | 16 | climb to the clouds | 1.005 / 0.582 | 0.166 / 0.001 | 0.738 / 0.493 | 3221 / 2 |
+| forest | 32 | low pass over the water | 0.732 / 0.312 | 0.280 / 0.024 | 0.259 / 0.145 | 0 / 0 |
+| forest | 32 | circle over the trees | 1.484 / 1.110 | 0.165 / 0.002 | 0.982 / 0.791 | 4947 / 2 |
+| forest | 32 | walk across the hills | 0.878 / 0.536 | 0.239 / 0.017 | 0.465 / 0.362 | 0 / 0 |
+| forest | 32 | climb to the clouds | 1.480 / 1.026 | 0.163 / 0.001 | 1.177 / 0.935 | 5620 / 2 |
+| ocean | 8 | low pass over the water | 0.475 / 0.189 | 0.330 / 0.066 | 0.080 / 0.052 | 29 / 2 |
+| ocean | 8 | circle over the trees | 0.783 / 0.341 | 0.485 / 0.092 | 0.187 / 0.133 | 1186 / 2 |
+| ocean | 8 | walk across the hills | 0.530 / 0.220 | 0.370 / 0.069 | 0.085 / 0.065 | 41 / 2 |
+| ocean | 8 | climb to the clouds | 0.363 / 0.222 | 0.086 / 0.004 | 0.203 / 0.152 | 1344 / 2 |
+| ocean | 16 | low pass over the water | 0.899 / 0.402 | 0.480 / 0.098 | 0.282 / 0.181 | 163 / 2 |
+| ocean | 16 | circle over the trees | 1.599 / 0.830 | 0.729 / 0.094 | 0.657 / 0.500 | 3637 / 2 |
+| ocean | 16 | walk across the hills | 1.050 / 0.477 | 0.608 / 0.120 | 0.308 / 0.226 | 121 / 2 |
+| ocean | 16 | climb to the clouds | 1.325 / 0.805 | 0.311 / 0.004 | 0.898 / 0.699 | 4397 / 2 |
+| ocean | 32 | low pass over the water | 0.937 / 0.432 | 0.360 / 0.027 | 0.391 / 0.240 | 0 / 0 |
+| ocean | 32 | circle over the trees | 2.077 / 1.288 | 0.698 / 0.064 | 1.076 / 0.895 | 5391 / 2 |
+| ocean | 32 | walk across the hills | 1.310 / 0.693 | 0.656 / 0.105 | 0.508 / 0.420 | 0 / 0 |
+| ocean | 32 | climb to the clouds | 1.911 / 1.311 | 0.345 / 0.001 | 1.459 / 1.213 | 7463 / 2 |
+| mountain | 8 | low pass over the water | 0.263 / 0.150 | 0.075 / 0.007 | 0.106 / 0.061 | 36 / 2 |
+| mountain | 8 | circle over the trees | 0.403 / 0.281 | 0.067 / 0.006 | 0.221 / 0.162 | 1181 / 2 |
+| mountain | 8 | walk across the hills | 0.185 / 0.131 | 0.049 / 0.005 | 0.077 / 0.052 | 1 / 1 |
+| mountain | 8 | climb to the clouds | 0.363 / 0.240 | 0.045 / 0.002 | 0.259 / 0.179 | 1674 / 2 |
+| mountain | 16 | low pass over the water | 0.475 / 0.251 | 0.135 / 0.008 | 0.236 / 0.139 | 0 / 0 |
+| mountain | 16 | circle over the trees | 1.106 / 0.680 | 0.182 / 0.005 | 0.756 / 0.467 | 3946 / 2 |
+| mountain | 16 | walk across the hills | 0.648 / 0.358 | 0.155 / 0.009 | 0.385 / 0.236 | 2 / 2 |
+| mountain | 16 | climb to the clouds | 1.053 / 0.535 | 0.187 / 0.000 | 0.787 / 0.453 | 3092 / 2 |
+| mountain | 32 | low pass over the water | 0.530 / 0.265 | 0.161 / 0.008 | 0.231 / 0.121 | 0 / 0 |
+| mountain | 32 | circle over the trees | 1.696 / 1.169 | 0.229 / 0.001 | 1.194 / 0.852 | 5601 / 2 |
+| mountain | 32 | walk across the hills | 0.826 / 0.467 | 0.188 / 0.008 | 0.491 / 0.319 | 0 / 0 |
+| mountain | 32 | climb to the clouds | 1.793 / 1.130 | 0.239 / 0.001 | 1.477 / 1.037 | 6417 / 2 |
+
+The sort is 0.000 to 0.120 ms a frame against 0.032 to 0.729, and what is left
+of it is almost all the copy into the command buffer rather than the sorting:
+the ocean's walk across the hills at render distance 16 is 0.120 ms of which
+0.096 is the copy. The loop that culls and records is 0.049 to 1.213 ms
+against 0.068 to 1.477. The rows where it is still the largest part of a frame
+are the ones looking down on five thousand sections from above, where the
+column test cannot help because every column is in view.
+
+### What the pictures say
+
+Eight of the views in `tools/reference_views.py` - the ones that show
+translucency, and some that show none - before and after:
+
+| view | before and after |
+| --- | --- |
+| glass-front | byte-identical |
+| glass-back | byte-identical |
+| lake | byte-identical |
+| lake-close | byte-identical |
+| lake-level | 9 pixels of 2073600 differ |
+| forest-far | byte-identical |
+| spawn-ground | byte-identical |
+| noon | byte-identical |
+
+The nine pixels are at x 1335 to 1343, y 511 to 514, in the water, and the
+largest channel difference is 8 of 255. They are the translucent *sections*
+drawn in the other order, not the quads inside one: the glass views, which are
+one section of stained panes seen from both sides, are byte-identical, and
+those are the views that show quad order.
+
+The cause is the order sections are walked in. `load_chunks`, which is what
+worldshot uses, keeps every chunk packet it is sent, and a replay sends a
+chunk again each time it came back into view, so the same chunk can be in the
+list twice and its sections stand twice in the renderer's table. Walking
+column by column puts those two copies next to each other where they used to
+be far apart, and the translucent pass sorts the visible sections by distance
+with an unstable sort, which leaves equal distances in whatever order they
+arrived in. Both pictures draw the same geometry; they blend two equidistant
+water sections in the other order along one edge. The new order is the same
+from run to run - the view was taken twice with each client and each gave one
+answer - and it is the order a client that holds each chunk once would have
+drawn all along.
+
+### What did not move the number
+
+- Growing the draw table to fit on every append. It waits for the gpu, and a
+  streaming world appends a chunk at a time, so it is doubled instead. This
+  was a cost the first version of the change added, not a win.
+- A device-local host-visible heap for the origin table. It is asked for
+  because it costs nothing to ask where the heap exists, and the plain
+  host-visible fallback is what a gpu without one gets. The two were not
+  measured against each other, so nothing here is a claim that it helped.
