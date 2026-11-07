@@ -6,3 +6,7 @@ ItemInHandRenderer.renderMapHand	absent		a map in the hand is not drawn yet
 ItemInHandRenderer.renderOneHandedMap	absent		a map in the hand is not drawn yet
 ItemInHandRenderer.renderTwoHandedMap	absent		a map in the hand is not drawn yet
 ItemInHandRenderer.renderMap	absent		a map in the hand is not drawn yet
+# What the game does per frame and this client does once, at bake time, in
+# python the ledger does not read: tools/item_render.py and tools/bake_held.py.
+ItemModelGenerator	skip		tools/bake_held.py extrudes a flat sprite once, at bake time
+FaceBakery	skip		tools/item_render.py builds a model's quads once, at bake time
