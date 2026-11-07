@@ -174,6 +174,23 @@ private:
     float off_height_ = 0.0f, off_height_o_ = 0.0f;
 };
 
+// `LivingEntity.swing`, `LivingEntity.updateSwingTime`,
+// `LivingEntity.getAttackAnim`: how far through its swing the arm is, which
+// is the one piece of state the hand reads that is not the pose stack's.
+class SwingClock {
+public:
+    void swing();
+    void tick(int32_t duration = 6);
+    float amount(float partial_tick) const;
+    bool swinging() const { return swinging_; }
+
+private:
+    bool swinging_ = false;
+    int32_t time_ = 0;
+    float anim_ = 0.0f;
+    float anim_o_ = 0.0f;
+};
+
 // `GameRenderer.renderItemInHand`, `ItemInHandRenderer.renderHandsWithItems`,
 // `ItemInHandRenderer.renderArmWithItem`: everything in front of the camera,
 // in camera space, with the hurt reel and the walk bob already under it.

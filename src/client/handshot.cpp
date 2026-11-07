@@ -1,6 +1,7 @@
 #include "client/handshot.hpp"
 
 #include "client/hand.hpp"
+#include "client/hand_view.hpp"
 
 #include "mcpp/entity/assets.hpp"
 #include "mcpp/gpu/device.hpp"
@@ -13,7 +14,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <format>
 #include <iostream>
 #include <string>
@@ -37,35 +37,6 @@ struct Shot {
     int32_t use_duration = 0;
     bool slim = false;
 };
-
-// The hand's draws, placed by the game's own transforms and handed to the gpu.
-void queue(mcpp::gpu::HandRenderer& hand, const mcpp::client::HandPlayer& player,
-           const mcpp::client::HandBob& bob, bool slim) {
-    mcpp::client::HandDraw draws[2];
-    int count = 0;
-    mcpp::client::hands_with_items(player, bob, draws, count);
-    hand.begin();
-    for (int i = 0; i < count; ++i) {
-        const auto& draw = draws[i];
-        if (draw.is_arm) {
-            hand.add_arm(draw.pose, draw.arm == mcpp::client::Arm::Left, slim, true);
-            continue;
-        }
-        const bool left = draw.arm == mcpp::client::Arm::Left;
-        const auto display = hand.item_display(draw.item, left);
-        mcpp::client::Pose pose;
-        pose.matrix = draw.pose;
-        pose.identity = false;
-        pose.moved_only = false;
-        mcpp::client::ItemDisplay transform;
-        std::memcpy(transform.rotation, display.rotation, sizeof(transform.rotation));
-        std::memcpy(transform.translation, display.translation, sizeof(transform.translation));
-        std::memcpy(transform.scale, display.scale, sizeof(transform.scale));
-        transform.present = display.present;
-        mcpp::client::apply_display_transform(pose, transform, left);
-        hand.add_item(draw.item, pose.matrix, draw.pull);
-    }
-}
 
 } // namespace
 
@@ -158,7 +129,7 @@ int handshot(int argc, char** argv) {
             bob.tick(swapping);
         }
 
-        queue(hand, player, bob, shot.slim);
+        queue_hand(hand, player, bob, shot.slim);
         const float light[3] = {1.0f, 1.0f, 1.0f};
         world.set_hand([&](VkCommandBuffer command, const float*, uint32_t width,
                            uint32_t height, const float*, const mcpp::gpu::Camera&) {

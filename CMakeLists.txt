@@ -280,3 +280,6 @@ add_custom_target(mcpp_shaders_hand DEPENDS ${MCPP_SHADER_DIR}/HandVert.hpp
 add_dependencies(mcpp_net mcpp_shaders_hand)
 target_sources(mcpp_net PRIVATE src/gpu/hand.cpp)
 target_sources(plasma-client PRIVATE src/client/hand.cpp src/client/handshot.cpp)
+if(glfw3_FOUND)
+    target_sources(plasma-client PRIVATE src/client/hand_view.cpp)
+endif()

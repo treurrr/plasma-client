@@ -1,6 +1,7 @@
 #include "client/game.hpp"
 #include "client/player_rules.hpp"
 #include "client/breaking.hpp"
+#include "client/hand_view.hpp"
 
 #include "mcpp/jmath.hpp"
 #include "mcpp/world/shape_edges.hpp"
@@ -254,6 +255,7 @@ void player_start(Game& game) {
     player.last_turn = std::chrono::steady_clock::now();
     player.started = true;
     breaking_start(game);
+    hand_start(game);
 }
 
 void player_input(Game&) {}
@@ -304,6 +306,7 @@ void player_tick(Game& game) {
             send_tick(session, body);
             ++player.ticks_sent;
             breaking_tick(game);
+        hand_tick(game);
         } catch (const std::exception& error) {
             std::cerr << std::format("movement stopped: {}\n", error.what());
             player.connection_lost = true;
@@ -416,9 +419,13 @@ void player_draw(Game& game) {
     player.fov = fov;
     aim_outline(game);
     breaking_draw(game);
+    hand_draw(game);
 }
 
-void player_stop(Game& game) { breaking_stop(game); }
+void player_stop(Game& game) {
+    breaking_stop(game);
+    hand_stop(game);
+}
 
 bool player_send(Game& game) { return !game.player.connection_lost; }
 

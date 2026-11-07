@@ -346,6 +346,36 @@ void HandBob::tick(const HandPlayer& player) {
     if (off_height_ < 0.1f) off_item_ = player.off_item;
 }
 
+// `LivingEntity.swing`: a swing starts, or starts again past its half way.
+void SwingClock::swing() {
+    if (!swinging_ || time_ >= 3 || time_ < 0) {
+        time_ = -1;
+        swinging_ = true;
+    }
+}
+
+// `LivingEntity.updateSwingTime`.
+void SwingClock::tick(int32_t duration) {
+    anim_o_ = anim_;
+    if (swinging_) {
+        ++time_;
+        if (time_ >= duration) {
+            time_ = 0;
+            swinging_ = false;
+        }
+    } else {
+        time_ = 0;
+    }
+    anim_ = static_cast<float>(time_) / static_cast<float>(duration);
+}
+
+// `LivingEntity.getAttackAnim`.
+float SwingClock::amount(float partial_tick) const {
+    float step = anim_ - anim_o_;
+    if (step < 0.0f) step += 1.0f;
+    return anim_o_ + step * partial_tick;
+}
+
 // `ItemInHandRenderer.itemUsed`.
 void HandBob::item_used(HandSide hand) {
     if (hand == HandSide::Main) main_height_ = 0.0f;
