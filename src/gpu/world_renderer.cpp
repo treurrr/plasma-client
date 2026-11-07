@@ -446,27 +446,22 @@ void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     check(vkCreateImageView(device_.handle(), &view, nullptr, &atlas_view_),
           "vkCreateImageView atlas");
 
-    // Nearest magnification keeps the blocky look up close; minification needs
-    // mips and anisotropy or distant surfaces crawl with aliasing.
+    // `LevelRenderer.renderLevel`: the block atlas is sampled linearly in both
+    // directions, through the whole mip chain, clamped at the edge, with
+    // anisotropy off. What keeps a texel crisp is not a nearest filter but the
+    // snapping the fragment shader does; a nearest filter here is what makes a
+    // far-away floor show the 4x4 mip level as hard squares.
     VkSamplerCreateInfo sampler{};
     sampler.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampler.magFilter = VK_FILTER_NEAREST;
-    // Nearest inside a mip level, linear only between levels, which is what
-    // the game does. Filtering inside a level blends an opaque texel with its
-    // transparent neighbour, and a transparent texel is black, so every cutout
-    // texture - leaves, grass, every plant - comes out darkened at its edges.
-    sampler.minFilter = VK_FILTER_NEAREST;
+    sampler.magFilter = VK_FILTER_LINEAR;
+    sampler.minFilter = VK_FILTER_LINEAR;
     sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler.maxLod = static_cast<float>(mips);
-    if (device_.adapter().capabilities.sampler_anisotropy) {
-        sampler.anisotropyEnable = VK_TRUE;
-        sampler.maxAnisotropy = std::min(16.0f, device_.adapter().capabilities.max_anisotropy);
-    }
-    // Layers cannot bleed into one another, so uvs outside 0..1 can repeat the
-    // way some block models expect.
-    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    // One texture per layer, so clamping stays inside the texture it belongs
+    // to and no two of them can bleed into one another.
+    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
     check(vkCreateSampler(device_.handle(), &sampler, nullptr, &sampler_), "vkCreateSampler");
 
@@ -1561,6 +1556,10 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         push.eye[1] = camera.eye[1];
         push.eye[2] = camera.eye[2];
         push.eye[3] = kCutout;
+        push.extra[0] = static_cast<float>(atlas_tile_);
+        // `GraphicsPreset.FANCY`: the rotated grid is what the default preset
+        // picks, and it is what the default preset's pictures are compared to.
+        push.extra[1] = 1.0f;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
                                                            static_cast<float>(height_));
         const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
