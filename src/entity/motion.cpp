@@ -106,6 +106,7 @@ void Living::spawn(const Entity& entity) {
     y_rot_o = y_rot;
     x_rot_o = x_rot;
     last_stable_y_head_rot_ = y_head_rot;
+    on_ground = entity.on_ground;
 }
 
 // `Entity.snapTo`: jump to a position and angles, old ones too.

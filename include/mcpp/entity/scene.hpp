@@ -1,6 +1,9 @@
 #pragma once
 #include "mcpp/entity/assets.hpp"
+#include "mcpp/entity/equipment.hpp"
 #include "mcpp/entity/humanoid.hpp"
+#include "mcpp/entity/mob_tick.hpp"
+#include "mcpp/entity/mobs.hpp"
 #include "mcpp/entity/motion.hpp"
 #include "mcpp/gpu/entity_renderer.hpp"
 #include "mcpp/session.hpp"
@@ -11,6 +14,8 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -36,6 +41,7 @@ struct View {
 struct SceneStats {
     size_t tracked = 0;
     size_t drawn = 0;
+    size_t layers = 0;
     size_t parts = 0;
     double pose_ms = 0.0;
 };
@@ -46,8 +52,10 @@ class Scene {
 public:
     Scene(std::vector<std::string> types, skins::Cache* skins = nullptr);
 
-    // Model numbers from the renderer, once it has loaded them.
+    // Model numbers from the renderer, once it has loaded them; the armour
+    // textures too, when they have been baked.
     void bind(const gpu::EntityRenderer& renderer);
+    void bind(const gpu::EntityRenderer& renderer, const EquipmentAssets* equipment);
 
     void add(const Entity& entity);
     void moved(const EntityMove& move);
@@ -61,18 +69,47 @@ public:
     void player_gone(std::string_view uuid);
     void clear();
 
-    // Once A's metadata reaches the entity: the pose and the flags byte.
-    void set_crouching(int32_t id, bool crouching);
+    // What set_entity_data last said about this entity, every index merged.
+    void metadata(int32_t id, const proto::Metadata& data);
+    // What set_equipment last said is worn and held.
+    void equipment(int32_t id, const Equipment& worn);
+    // set_passengers: a rider sits, and the vehicle's own walk drives nothing.
+    void riding(int32_t id, bool passenger);
 
     void tick();
     void draw(gpu::EntityRenderer& renderer, const View& view, const LightAt& light);
 
     const SceneStats& stats() const { return stats_; }
     const Living* living(int32_t id) const;
+    const MobState* state(int32_t id) const;
     std::string_view type_name(int32_t type) const;
 
 private:
     enum class Kind : uint8_t { Other, Player };
+
+    // One model and texture to draw over a body: the base layer, an overlay,
+    // or one armour piece.
+    struct Layer {
+        int32_t model = -1;
+        const MobModel* animator = nullptr;
+        int32_t texture = -1;
+        Overlay kind = Overlay::Plain;
+        gpu::EntityRenderer::Type render = gpu::EntityRenderer::Type::CutoutNoCull;
+    };
+
+    // Everything about one entity type that is the same for every entity of
+    // it, worked out the first time one is seen.
+    struct TypeInfo {
+        const MobType* row = nullptr;
+        bool ready = false;
+        std::array<Layer, 2> base{};   // adult, baby
+        std::array<std::vector<Layer>, 2> overlays{};
+        // `HumanoidArmorLayer`: feet, legs, chest, head, adult and baby. The
+        // texture comes from the item, so only the model is settled here.
+        std::array<std::array<Layer, 4>, 2> armour{};
+        bool has_armour = false;
+    };
+
     struct Skin {
         std::string url;
         bool slim = false;
@@ -85,8 +122,13 @@ private:
         Kind kind = Kind::Other;
         std::string uuid;
         Living living;
+        MobState state;
         Pose pose;
-        bool crouching = false;
+        Equipment worn;
+        // What set_entity_data said, kept so every tick can read it again.
+        proto::Metadata data;
+        // The counters this mob's own tick keeps, which no packet carries.
+        MobTick own;
     };
     struct PlayerLine {
         std::string name;
@@ -97,28 +139,58 @@ private:
     };
 
     Tracked* find(int32_t id);
+    TypeInfo& type_info(int32_t type);
+    // The model for a layer, built once and shared by every entity using it.
+    const MobModel* animator(std::string_view layer);
+    Layer layer_for(std::string_view layer_name, std::string_view texture, Overlay kind,
+                    gpu::EntityRenderer::Type render);
+
+    void fill_shared_state(Tracked& tracked, const View& view) const;
+    uint32_t dyed_colour(const ItemStack& stack) const;
+    void draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
+                  const LightAt& light);
     void draw_player(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
                      const LightAt& light);
+    // One model over an already-posed body: an overlay, or an armour piece.
+    void submit(gpu::EntityRenderer& renderer, const Layer& layer, const MobState& state,
+                const Matrix& root, const gpu::EntityRenderer::Instance& like);
+    void submit_armour(gpu::EntityRenderer& renderer, std::span<const Layer> models,
+                       const Tracked& tracked, const Matrix& root,
+                       const gpu::EntityRenderer::Instance& like);
     void name_tag(gpu::EntityRenderer& renderer, const Tracked& tracked, const View& view,
                   std::string_view text, double x, double y, double z, bool discrete,
                   std::array<uint8_t, 2> light);
     int32_t skin_layer(gpu::EntityRenderer& renderer, Skin& skin);
+    // The root placement every layer of one entity hangs from.
+    Matrix root_of(const Tracked& tracked, const MobModel& model, const View& view) const;
 
     std::vector<std::string> types_;
     int32_t player_type_ = -1;
     skins::Cache* skins_;
+    const gpu::EntityRenderer* renderer_ = nullptr;
+    const EquipmentAssets* equipment_ = nullptr;
     std::vector<Tracked> tracked_;
     std::unordered_map<int32_t, size_t> index_;
     std::map<std::string, PlayerLine, std::less<>> players_;
     // A skin layer per url, shared by everyone wearing that skin.
     std::map<std::string, std::pair<int32_t, int32_t>, std::less<>> layers_;
+    // One model object per layer, and one worked-out row per entity type.
+    std::map<std::string, std::unique_ptr<MobModel>, std::less<>> models_;
+    std::vector<TypeInfo> type_info_;
 
     int32_t wide_model_ = -1;
     int32_t slim_model_ = -1;
-    HumanoidParts wide_parts_;
-    HumanoidParts slim_parts_;
+    const Avatar* wide_ = nullptr;
+    const Avatar* slim_ = nullptr;
+    // The player's own four armour layers, wide and slim.
+    std::array<std::array<Layer, 4>, 2> player_armour_{};
     std::vector<Matrix> matrices_;
+    // The pose an overlay or an armour piece is animated into: one layer at a
+    // time, so one buffer serves them all.
+    Pose scratch_;
     SceneStats stats_;
+    uint64_t ticks_ = 0;
+    int32_t protocol_ = 774;
 };
 
 } // namespace mcpp::entity

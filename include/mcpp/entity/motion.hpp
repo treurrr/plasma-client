@@ -82,6 +82,7 @@ struct Living {
     bool dead = false;
     bool passenger = false;
     bool baby = false;
+    bool on_ground = false;
     float max_head_rotation = 50.0f;
 
     // add_entity: placed, not eased, with the body facing where the head does.

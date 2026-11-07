@@ -113,6 +113,7 @@ struct EntitiesArea {
     mcpp::entity::Assets assets;
     std::optional<mcpp::skins::Cache> skins;
     std::optional<mcpp::entity::Scene> scene;
+    mcpp::entity::EquipmentAssets equipment;
     std::optional<mcpp::gpu::EntityRenderer> renderer;
     // G: the blocks the game draws with a model of their own.
     mcpp::entity::BlockEntityTable block_entity_table;

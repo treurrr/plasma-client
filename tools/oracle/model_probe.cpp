@@ -73,10 +73,10 @@ int main() {
     };
     for (const char* name : {"player", "player_slim"}) {
         const auto* model = set.find(name);
-        const auto parts = mcpp::entity::HumanoidParts::of(*model);
+        mcpp::entity::Avatar avatar(*model, std::string_view(name) == "player_slim");
         mcpp::entity::Pose pose(*model);
         for (const auto& c : cases) {
-            mcpp::entity::HumanoidState s;
+            mcpp::entity::MobState s;
             s.walk_position = c[0];
             s.walk_speed = c[1];
             s.y_rot = c[2];
@@ -85,11 +85,11 @@ int main() {
             s.attack_time = c[5];
             s.crouching = c[6] != 0;
             s.swim_amount = c[7];
-            s.attack_left = c[8] != 0;
+            s.attack_arm_left = c[8] != 0;
             s.passenger = c[9] != 0;
-            mcpp::entity::animate_player(*model, parts, s, pose);
+            avatar.animate(s, pose);
             for (size_t i = 0; i < model->parts.size(); ++i) {
-                if (model->parts[i].path == "root") continue;
+                if (model->parts[i].path == mcpp::entity::kRootPath) continue;
                 const auto& p = pose.parts[i];
                 std::cout << bits(p.x) << ',' << bits(p.y) << ',' << bits(p.z) << ','
                           << bits(p.x_rot) << ',' << bits(p.y_rot) << ',' << bits(p.z_rot) << ','

@@ -75,7 +75,7 @@ public final class ExportModels {
     private static void part(PrintStream out, String path, PartDefinition part, int texW, int texH)
             throws Exception {
         PartPose pose = (PartPose) POSE.get(part);
-        StringBuilder line = new StringBuilder("part ").append(path.isEmpty() ? "root" : path);
+        StringBuilder line = new StringBuilder("part ").append(path.isEmpty() ? "." : path);
         if (pose.x() != 0 || pose.y() != 0 || pose.z() != 0) {
             line.append(" pivot ").append(three(pose.x(), pose.y(), pose.z()));
         }

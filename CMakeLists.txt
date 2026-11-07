@@ -156,8 +156,18 @@ add_library(mcpp_net STATIC
     src/entity/assets.cpp
     src/entity/motion.cpp
     src/entity/humanoid.cpp
+    src/entity/mobs.cpp
+    src/entity/mob_humanoid.cpp
+    src/entity/mob_animal.cpp
+    src/entity/mob_monster.cpp
+    src/entity/mob_keyframe.cpp
+    src/entity/mob_tick.cpp
+    src/entity/animation.cpp
+    src/entity/dye.cpp
+    src/entity/equipment.cpp
     src/entity/scene.cpp
     src/entity/block_entities.cpp
+    src/entity/held_items.cpp
     src/skins.cpp
     src/gpu/entity_renderer.cpp
 )
@@ -300,3 +310,6 @@ target_include_directories(test_hand PRIVATE src)
 
 # F: the multiplayer path, the options screens, chat and death.
 mcpp_test(menus)
+
+# The item in the hand of something in the world, not in front of the camera.
+mcpp_test(held)

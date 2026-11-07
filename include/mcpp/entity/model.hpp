@@ -42,6 +42,11 @@ struct Part {
     std::vector<Box> boxes;
 };
 
+// The path of a layer's own root. A layer may have a part named "root" of its
+// own - the allay, the frog, the vex, the creaking and the nautilus all do -
+// so the root itself cannot be called that.
+inline constexpr std::string_view kRootPath = ".";
+
 // One layer as the game builds it ("player", "zombie#outer_armor"), parents
 // always before their children.
 struct Model {

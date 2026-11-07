@@ -119,6 +119,10 @@ struct WorldBorder {
 // Everything the server says about another thing in the world, as of the last
 // packet about it. Angles are in degrees; velocity is in blocks per tick,
 // which is the unit the game moves in.
+// What an entity wears and holds; its own definition needs ItemStack, which
+// comes further down.
+struct Equipment;
+
 struct Entity {
     int32_t id = 0;
     uint64_t uuid[2]{};
@@ -151,6 +155,7 @@ struct EntityMove {
     bool has_rotation = false;
     // entity_position_sync or teleport_entity: snapped instead when far.
     bool absolute = false;
+    bool on_ground = false;
 };
 
 // One line of the player list. The list is what turns a player entity's uuid
@@ -364,6 +369,8 @@ struct SessionEvents {
         std::function<void(int32_t, float)> on_head;
         // damage_event: the walk cycle kicks and the entity flashes red.
         std::function<void(int32_t)> on_damage;
+        // set_equipment: one or more of an entity's slots changed.
+        std::function<void(int32_t, const Equipment&)> on_equipment;
     } entities;
 
     struct Player {
@@ -483,6 +490,21 @@ struct ItemStack {
     int32_t count = 0;
     bool readable = true;
     proto::Components components;
+};
+
+// `EquipmentSlot`, in the game's own order: what set_equipment last said is
+// worn or held in each slot. An empty slot is a stack with a count of zero.
+struct Equipment {
+    enum Slot : uint8_t { MainHand, OffHand, Feet, Legs, Chest, Head, Body, Saddle, Count };
+    std::array<ItemStack, Count> slots;
+
+    const ItemStack& operator[](Slot slot) const { return slots[slot]; }
+    bool empty(Slot slot) const { return slots[slot].count <= 0; }
+    // The hand on one side of the body, for a mob whose main arm may be the
+    // left one.
+    const ItemStack& arm(bool left, bool main_arm_right) const {
+        return slots[left == main_arm_right ? OffHand : MainHand];
+    }
 };
 
 // The player's own inventory, in the order the server sends it: a crafting
@@ -689,6 +711,9 @@ public:
     // An entity's data, or the player's own for entity_id(); empty for one the
     // server has said nothing about.
     const proto::Metadata& metadata(int32_t entity) const;
+    // set_equipment: what an entity wears and holds; every slot empty for one
+    // the server has said nothing about.
+    const Equipment& equipment(int32_t entity) const;
     // A container's properties from container_set_data, by property index:
     // a furnace's fuel and progress, an enchanting table's offers.
     const std::map<int32_t, int32_t>& container_properties(int32_t container) const;
@@ -751,6 +776,7 @@ private:
         std::map<int32_t, Entity> entities;
         std::map<int32_t, std::map<int32_t, MobEffect>> effects;
         std::map<int32_t, std::map<std::string, Attribute, std::less<>>> attributes;
+        std::map<int32_t, Equipment> equipment;
         bool in_bundle = false;
         bool player_list_broken = false;
         int32_t ping_ms = -1;

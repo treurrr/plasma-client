@@ -39,6 +39,14 @@ void in_camera(const float in[3], const Matrix4& view, float out[4]) {
     out[3] = 0.0f;
 }
 
+// The same direction for a queue that is already in the world's own axes, so
+// nothing turns it: what the entity shader holds as a constant.
+void in_world(const float in[3], float out[4]) {
+    const float length = std::sqrt(in[0] * in[0] + in[1] * in[1] + in[2] * in[2]);
+    for (int row = 0; row < 3; ++row) out[row] = in[row] / length;
+    out[3] = 0.0f;
+}
+
 void transform_point(const entity::Matrix& m, const float in[3], float out[3]) {
     for (int row = 0; row < 3; ++row) {
         out[row] = m[row] * in[0] + m[4 + row] * in[1] + m[8 + row] * in[2] + m[12 + row];
@@ -200,7 +208,7 @@ HandRenderer::HandRenderer(Device& device, VkFormat colour_format, VkFormat dept
     desc.depth_format = depth_format;
     pipeline_ = vk::pipeline(device_, desc);
 
-    auto ring = vk::mapped_buffer(device_, VkDeviceSize{kSlots} * kMaxVertices * sizeof(Vertex),
+    auto ring = vk::mapped_buffer(device_, VkDeviceSize{kSlots} * kSlotVertices * sizeof(Vertex),
                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     buffer_ = ring.buffer;
     memory_ = ring.memory;
@@ -305,6 +313,8 @@ void HandRenderer::load_arm(const entity::Model& wide, const entity::Model& slim
 
 void HandRenderer::begin() {
     vertices_.clear();
+    world_.clear();
+    runs_.clear();
     slot_ = (slot_ + 1) % kSlots;
 }
 
@@ -322,7 +332,8 @@ void HandRenderer::add_triangle(const entity::Vertex& vertex, const entity::Matr
     vertices_.push_back(out);
 }
 
-void HandRenderer::add_item(int32_t item, const entity::Matrix& pose, float pull) {
+void HandRenderer::add_quads(std::vector<Vertex>& out, uint32_t limit, int32_t item,
+                             const entity::Matrix& pose, float pull) {
     if (item < 0 || static_cast<uint32_t>(item) >= item_count_) return;
     const Entry& entry = items_[static_cast<size_t>(item)];
     // `RangeSelectItemModel`: how far a bow or a crossbow is drawn picks the
@@ -346,10 +357,27 @@ void HandRenderer::add_item(int32_t item, const entity::Matrix& pose, float pull
             corners[c].colour = quad.colour;
         }
         for (const int c : {0, 1, 2, 0, 2, 3}) {
-            if (vertices_.size() >= kMaxVertices) return;
-            vertices_.push_back(corners[c]);
+            if (out.size() >= limit) return;
+            out.push_back(corners[c]);
         }
     }
+}
+
+void HandRenderer::add_item(int32_t item, const entity::Matrix& pose, float pull) {
+    add_quads(vertices_, kMaxVertices, item, pose, pull);
+}
+
+void HandRenderer::add_world_item(int32_t item, const entity::Matrix& pose, const float light[3],
+                                  float pull) {
+    const size_t before = world_.size();
+    add_quads(world_, kMaxWorldVertices, item, pose, pull);
+    if (world_.size() == before) return;
+    const bool same = !runs_.empty() && runs_.back().light[0] == light[0]
+                      && runs_.back().light[1] == light[1] && runs_.back().light[2] == light[2];
+    if (!same) {
+        runs_.push_back({static_cast<uint32_t>(before), 0, {light[0], light[1], light[2]}});
+    }
+    runs_.back().count += static_cast<uint32_t>(world_.size() - before);
 }
 
 // `AvatarRenderer.renderHand`: the arm alone, reset to the model's own pose
@@ -377,7 +405,7 @@ void HandRenderer::add_arm(const entity::Matrix& pose, bool left_arm, bool slim,
 void HandRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t height,
                           const float light[3], const Camera& camera) {
     if (vertices_.empty()) return;
-    const size_t offset = size_t{slot_} * kMaxVertices * sizeof(Vertex);
+    const size_t offset = size_t{slot_} * kSlotVertices * sizeof(Vertex);
     std::memcpy(static_cast<uint8_t*>(mapped_) + offset, vertices_.data(),
                 vertices_.size() * sizeof(Vertex));
 
@@ -403,6 +431,46 @@ void HandRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t heig
     const VkDeviceSize vertex_offset = offset;
     vkCmdBindVertexBuffers(command, 0, 1, &buffer_, &vertex_offset);
     vkCmdDraw(command, static_cast<uint32_t>(vertices_.size()), 1, 0, 0);
+}
+
+void HandRenderer::record_world(VkCommandBuffer command, const float view_projection[16],
+                                const double eye[3], uint32_t width, uint32_t height) {
+    if (world_.empty()) return;
+    const size_t offset = (size_t{slot_} * kSlotVertices + kMaxVertices) * sizeof(Vertex);
+    std::memcpy(static_cast<uint8_t*>(mapped_) + offset, world_.data(),
+                world_.size() * sizeof(Vertex));
+
+    Push push{};
+    // Every item is posed relative to the camera, so the camera's own
+    // translation goes back into the matrix, as the entity renderer does it.
+    std::memcpy(push.projection, view_projection, sizeof(push.projection));
+    for (int row = 0; row < 4; ++row) {
+        push.projection[12 + row] = view_projection[row] * static_cast<float>(eye[0])
+                                    + view_projection[4 + row] * static_cast<float>(eye[1])
+                                    + view_projection[8 + row] * static_cast<float>(eye[2])
+                                    + view_projection[12 + row];
+    }
+    in_world(kLight0, push.light0);
+    in_world(kLight1, push.light1);
+
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &set_, 0,
+                            nullptr);
+    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height),
+                              0.0f, 1.0f};
+    const VkRect2D scissor{{0, 0}, {width, height}};
+    vkCmdSetViewport(command, 0, 1, &viewport);
+    vkCmdSetScissor(command, 0, 1, &scissor);
+    const VkDeviceSize vertex_offset = offset;
+    vkCmdBindVertexBuffers(command, 0, 1, &buffer_, &vertex_offset);
+    for (const WorldRun& run : runs_) {
+        for (int i = 0; i < 3; ++i) push.lightmap[i] = run.light[i];
+        push.lightmap[3] = 1.0f;
+        vkCmdPushConstants(command, layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           sizeof(Push), &push);
+        vkCmdDraw(command, run.count, 1, run.first, 0);
+    }
 }
 
 } // namespace mcpp::gpu

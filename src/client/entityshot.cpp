@@ -3,7 +3,9 @@
 #include "client/common.hpp"
 
 #include "mcpp/entity/assets.hpp"
+#include "mcpp/entity/equipment.hpp"
 #include "mcpp/entity/humanoid.hpp"
+#include "mcpp/entity/mobs.hpp"
 #include "mcpp/entity/scene.hpp"
 #include "mcpp/session.hpp"
 #include "mcpp/gpu/device.hpp"
@@ -18,6 +20,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <cstring>
@@ -52,9 +55,11 @@ std::string read_file(const std::filesystem::path& path) {
 // no world, nothing between the camera and the model.
 int entityshot(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "usage: entityshot <model> [out-prefix] [--skin <png>|<texture>] "
-                     "[--models <file>] [--property <file>] [--walk <phase>] [--yaw <head>] [--pitch <deg>] "
-                     "[--close] [--crouch] [--age <ticks>] [--swing <0..1>]\n";
+        std::cerr << "usage: entityshot <model|minecraft:type> [out-prefix] "
+                     "[--skin <png>|<texture>] [--models <file>] [--property <file>] "
+                     "[--walk <phase>] [--yaw <head>] [--pitch <deg>] [--close] [--crouch] "
+                     "[--age <ticks>] [--swing <0..1>] [--baby] [--armour <asset>] "
+                     "[--hold <item>]\n";
         return 2;
     }
     const std::string model_name = argv[2];
@@ -69,6 +74,8 @@ int entityshot(int argc, char** argv) {
     float age = 0.0f;
     bool close = false;
     bool crouch = false;
+    bool baby = false;
+    std::string armour;
     for (int i = 3; i < argc; ++i) {
         const std::string argument = argv[i];
         const auto next = [&]() -> std::string {
@@ -85,6 +92,8 @@ int entityshot(int argc, char** argv) {
         else if (argument == "--close") close = true;
         else if (argument == "--crouch") crouch = true;
         else if (argument == "--age") age = std::stof(next());
+        else if (argument == "--baby") baby = true;
+        else if (argument == "--armour") armour = next();
         else prefix = argument;
     }
 
@@ -94,11 +103,24 @@ int entityshot(int argc, char** argv) {
         return 1;
     }
     if (!models_file.empty()) assets.use_models(read_file(models_file));
-    const mcpp::entity::Model* model = assets.models().find(model_name);
+    // A registry name ("minecraft:zombie") draws the whole type: its own layer,
+    // the layers the game stacks on it, and its armour. A bare layer name
+    // ("zombie#helmet") draws that one layer alone.
+    const mcpp::entity::MobType* row = mcpp::entity::mob_type(model_name);
+    std::string layer_name = model_name;
+    if (row != nullptr) {
+        layer_name = baby && !row->baby_layer.empty() ? std::string(row->baby_layer)
+                                                     : std::string(row->layer);
+        if (skin.empty()) skin = std::string(row->texture);
+    }
+    const mcpp::entity::Model* model = assets.models().find(layer_name);
     if (model == nullptr) {
-        std::cerr << std::format("no model {} in the data\n", model_name);
+        std::cerr << std::format("no model {} in the data\n", layer_name);
         return 1;
     }
+    mcpp::entity::EquipmentAssets equipment;
+    const bool has_equipment =
+        equipment.open(mcpp::entity::EquipmentAssets::default_path(kProtocol));
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options gpu_options;
@@ -113,9 +135,9 @@ int entityshot(int argc, char** argv) {
     mcpp::gpu::WorldRenderer world(device, kSide, kSide, atlas);
     mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
     renderer.load(assets);
-    const int32_t model_index = renderer.model(model_name);
+    const int32_t model_index = renderer.model(layer_name);
 
-    const bool player = model_name == "player" || model_name == "player_slim";
+    const bool player = layer_name == "player" || layer_name == "player_slim";
     uint32_t texture = 0;
     if (!property.empty()) {
         // The player list's textures property, fetched the way the client
@@ -159,7 +181,7 @@ int entityshot(int argc, char** argv) {
         texture = mcpp::gpu::EntityRenderer::kSkinBit | static_cast<uint32_t>(layer);
     } else {
         if (skin.empty()) {
-            skin = model_name == "player_slim" ? "player/slim/alex" : "player/wide/steve";
+            skin = layer_name == "player_slim" ? "player/slim/alex" : "player/wide/steve";
         }
         const int32_t baked = renderer.texture(skin);
         if (baked < 0) {
@@ -169,24 +191,100 @@ int entityshot(int argc, char** argv) {
         texture = static_cast<uint32_t>(baked);
     }
 
-    mcpp::entity::HumanoidState state;
+    mcpp::entity::MobState state;
     state.y_rot = head;
     state.x_rot = pitch;
     state.crouching = crouch;
     state.age_in_ticks = age;
+    state.baby = baby;
+    state.age_scale = baby ? 0.5f : 1.0f;
+    // Enough of a sheep, a wolf and a cat to show their wool and their collars.
+    state.collar_color = 14;
+    state.wool_color = 4;
     if (walk >= 0.0f) {
         state.walk_speed = 1.0f;
         state.walk_position = walk * 2.0f * 3.14159265f / 0.6662f;
     }
     if (swing >= 0.0f) state.attack_time = swing;
+    if (!armour.empty()) state.right_arm_pose = mcpp::entity::ArmPose::Item;
     mcpp::entity::Pose pose(*model);
-    const auto parts = mcpp::entity::HumanoidParts::of(*model);
-    if (parts.complete()) {
-        if (player) mcpp::entity::animate_player(*model, parts, state, pose);
-        else mcpp::entity::animate_humanoid(*model, parts, state, pose);
+    auto animator = mcpp::entity::make_mob_model(layer_name, *model);
+    if (animator == nullptr) {
+        std::cerr << std::format("no model class animates {}\n", layer_name);
+        return 1;
+    }
+    animator->animate(state, pose);
+
+    // Every layer this shot draws over the body, in the order the game's own
+    // renderer adds them: the base, then each overlay, then the armour.
+    struct Over {
+        const mcpp::entity::Model* model = nullptr;
+        std::unique_ptr<mcpp::entity::MobModel> animator;
+        int32_t index = -1;
+        uint32_t texture = 0;
+        uint32_t colour = 0xFFFFFFFFu;
+        mcpp::gpu::EntityRenderer::Type type = mcpp::gpu::EntityRenderer::Type::CutoutNoCull;
+        bool eyes = false;
+    };
+    std::vector<Over> overs;
+    const auto add_over = [&](std::string_view name, std::string_view texture_name,
+                              uint32_t colour, mcpp::gpu::EntityRenderer::Type type, bool eyes) {
+        const mcpp::entity::Model* data = assets.models().find(name);
+        const int32_t index = renderer.model(name);
+        const int32_t baked = renderer.texture(texture_name);
+        if (data == nullptr || index < 0 || baked < 0) {
+            std::cerr << std::format("- skipped layer {} ({})\n", name, texture_name);
+            return;
+        }
+        Over over;
+        over.model = data;
+        over.animator = mcpp::entity::make_mob_model(name, *data);
+        over.index = index;
+        over.texture = static_cast<uint32_t>(baked);
+        over.colour = colour;
+        over.type = type;
+        over.eyes = eyes;
+        if (over.animator != nullptr) overs.push_back(std::move(over));
+    };
+    if (row != nullptr) {
+        for (const mcpp::entity::MobOverlay& one : row->overlays) {
+            std::string name(one.layer.empty() ? row->layer : one.layer);
+            if (baby) {
+                if (!one.baby_layer.empty()) name = std::string(one.baby_layer);
+                else if (one.layer.empty() && !row->baby_layer.empty()) {
+                    name = std::string(row->baby_layer);
+                }
+            }
+            const uint32_t colour = one.colour != nullptr ? one.colour(state) : 0xFFFFFFFFu;
+            if (colour == 0) continue;
+            add_over(name, one.texture, colour, one.render, one.kind == mcpp::entity::Overlay::Eyes);
+        }
+        // `HumanoidArmorLayer`: one asset's worth of armour, in every slot that
+        // asset has a layer for, which is what a full set looks like.
+        if (row->humanoid_armour && !armour.empty() && has_equipment) {
+            struct Piece {
+                std::string_view suffix;
+                mcpp::entity::LayerType type;
+            };
+            const Piece pieces[] = {
+                {"#chestplate", mcpp::entity::LayerType::Humanoid},
+                {"#leggings", mcpp::entity::LayerType::HumanoidLeggings},
+                {"#boots", mcpp::entity::LayerType::Humanoid},
+                {"#helmet", mcpp::entity::LayerType::Humanoid},
+            };
+            for (const Piece& piece : pieces) {
+                const std::string name = layer_name + std::string(piece.suffix);
+                for (const auto& one : equipment.layers(armour, piece.type)) {
+                    const uint32_t colour = mcpp::entity::equipment_layer_colour(one, 0);
+                    if (colour == 0) continue;
+                    add_over(name, one.texture, colour,
+                             mcpp::gpu::EntityRenderer::Type::CutoutNoCull, false);
+                }
+            }
+        }
     }
 
-    const float height = 1.8f;
+    const float height = row != nullptr ? row->shadow_radius * 2.6f + 0.6f : 1.8f;
     const float middle = height * 0.5f;
     const float reach = height * 1.9f;
     std::vector<Shot> shots = {
@@ -226,15 +324,37 @@ int entityshot(int argc, char** argv) {
                                   -shot.eye[2]);
         root = multiply(root, rotation_y(180.0f * 3.14159265f / 180.0f));
         root = multiply(root, scaling(-1.0f, -1.0f, 1.0f));
-        if (player) root = multiply(root, scaling(0.9375f, 0.9375f, 0.9375f));
+        Placement place;
+        place.matrix = root;
+        place.shape = Placement::kAffine;
+        animator->scale(state, place);
+        root = place.matrix;
         root = multiply(root, translation(0.0f, -1.501f, 0.0f));
         pose_matrices(*model, pose, root, matrices);
         mcpp::gpu::EntityRenderer::Instance instance;
         instance.model = model_index;
         instance.texture = texture;
-        instance.type = player ? mcpp::gpu::EntityRenderer::Type::Translucent
-                               : mcpp::gpu::EntityRenderer::Type::CutoutNoCull;
+        instance.type = row != nullptr          ? row->render
+                        : player                ? mcpp::gpu::EntityRenderer::Type::Translucent
+                                                : mcpp::gpu::EntityRenderer::Type::CutoutNoCull;
+        instance.colour = animator->tint(state);
         renderer.add(instance, matrices);
+        for (const Over& over : overs) {
+            Pose layer_pose(*over.model);
+            over.animator->animate(state, layer_pose);
+            std::vector<Matrix> layer_matrices(over.model->parts.size());
+            pose_matrices(*over.model, layer_pose, root, layer_matrices);
+            mcpp::gpu::EntityRenderer::Instance one = instance;
+            one.model = over.index;
+            one.texture = over.texture;
+            one.type = over.type;
+            one.colour = over.colour;
+            if (over.eyes) {
+                one.sky_light = 15;
+                one.block_light = 15;
+            }
+            renderer.add(one, layer_matrices);
+        }
 
         world.set_in_world([&](VkCommandBuffer command, const float* view_projection,
                                uint32_t width, uint32_t height_px, const float* fog,

@@ -1,59 +1,74 @@
 #pragma once
-#include "mcpp/entity/model.hpp"
+#include "mcpp/entity/mobs.hpp"
 
+#include <array>
 #include <cstdint>
 
 namespace mcpp::entity {
 
-enum class ArmPose : uint8_t { Empty, Item, Block };
+// `HumanoidModel`: the body the player, every zombie, every skeleton, the
+// villager, the witch and the armour layers all animate from.
+class Humanoid : public MobModel {
+public:
+    explicit Humanoid(const Model& model);
 
-// What the humanoid's animation reads, for one frame.
-struct HumanoidState {
-    float x_rot = 0.0f;   // pitch, degrees
-    float y_rot = 0.0f;   // head yaw minus body yaw, degrees
-    float walk_position = 0.0f;
-    float walk_speed = 0.0f;
-    float age_in_ticks = 0.0f;
-    float attack_time = 0.0f;
-    float swim_amount = 0.0f;
-    float speed_value = 1.0f;
-    float age_scale = 1.0f;
-    bool crouching = false;
-    bool fall_flying = false;
-    bool passenger = false;
-    bool attack_left = false;   // the arm that swings is the left one
-    bool main_arm_right = true;
-    bool using_item = false;
-    ArmPose left_arm = ArmPose::Empty;
-    ArmPose right_arm = ArmPose::Empty;
+    void animate(const MobState& state, Pose& pose) const override;
+    std::span<const int32_t> hand_chain(bool left) const override;
 
-    // Players only.
-    bool spectator = false;
-    bool show_hat = true;
-    bool show_jacket = true;
-    bool show_left_sleeve = true;
-    bool show_right_sleeve = true;
-    bool show_left_pants = true;
-    bool show_right_pants = true;
+    // `HumanoidModel.setAllVisible`.
+    void set_all_visible(Pose& pose, bool visible) const;
+
+    int32_t head() const { return head_; }
+    int32_t hat() const { return hat_; }
+    int32_t body() const { return body_; }
+    int32_t arm(bool left) const { return left ? left_arm_ : right_arm_; }
+    int32_t leg(bool left) const { return left ? left_leg_ : right_leg_; }
+
+protected:
+    // `HumanoidModel.setupAttackAnimation`: the zombie and the iron golem
+    // replace it wholesale.
+    virtual void setup_attack(const MobState& state, Pose& pose) const;
+    // What `setupAnim` does before the arm poses, for a subclass that wants
+    // the whole thing and then its own on top.
+    void humanoid_anim(const MobState& state, Pose& pose) const;
+
+    int32_t head_ = -1, hat_ = -1, body_ = -1;
+    int32_t right_arm_ = -1, left_arm_ = -1, right_leg_ = -1, left_leg_ = -1;
+
+private:
+    void pose_right_arm(const MobState& state, Pose& pose) const;
+    void pose_left_arm(const MobState& state, Pose& pose) const;
+    void pose_blocking_arm(PartPose& arm, const PartPose& head, bool right) const;
+
+    std::array<int32_t, 1> right_chain_{};
+    std::array<int32_t, 1> left_chain_{};
 };
 
-// The humanoid's parts by index, found once per model.
-struct HumanoidParts {
-    int32_t head = -1, hat = -1, body = -1, right_arm = -1, left_arm = -1, right_leg = -1,
-            left_leg = -1;
-    int32_t jacket = -1, left_sleeve = -1, right_sleeve = -1, left_pants = -1, right_pants = -1;
+// `AvatarModel`: the player, whose skin carries a second layer over every
+// part and who can be a spectator.
+class Avatar : public Humanoid {
+public:
+    Avatar(const Model& model, bool slim);
 
-    static HumanoidParts of(const Model& model);
-    bool complete() const;
+    void animate(const MobState& state, Pose& pose) const override;
+    void scale(const MobState& state, Placement& place) const override;
+    void setup_rotations(const MobState& state, Placement& place, float body_rot,
+                         float scale) const override;
+
+    bool slim() const { return slim_; }
+
+private:
+    int32_t jacket_ = -1, left_sleeve_ = -1, right_sleeve_ = -1;
+    int32_t left_pants_ = -1, right_pants_ = -1;
+    bool slim_ = false;
 };
 
-// The game's humanoid animation, step for step: head, walk, riding, arm
-// poses, the attack swing, sneaking, the idle bob and swimming. The pose is
-// reset to the layer's own first.
-void animate_humanoid(const Model& model, const HumanoidParts& parts, const HumanoidState& state,
-                      Pose& pose);
-// The player's on top: which layers of the skin show, then the humanoid.
-void animate_player(const Model& model, const HumanoidParts& parts, const HumanoidState& state,
-                    Pose& pose);
+// `SpearAnimations.thirdPersonHandUse` and `.thirdPersonAttackHand`: what a
+// spear does to the arm that holds it and to the arm that swings it. The
+// sway the item's `minecraft:kinetic_weapon` component drives is not ported:
+// nothing here reads item components yet.
+void spear_hand_use(PartPose& arm, const PartPose& head, bool right, const MobState& state);
+void spear_attack_hand(PartPose& right_arm, PartPose& left_arm, const PartPose& body,
+                       const MobState& state);
 
 } // namespace mcpp::entity

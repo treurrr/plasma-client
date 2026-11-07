@@ -1,5 +1,6 @@
 #include "mcpp/entity/humanoid.hpp"
 
+#include "mcpp/entity/ease.hpp"
 #include "mcpp/entity/motion.hpp"
 #include "mcpp/jmath.hpp"
 
@@ -15,85 +16,263 @@ constexpr float kDegrees = kPi / 180.0f;
 // `HumanoidModel.quadraticArmUpdate`: the swim stroke's quadratic arm curve.
 float quadratic_arm_update(float x) { return -65.0f * x + x * x; }
 
-// `Ease.outQuart`: quartic ease-out.
-float out_quart(float x) {
-    const float a = (1.0f - x) * (1.0f - x);
-    return 1.0f - a * a;
-}
-
 // `AnimationUtils.bobModelPart`: the idle arm sway.
 void bob(PartPose& part, float age, float side) {
     part.z_rot = part.z_rot + side * (jmath::cos(age * 0.09f) * 0.05f + 0.05f);
     part.x_rot = part.x_rot + side * (jmath::sin(age * 0.067f) * 0.05f);
 }
 
+// `AnimationUtils.animateCrossbowHold`.
+void crossbow_hold(PartPose& right_arm, PartPose& left_arm, const PartPose& head, bool right) {
+    PartPose& front = right ? right_arm : left_arm;
+    PartPose& back = right ? left_arm : right_arm;
+    front.y_rot = (right ? -0.3f : 0.3f) + head.y_rot;
+    back.y_rot = (right ? 0.6f : -0.6f) + head.y_rot;
+    front.x_rot = -kPi / 2.0f + head.x_rot + 0.1f;
+    back.x_rot = -1.5f + head.x_rot;
+}
+
+// `AnimationUtils.animateCrossbowCharge`.
+void crossbow_charge(PartPose& right_arm, PartPose& left_arm, float duration, float used,
+                     bool right) {
+    PartPose& holding = right ? right_arm : left_arm;
+    PartPose& pulling = right ? left_arm : right_arm;
+    holding.y_rot = right ? -0.8f : 0.8f;
+    holding.x_rot = -0.97079635f;
+    pulling.x_rot = holding.x_rot;
+    const float clamped = std::clamp(used, 0.0f, duration);
+    const float t = clamped / duration;
+    pulling.y_rot = lerp(t, 0.4f, 0.85f) * (right ? 1.0f : -1.0f);
+    pulling.x_rot = lerp(t, pulling.x_rot, -kPi / 2.0f);
+}
+
+// `Mth.inverseLerp` clamped to zero and one, as `SpearAnimations.progress` uses it.
+float progress(float value, float from, float to) {
+    return std::clamp((value - from) / (to - from), 0.0f, 1.0f);
+}
+
+} // namespace
+
+// `SpearAnimations.thirdPersonHandUse`: the arm a spear is held out on. The
+// block after it, the sway the item's `minecraft:kinetic_weapon` component
+// drives, is not ported: nothing here reads item components yet.
+void spear_hand_use(PartPose& arm, const PartPose& head, bool right, const MobState& state) {
+    const int sign = right ? 1 : -1;
+    arm.y_rot = -0.1f * static_cast<float>(sign) + head.y_rot;
+    arm.x_rot = -kPi / 2.0f + head.x_rot + 0.8f;
+    if (state.fall_flying || state.swim_amount > 0.0f) arm.x_rot -= 0.9599311f;
+    arm.y_rot = kDegrees * std::clamp(180.0f / kPi * arm.y_rot, -60.0f, 60.0f);
+    arm.x_rot = kDegrees * std::clamp(180.0f / kPi * arm.x_rot, -120.0f, 30.0f);
+}
+
+// `SpearAnimations.thirdPersonAttackHand`: the stab, which undoes the body
+// twist the whack swing put on the arms and drives the one arm forward.
+void spear_attack_hand(PartPose& right_arm, PartPose& left_arm, const PartPose& body,
+                       const MobState& state) {
+    const float time = state.attack_time;
+    right_arm.y_rot = right_arm.y_rot - body.y_rot;
+    left_arm.y_rot = left_arm.y_rot - body.y_rot;
+    left_arm.x_rot = left_arm.x_rot - body.y_rot;
+    const float start = ease::in_out_sine(progress(time, 0.0f, 0.05f));
+    const float middle = ease::in_quad(progress(time, 0.05f, 0.2f));
+    const float end = ease::in_out_expo(progress(time, 0.4f, 1.0f));
+    PartPose& arm = state.attack_arm_left ? left_arm : right_arm;
+    arm.x_rot += (90.0f * start - 120.0f * middle + 30.0f * end) * kDegrees;
+}
+
+Humanoid::Humanoid(const Model& model) : MobModel(model) {
+    head_ = part("head");
+    hat_ = part("head/hat");
+    body_ = part("body");
+    right_arm_ = part("right_arm");
+    left_arm_ = part("left_arm");
+    right_leg_ = part("right_leg");
+    left_leg_ = part("left_leg");
+    right_chain_ = {right_arm_};
+    left_chain_ = {left_arm_};
+}
+
+std::span<const int32_t> Humanoid::hand_chain(bool left) const {
+    return left ? std::span<const int32_t>(left_chain_) : std::span<const int32_t>(right_chain_);
+}
+
+// `HumanoidModel.setAllVisible`.
+void Humanoid::set_all_visible(Pose& pose, bool visible) const {
+    pose[head_].visible = visible;
+    pose[hat_].visible = visible;
+    pose[body_].visible = visible;
+    pose[right_arm_].visible = visible;
+    pose[left_arm_].visible = visible;
+    pose[right_leg_].visible = visible;
+    pose[left_leg_].visible = visible;
+}
+
 // `HumanoidModel.poseBlockingArm`: an arm raised to block, following the head.
-void pose_blocking_arm(PartPose& arm, const PartPose& head, bool right) {
+void Humanoid::pose_blocking_arm(PartPose& arm, const PartPose& head, bool right) const {
     arm.x_rot = arm.x_rot * 0.5f - 0.9424779f +
                 std::clamp(head.x_rot, static_cast<float>(-kPi * 4.0 / 9.0), 0.43633232f);
     arm.y_rot = (right ? -30.0f : 30.0f) * kDegrees +
                 std::clamp(head.y_rot, -kPi / 6.0f, kPi / 6.0f);
 }
 
-// `HumanoidModel.poseRightArm`, `HumanoidModel.poseLeftArm`: one arm's pose for what it holds.
-void pose_arm(ArmPose kind, PartPose& arm, const PartPose& head, bool right) {
-    switch (kind) {
+// `HumanoidModel.poseRightArm`.
+void Humanoid::pose_right_arm(const MobState& s, Pose& pose) const {
+    PartPose& head = pose[head_];
+    PartPose& right = pose[right_arm_];
+    PartPose& left = pose[left_arm_];
+    switch (s.right_arm_pose) {
     case ArmPose::Empty:
-        arm.y_rot = 0.0f;
+        right.y_rot = 0.0f;
         break;
     case ArmPose::Item:
-        arm.x_rot = arm.x_rot * 0.5f - kPi / 10.0f;
-        arm.y_rot = 0.0f;
+        right.x_rot = right.x_rot * 0.5f - kPi / 10.0f;
+        right.y_rot = 0.0f;
         break;
     case ArmPose::Block:
-        pose_blocking_arm(arm, head, right);
+        pose_blocking_arm(right, head, true);
+        break;
+    case ArmPose::BowAndArrow:
+        right.y_rot = -0.1f + head.y_rot;
+        left.y_rot = 0.1f + head.y_rot + 0.4f;
+        right.x_rot = -kPi / 2.0f + head.x_rot;
+        left.x_rot = -kPi / 2.0f + head.x_rot;
+        break;
+    case ArmPose::ThrowTrident:
+        right.x_rot = right.x_rot * 0.5f - kPi;
+        right.y_rot = 0.0f;
+        break;
+    case ArmPose::CrossbowCharge:
+        crossbow_charge(right, left, s.max_crossbow_charge_duration, s.ticks_using_item, true);
+        break;
+    case ArmPose::CrossbowHold:
+        crossbow_hold(right, left, head, true);
+        break;
+    case ArmPose::Spyglass:
+        right.x_rot = std::clamp(head.x_rot - 1.9198622f - (s.crouching ? kPi / 12.0f : 0.0f),
+                                 -2.4f, 3.3f);
+        right.y_rot = head.y_rot - kPi / 12.0f;
+        break;
+    case ArmPose::TootHorn:
+        right.x_rot = std::clamp(head.x_rot, -1.2f, 1.2f) - 1.4835298f;
+        right.y_rot = head.y_rot - kPi / 6.0f;
+        break;
+    case ArmPose::Brush:
+        right.x_rot = right.x_rot * 0.5f - kPi / 5.0f;
+        right.y_rot = 0.0f;
+        break;
+    case ArmPose::Spear:
+        spear_hand_use(right, head, true, s);
         break;
     }
 }
 
-} // namespace
-
-HumanoidParts HumanoidParts::of(const Model& model) {
-    HumanoidParts p;
-    p.head = model.find("head");
-    p.hat = model.find("head/hat");
-    p.body = model.find("body");
-    p.right_arm = model.find("right_arm");
-    p.left_arm = model.find("left_arm");
-    p.right_leg = model.find("right_leg");
-    p.left_leg = model.find("left_leg");
-    p.jacket = model.find("body/jacket");
-    p.left_sleeve = model.find("left_arm/left_sleeve");
-    p.right_sleeve = model.find("right_arm/right_sleeve");
-    p.left_pants = model.find("left_leg/left_pants");
-    p.right_pants = model.find("right_leg/right_pants");
-    return p;
+// `HumanoidModel.poseLeftArm`.
+void Humanoid::pose_left_arm(const MobState& s, Pose& pose) const {
+    PartPose& head = pose[head_];
+    PartPose& right = pose[right_arm_];
+    PartPose& left = pose[left_arm_];
+    switch (s.left_arm_pose) {
+    case ArmPose::Empty:
+        left.y_rot = 0.0f;
+        break;
+    case ArmPose::Item:
+        left.x_rot = left.x_rot * 0.5f - kPi / 10.0f;
+        left.y_rot = 0.0f;
+        break;
+    case ArmPose::Block:
+        pose_blocking_arm(left, head, false);
+        break;
+    case ArmPose::BowAndArrow:
+        right.y_rot = -0.1f + head.y_rot - 0.4f;
+        left.y_rot = 0.1f + head.y_rot;
+        right.x_rot = -kPi / 2.0f + head.x_rot;
+        left.x_rot = -kPi / 2.0f + head.x_rot;
+        break;
+    case ArmPose::ThrowTrident:
+        left.x_rot = left.x_rot * 0.5f - kPi;
+        left.y_rot = 0.0f;
+        break;
+    case ArmPose::CrossbowCharge:
+        crossbow_charge(right, left, s.max_crossbow_charge_duration, s.ticks_using_item, false);
+        break;
+    case ArmPose::CrossbowHold:
+        crossbow_hold(right, left, head, false);
+        break;
+    case ArmPose::Spyglass:
+        left.x_rot = std::clamp(head.x_rot - 1.9198622f - (s.crouching ? kPi / 12.0f : 0.0f),
+                                -2.4f, 3.3f);
+        left.y_rot = head.y_rot + kPi / 12.0f;
+        break;
+    case ArmPose::TootHorn:
+        left.x_rot = std::clamp(head.x_rot, -1.2f, 1.2f) - 1.4835298f;
+        left.y_rot = head.y_rot + kPi / 6.0f;
+        break;
+    case ArmPose::Brush:
+        left.x_rot = left.x_rot * 0.5f - kPi / 5.0f;
+        left.y_rot = 0.0f;
+        break;
+    case ArmPose::Spear:
+        spear_hand_use(left, head, false, s);
+        break;
+    }
 }
 
-bool HumanoidParts::complete() const {
-    return head >= 0 && body >= 0 && right_arm >= 0 && left_arm >= 0 && right_leg >= 0 &&
-           left_leg >= 0;
+// `HumanoidModel.setupAttackAnimation`: the body twist, then whichever swing
+// the item in hand asks for.
+void Humanoid::setup_attack(const MobState& s, Pose& pose) const {
+    const float time = s.attack_time;
+    if (time <= 0.0f) return;
+    PartPose& head = pose[head_];
+    PartPose& body = pose[body_];
+    PartPose& right_arm = pose[right_arm_];
+    PartPose& left_arm = pose[left_arm_];
+
+    body.y_rot = jmath::sin(std::sqrt(time) * (kPi * 2.0f)) * 0.2f;
+    if (s.attack_arm_left) body.y_rot *= -1.0f;
+    const float age_scale = s.age_scale;
+    right_arm.z = jmath::sin(body.y_rot) * 5.0f * age_scale;
+    right_arm.x = -jmath::cos(body.y_rot) * 5.0f * age_scale;
+    left_arm.z = -jmath::sin(body.y_rot) * 5.0f * age_scale;
+    left_arm.x = jmath::cos(body.y_rot) * 5.0f * age_scale;
+    right_arm.y_rot = right_arm.y_rot + body.y_rot;
+    left_arm.y_rot = left_arm.y_rot + body.y_rot;
+    left_arm.x_rot = left_arm.x_rot + body.y_rot;
+
+    switch (s.swing_animation) {
+    case SwingAnimation::Whack: {
+        const float eased = ease::out_quart(time);
+        const float lift = jmath::sin(eased * kPi);
+        const float reach = jmath::sin(time * kPi) * -(head.x_rot - 0.7f) * 0.75f;
+        PartPose& arm = s.attack_arm_left ? left_arm : right_arm;
+        arm.x_rot -= lift * 1.2f + reach;
+        arm.y_rot = arm.y_rot + body.y_rot * 2.0f;
+        arm.z_rot = arm.z_rot + jmath::sin(time * kPi) * -0.4f;
+        break;
+    }
+    case SwingAnimation::None:
+        break;
+    case SwingAnimation::Stab:
+        spear_attack_hand(right_arm, left_arm, body, s);
+        break;
+    }
 }
+
+void Humanoid::animate(const MobState& state, Pose& pose) const { humanoid_anim(state, pose); }
 
 // `HumanoidModel.setupAnim`: head, walk, ride, arms, attack, crouch, bob and swim.
-void animate_humanoid(const Model& model, const HumanoidParts& parts, const HumanoidState& s,
-                      Pose& pose) {
-    PartPose& head = pose[parts.head];
-    PartPose& body = pose[parts.body];
-    PartPose& right_arm = pose[parts.right_arm];
-    PartPose& left_arm = pose[parts.left_arm];
-    PartPose& right_leg = pose[parts.right_leg];
-    PartPose& left_leg = pose[parts.left_leg];
-    for (size_t i = 0; i < model.parts.size(); ++i) {
-        PartPose& part = pose.parts[i];
-        const bool visible = part.visible;
-        const bool skip = part.skip_draw;
-        part = model.parts[i].initial;
-        part.visible = visible;
-        part.skip_draw = skip;
-    }
+void Humanoid::humanoid_anim(const MobState& s, Pose& pose) const {
+    reset(pose);
+    PartPose& head = pose[head_];
+    PartPose& body = pose[body_];
+    PartPose& right_arm = pose[right_arm_];
+    PartPose& left_arm = pose[left_arm_];
+    PartPose& right_leg = pose[right_leg_];
+    PartPose& left_leg = pose[left_leg_];
 
+    const ArmPose left_pose = s.left_arm_pose;
+    const ArmPose right_pose = s.right_arm_pose;
     const float swim = s.swim_amount;
+
     head.x_rot = s.x_rot * kDegrees;
     head.y_rot = s.y_rot * kDegrees;
     if (s.fall_flying) {
@@ -123,30 +302,30 @@ void animate_humanoid(const Model& model, const HumanoidParts& parts, const Huma
         left_leg.z_rot = -0.07853982f;
     }
 
-    // No pose here holds with both hands yet, and none here moves the other
-    // arm, so the order the game picks between the arms does not show.
-    pose_arm(s.right_arm, right_arm, head, true);
-    pose_arm(s.left_arm, left_arm, head, false);
-
-    // `HumanoidModel.setupAttackAnimation`: the body twist and arm swing.
-    if (s.attack_time > 0.0f) {
-        body.y_rot = jmath::sin(std::sqrt(s.attack_time) * (kPi * 2.0f)) * 0.2f;
-        if (s.attack_left) body.y_rot *= -1.0f;
-        right_arm.z = jmath::sin(body.y_rot) * 5.0f * s.age_scale;
-        right_arm.x = -jmath::cos(body.y_rot) * 5.0f * s.age_scale;
-        left_arm.z = -jmath::sin(body.y_rot) * 5.0f * s.age_scale;
-        left_arm.x = jmath::cos(body.y_rot) * 5.0f * s.age_scale;
-        right_arm.y_rot = right_arm.y_rot + body.y_rot;
-        left_arm.y_rot = left_arm.y_rot + body.y_rot;
-        left_arm.x_rot = left_arm.x_rot + body.y_rot;
-        const float eased = out_quart(s.attack_time);
-        const float lift = jmath::sin(eased * kPi);
-        const float reach = jmath::sin(s.attack_time * kPi) * -(head.x_rot - 0.7f) * 0.75f;
-        PartPose& arm = s.attack_left ? left_arm : right_arm;
-        arm.x_rot -= lift * 1.2f + reach;
-        arm.y_rot = arm.y_rot + body.y_rot * 2.0f;
-        arm.z_rot = arm.z_rot + jmath::sin(s.attack_time * kPi) * -0.4f;
+    // Which arm is posed first, and whether the other is posed at all: a
+    // two-handed pose owns both, so the hand it belongs to goes first.
+    const bool main_right = s.main_arm_right;
+    if (s.using_item) {
+        const bool main_hand = !s.use_item_off_hand;
+        if (main_hand == main_right) {
+            pose_right_arm(s, pose);
+            if (!affects_offhand_pose(right_pose)) pose_left_arm(s, pose);
+        } else {
+            pose_left_arm(s, pose);
+            if (!affects_offhand_pose(left_pose)) pose_right_arm(s, pose);
+        }
+    } else {
+        const bool holds_two = main_right ? two_handed(left_pose) : two_handed(right_pose);
+        if (main_right != holds_two) {
+            pose_left_arm(s, pose);
+            if (!affects_offhand_pose(left_pose)) pose_right_arm(s, pose);
+        } else {
+            pose_right_arm(s, pose);
+            if (!affects_offhand_pose(right_pose)) pose_left_arm(s, pose);
+        }
     }
+
+    setup_attack(s, pose);
 
     if (s.crouching) {
         body.x_rot = 0.5f;
@@ -160,13 +339,17 @@ void animate_humanoid(const Model& model, const HumanoidParts& parts, const Huma
         right_arm.y += 3.2f;
     }
 
-    bob(right_arm, s.age_in_ticks, 1.0f);
-    bob(left_arm, s.age_in_ticks, -1.0f);
+    if (right_pose != ArmPose::Spyglass) bob(right_arm, s.age_in_ticks, 1.0f);
+    if (left_pose != ArmPose::Spyglass) bob(left_arm, s.age_in_ticks, -1.0f);
 
     if (swim > 0.0f) {
         const float cycle = std::fmod(walked, 26.0f);
-        const float right = !s.attack_left && s.attack_time > 0.0f ? 0.0f : swim;
-        const float left = s.attack_left && s.attack_time > 0.0f ? 0.0f : swim;
+        const float right =
+            right_pose != ArmPose::Spear && (s.attack_arm_left || !(s.attack_time > 0.0f)) ? swim
+                                                                                           : 0.0f;
+        const float left =
+            left_pose != ArmPose::Spear && (!s.attack_arm_left || !(s.attack_time > 0.0f)) ? swim
+                                                                                           : 0.0f;
         if (!s.using_item) {
             if (cycle < 14.0f) {
                 left_arm.x_rot = rot_lerp_rad(left, left_arm.x_rot, 0.0f);
@@ -202,26 +385,58 @@ void animate_humanoid(const Model& model, const HumanoidParts& parts, const Huma
     }
 }
 
-// `PlayerModel.setupAnim`: layer visibility, then the humanoid pose.
-void animate_player(const Model& model, const HumanoidParts& parts, const HumanoidState& s,
-                    Pose& pose) {
-    pose.reset(model);
+Avatar::Avatar(const Model& model, bool slim) : Humanoid(model), slim_(slim) {
+    jacket_ = part("body/jacket");
+    left_sleeve_ = part("left_arm/left_sleeve");
+    right_sleeve_ = part("right_arm/right_sleeve");
+    left_pants_ = part("left_leg/left_pants");
+    right_pants_ = part("right_leg/right_pants");
+}
+
+// `PlayerModel.setupAnim`: which layers of the skin show, then the humanoid.
+void Avatar::animate(const MobState& s, Pose& pose) const {
+    if (pose.parts.size() != model().parts.size()) pose.reset(model());
     const bool shown = !s.spectator;
-    pose[parts.body].visible = shown;
-    pose[parts.right_arm].visible = shown;
-    pose[parts.left_arm].visible = shown;
-    pose[parts.right_leg].visible = shown;
-    pose[parts.left_leg].visible = shown;
-    const auto set = [&](int32_t part, bool visible) {
-        if (part >= 0) pose[part].visible = visible;
-    };
-    set(parts.hat, s.show_hat);
-    set(parts.jacket, s.show_jacket);
-    set(parts.left_pants, s.show_left_pants);
-    set(parts.right_pants, s.show_right_pants);
-    set(parts.left_sleeve, s.show_left_sleeve);
-    set(parts.right_sleeve, s.show_right_sleeve);
-    animate_humanoid(model, parts, s, pose);
+    pose[body_].visible = shown;
+    pose[right_arm_].visible = shown;
+    pose[left_arm_].visible = shown;
+    pose[right_leg_].visible = shown;
+    pose[left_leg_].visible = shown;
+    pose[hat_].visible = s.show_hat;
+    pose[jacket_].visible = s.show_jacket;
+    pose[left_pants_].visible = s.show_left_pants;
+    pose[right_pants_].visible = s.show_right_pants;
+    pose[left_sleeve_].visible = s.show_left_sleeve;
+    pose[right_sleeve_].visible = s.show_right_sleeve;
+    humanoid_anim(s, pose);
+}
+
+// `AvatarRenderer.scale`.
+void Avatar::scale(const MobState&, Placement& place) const {
+    place.scale(0.9375f, 0.9375f, 0.9375f);
+}
+
+// `AvatarRenderer.setupRotations`: gliding tips the whole body forward,
+// swimming lays it down, and both go on top of the usual turn.
+void Avatar::setup_rotations(const MobState& s, Placement& place, float body_rot,
+                             float scale) const {
+    const float swim = s.swim_amount;
+    const float pitch = s.x_rot;
+    if (s.fall_flying) {
+        MobModel::setup_rotations(s, place, body_rot, scale);
+        const float glide = s.fall_flying_scale();
+        if (!s.auto_spin_attack) {
+            place.rotate(quaternion_x(to_radians(glide * (-90.0f - pitch))));
+        }
+        if (s.apply_flying_y_rot) place.rotate(quaternion_y(s.flying_y_rot));
+    } else if (swim > 0.0f) {
+        MobModel::setup_rotations(s, place, body_rot, scale);
+        const float target = s.in_water ? -90.0f - pitch : -90.0f;
+        place.rotate(quaternion_x(to_radians(lerp(swim, 0.0f, target))));
+        if (s.visually_swimming) place.translate(0.0f, -1.0f, 0.3f);
+    } else {
+        MobModel::setup_rotations(s, place, body_rot, scale);
+    }
 }
 
 } // namespace mcpp::entity

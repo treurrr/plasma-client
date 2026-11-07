@@ -70,6 +70,12 @@ const std::map<int32_t, MobEffect>& Session::effects(int32_t entity) const {
     return found == entities_.effects.end() ? none : found->second;
 }
 
+const Equipment& Session::equipment(int32_t entity) const {
+    static const Equipment none;
+    const auto found = entities_.equipment.find(entity);
+    return found == entities_.equipment.end() ? none : found->second;
+}
+
 const std::map<std::string, Attribute, std::less<>>& Session::attributes(int32_t entity) const {
     static const std::map<std::string, Attribute, std::less<>> none;
     const auto found = entities_.attributes.find(entity);
@@ -224,7 +230,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
             if (events_.entities.on_move) events_.entities.on_move(entity);
             if (events_.entities.on_moved) {
                 events_.entities.on_moved({id, base[0], base[1], base[2], yaw, pitch, moved,
-                                           turned, false});
+                                           turned, false, on_ground});
             }
         }
         return true;
@@ -254,7 +260,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
             if (events_.entities.on_move) events_.entities.on_move(entity);
             if (events_.entities.on_moved) {
                 events_.entities.on_moved({id, entity.x, entity.y, entity.z, entity.yaw,
-                                           entity.pitch, true, true, true});
+                                           entity.pitch, true, true, true, on_ground});
             }
         }
         return true;
@@ -321,6 +327,24 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         if (events_.entities.on_damage) events_.entities.on_damage(id);
         return true;
     }
+    if (packet.id == cb.set_equipment) {
+        // `ClientboundSetEquipmentPacket.ClientboundSetEquipmentPacket`: a slot
+        // byte and a stack, the top bit of the byte saying another pair follows.
+        const int32_t id = in.read_varint();
+        Equipment& worn = entities_.equipment[id];
+        uint8_t slot = 0;
+        do {
+            slot = in.read_u8();
+            ItemStack stack = proto::read_item_stack(in, options_.protocol);
+            const bool readable = stack.readable;
+            const uint8_t which = slot & 0x7F;
+            if (which < Equipment::Count) worn.slots[which] = std::move(stack);
+            // A component with no layout loses every slot after it.
+            if (!readable) break;
+        } while ((slot & 0x80) != 0);
+        if (events_.entities.on_equipment) events_.entities.on_equipment(id, worn);
+        return true;
+    }
     if (packet.id == cb.set_passengers) {
         const int32_t vehicle = in.read_varint();
         const int32_t count = in.read_varint();
@@ -372,6 +396,7 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
             entities_.move_bases.erase(id);
             entities_.effects.erase(id);
             entities_.attributes.erase(id);
+            entities_.equipment.erase(id);
             if (events_.entities.on_remove) events_.entities.on_remove(id);
         }
         return true;

@@ -25,6 +25,10 @@ HEADER = """\
 #
 #   texture <width> <height>
 #   part <path> [pivot x y z] [rotate x y z] [scale x y z]   radians
+#
+# The layer's own root is ".": a layer may have a part named "root" of its own,
+# as the allay, the frog, the vex, the creaking and the nautilus do, and the
+# two must not collide.
 #   box x y z  w h d  uv u v [grow g | grow x y z] [mirror] [texsize w h] [faces <dunswe>]
 """
 
