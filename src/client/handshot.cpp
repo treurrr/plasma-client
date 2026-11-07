@@ -130,6 +130,11 @@ int handshot(int argc, char** argv) {
         }
 
         queue_hand(hand, player, bob, shot.slim);
+        const auto posing = std::chrono::steady_clock::now();
+        for (int again = 0; again < 1000; ++again) queue_hand(hand, player, bob, shot.slim);
+        const double cpu =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - posing)
+                .count() / 1000.0;
         const float light[3] = {1.0f, 1.0f, 1.0f};
         world.set_hand([&](VkCommandBuffer command, const float*, uint32_t width,
                            uint32_t height, const float*, const mcpp::gpu::Camera&) {
@@ -144,14 +149,33 @@ int handshot(int argc, char** argv) {
         camera.target[1] = 80.0f;
         camera.target[2] = -1.0f;
         camera.fov_degrees = 70.0f;
+        // The same frame twice over, once without the hand, so what the hand
+        // costs is the difference rather than the whole pass.
+        double with_hand = 0.0;
+        double without = 0.0;
+        for (int pass = 0; pass < 8; ++pass) {
+            world.draw(camera);
+            with_hand += world.last_gpu_ms();
+        }
+        world.set_hand({});
+        for (int pass = 0; pass < 8; ++pass) {
+            world.draw(camera);
+            without += world.last_gpu_ms();
+        }
+        world.set_hand([&](VkCommandBuffer command, const float*, uint32_t width,
+                           uint32_t height, const float*, const mcpp::gpu::Camera&) {
+            hand.record(command, width, height, light);
+        });
         const auto start = std::chrono::steady_clock::now();
         const auto pixels = world.render(camera);
         const auto taken = std::chrono::steady_clock::now() - start;
         const std::string out = std::format("{}-{}.png", prefix, shot.name);
         mcpp::write_png(out, kWidth, kHeight, pixels);
-        std::cout << std::format("- {}  {} vertices, {:.2f} ms gpu, {:.2f} ms wall\n", out,
-                                 hand.vertices(), world.last_gpu_ms(),
-                                 std::chrono::duration<double, std::milli>(taken).count());
+        std::cout << std::format(
+            "- {}  {} vertices, {:.4f} ms cpu to pose, {:.3f} ms gpu for the hand "
+            "({:.3f} with it, {:.3f} without), {:.2f} ms wall\n",
+            out, hand.vertices(), cpu, (with_hand - without) / 8.0, with_hand / 8.0,
+            without / 8.0, std::chrono::duration<double, std::milli>(taken).count());
     }
     return 0;
 }

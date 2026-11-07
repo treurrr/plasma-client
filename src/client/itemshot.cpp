@@ -75,6 +75,20 @@ int itemshot(const std::vector<std::string>& args) {
             const float y = static_cast<float>((id / kColumns) * kCell + 2);
             quads.icon(static_cast<int32_t>(id), x, y, 16.0f);
         }
+        // The same frame with the icons and without them, both read back, so
+        // what the icons cost is the difference and not the readback.
+        double empty = 0.0;
+        for (int pass = 0; pass < 8; ++pass) {
+            sheet.render({}, [](VkCommandBuffer, uint32_t, uint32_t) {});
+            empty += sheet.last_gpu_ms();
+        }
+        double full = 0.0;
+        for (int pass = 0; pass < 8; ++pass) {
+            sheet.render({}, [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
+                quads.record(command, w, h);
+            });
+            full += sheet.last_gpu_ms();
+        }
         const auto start = Clock::now();
         const auto pixels = sheet.render({}, [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
             quads.record(command, w, h);
@@ -106,9 +120,9 @@ int itemshot(const std::vector<std::string>& args) {
         std::cout << std::format("{}: {} items, {} drawn, {} with no icon\n", path.string(),
                                  count, count - blank.size(), blank.size());
         for (const auto& name : blank) std::cout << std::format("  {}\n", name);
-        std::cout << std::format("  {} items in one frame: {:.2f} ms gpu, {:.2f} ms with the "
+        std::cout << std::format("  {} items in one frame: {:.3f} ms gpu, {:.2f} ms with the "
                                  "readback\n",
-                                 count, sheet.last_gpu_ms(), millis(taken));
+                                 count, (full - empty) / 8.0, millis(taken));
     }
 
     // Every creative tab, as the screen draws it.
@@ -144,18 +158,33 @@ int itemshot(const std::vector<std::string>& args) {
         gfx.pixel_width = static_cast<int>(kWidth);
         gfx.pixel_height = static_cast<int>(kHeight);
         const auto start = Clock::now();
-        page->render_with_tooltip(gfx, -100.0, -100.0);
-        const double laid_out = millis(Clock::now() - start);
+        for (int again = 0; again < 100; ++again) {
+            quads.begin();
+            page->render_with_tooltip(gfx, -100.0, -100.0);
+        }
+        const double laid_out = millis(Clock::now() - start) / 100.0;
+        double bare = 0.0;
+        for (int pass = 0; pass < 8; ++pass) {
+            screen.render({}, [](VkCommandBuffer, uint32_t, uint32_t) {});
+            bare += screen.last_gpu_ms();
+        }
+        double drawn = 0.0;
+        for (int pass = 0; pass < 8; ++pass) {
+            screen.render({}, [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
+                quads.record(command, w, h);
+            });
+            drawn += screen.last_gpu_ms();
+        }
         const auto pixels = screen.render({}, [&](VkCommandBuffer command, uint32_t w,
                                                   uint32_t h) { quads.record(command, w, h); });
         const auto path = out_dir / std::format("creative-{}.png", tabs.tabs[index].key);
         mcpp::write_png(path.string(), kWidth, kHeight, pixels);
-        slowest = std::max(slowest, screen.last_gpu_ms());
-        std::cout << std::format("- {}  {} items, {:.3f} ms laid out, {:.2f} ms gpu\n",
-                                 path.string(), tabs.tabs[index].items.size(), laid_out,
-                                 screen.last_gpu_ms());
+        const double gpu = (drawn - bare) / 8.0;
+        slowest = std::max(slowest, gpu);
+        std::cout << std::format("- {}  {} items, {:.4f} ms cpu to lay out, {:.3f} ms gpu\n",
+                                 path.string(), tabs.tabs[index].items.size(), laid_out, gpu);
     }
-    std::cout << std::format("  the slowest tab cost {:.2f} ms on the gpu\n", slowest);
+    std::cout << std::format("  the slowest tab cost {:.3f} ms on the gpu\n", slowest);
     return 0;
 }
 
