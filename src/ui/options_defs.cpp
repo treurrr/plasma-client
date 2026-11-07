@@ -90,8 +90,8 @@ OptionDef int_slider(std::string key, std::string caption_key, IntRange range,
     return def;
 }
 
-// `OptionInstance.UnitDouble`: a double from 0 to 1 that is its own slider
-// position, with `forward` and `back` for the squared ones.
+// `OptionInstance.UnitDouble.fromSliderValue`: a double from 0 to 1 that is
+// its own slider position, with a mapping for the squared ones.
 OptionDef unit_slider(std::string key, std::string caption_key,
                       std::function<Component(const Component&, double)> label,
                       std::vector<Component> tip = {},
@@ -122,7 +122,7 @@ OptionDef boolean_def(std::string key, std::string caption_key, std::vector<Comp
     def.key = std::move(key);
     def.caption = tr(caption_key);
     def.kind = OptionDef::Kind::Cycle;
-    // `OptionInstance.BOOLEAN_VALUES`: true first, false second.
+    // `OptionInstance.createBoolean`: true first, false second.
     def.values = {"true", "false"};
     def.label = [](const Component&, const std::string& stored) {
         return tr(stored == "true" ? "options.on" : "options.off");
@@ -195,6 +195,7 @@ OptionDef enum_string(std::string key, std::string caption_key,
 
 // `Options.logMouse`, `Options.unlogMouse`: the wheel's curve.
 double log_mouse(int value) { return std::pow(10.0, static_cast<double>(value) / 100.0); }
+// `Options.unlogMouse`: the wheel's value back to its slider step.
 int unlog_mouse(double value) {
     return static_cast<int>(std::floor(std::log10(value) * 100.0));
 }
@@ -263,7 +264,7 @@ std::vector<OptionDef> build() {
             }
             return generic_value_label(caption, tr(presets[1].second));
         };
-        // `OptionInstance.SliderableEnum`: the first value at 0, the last at 1.
+        // `OptionInstance.SliderableEnum.toSliderValue`: the first value at 0, the last at 1.
         def.to_slider = [presets](const std::string& stored) {
             for (size_t i = 0; i < presets.size(); ++i) {
                 if (presets[i].first != stored) continue;
@@ -614,6 +615,7 @@ std::vector<OptionDef> build() {
 
 } // namespace
 
+// `Options.genericValueLabel`: "Name: value".
 Component generic_value_label(const Component& caption, Component value) {
     return translatable("options.generic_value", {caption, std::move(value)});
 }
@@ -622,22 +624,26 @@ Component generic_value_label(const Component& caption, int value) {
     return generic_value_label(caption, literal(std::to_string(value)));
 }
 
+// `Options.genericValueOrOffLabel`: zero reads OFF.
 Component generic_value_or_off_label(const Component& caption, int value) {
     return value == 0 ? generic_value_label(caption, tr("options.off"))
                       : generic_value_label(caption, value);
 }
 
+// `Options.percentValueLabel`: the value as whole percent.
 Component percent_value_label(const Component& caption, double value) {
     return translatable(
         "options.percent_value",
         {caption, literal(std::to_string(static_cast<int>(value * 100.0)))});
 }
 
+// `Options.percentValueOrOffLabel`: zero reads OFF.
 Component percent_value_or_off_label(const Component& caption, double value) {
     return value == 0.0 ? generic_value_label(caption, tr("options.off"))
                         : percent_value_label(caption, value);
 }
 
+// `Options.pixelValueLabel`: the value in pixels.
 Component pixel_value_label(const Component& caption, int value) {
     return translatable("options.pixel_value", {caption, literal(std::to_string(value))});
 }

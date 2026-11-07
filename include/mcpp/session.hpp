@@ -53,6 +53,9 @@ struct SessionOptions {
     // generates more terrain, or a world that is reset, changes nothing.
     std::filesystem::path record;
     std::filesystem::path replay;
+    // F: without a death screen the client has to ask to respawn itself; with
+    // one the screen does, so this turns the automatic answer off.
+    bool auto_respawn = true;
 };
 
 // Which world the player is in and what shape it has. min_y and height decide

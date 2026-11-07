@@ -59,61 +59,67 @@ uint32_t icon_layer(size_t index) { return static_cast<uint32_t>(index % 60) + 4
 
 } // namespace
 
-// `ServerAddress.isValidAddress`: Guava's HostAndPort with a non-empty host.
-bool is_valid_address(std::string_view address) {
-    if (address.empty()) return false;
-    std::string_view host = address;
+// `ServerAddress.isValidAddress`: Guava's host and port - a bracketed host, or
+// a host with at most one colon, and never an empty host. A colon with nothing
+// after it is a host without a port; two or more colons is a bare IPv6
+// literal.
+namespace {
+
+struct SplitAddress {
+    std::string_view host;
     std::string_view port;
+    bool ok = false;
+};
+
+SplitAddress split_address(std::string_view address) {
+    SplitAddress out;
+    if (address.empty()) return out;
     if (address.front() == '[') {
         const size_t close = address.find(']');
-        if (close == std::string_view::npos) return false;
-        host = address.substr(1, close - 1);
+        if (close == std::string_view::npos) return out;
+        out.host = address.substr(1, close - 1);
         const std::string_view rest = address.substr(close + 1);
         if (!rest.empty()) {
-            if (rest.front() != ':') return false;
-            port = rest.substr(1);
+            if (rest.front() != ':') return out;
+            out.port = rest.substr(1);
         }
     } else {
         const size_t colon = address.find(':');
-        if (colon != std::string_view::npos) {
-            if (address.find(':', colon + 1) != std::string_view::npos) return false;
-            host = address.substr(0, colon);
-            port = address.substr(colon + 1);
+        if (colon != std::string_view::npos &&
+            address.find(':', colon + 1) == std::string_view::npos) {
+            out.host = address.substr(0, colon);
+            out.port = address.substr(colon + 1);
+        } else {
+            out.host = address;
         }
     }
-    if (host.empty()) return false;
-    if (!port.empty()) {
-        if (port.size() > 5) return false;
-        for (const char c : port) {
-            if (std::isdigit(static_cast<unsigned char>(c)) == 0) return false;
+    if (out.host.empty()) return out;
+    if (!out.port.empty()) {
+        if (out.port.front() == '+') return out;
+        for (const char c : out.port) {
+            if (std::isdigit(static_cast<unsigned char>(c)) == 0) return out;
         }
-        if (std::strtol(std::string(port).c_str(), nullptr, 10) > 65535) return false;
+        if (out.port.size() > 5) return out;
+        const long number = std::strtol(std::string(out.port).c_str(), nullptr, 10);
+        if (number <= 0 || number > 65535) return out;
     }
-    return true;
+    out.ok = true;
+    return out;
 }
+
+} // namespace
+
+bool is_valid_address(std::string_view address) { return split_address(address).ok; }
 
 // `ServerAddress.parseString`: the host and its port, 25565 when none is given.
 std::pair<std::string, uint16_t> parse_address(std::string_view address) {
-    if (!is_valid_address(address)) return {"server.invalid", 25565};
-    std::string_view host = address;
-    std::string_view port;
-    if (address.front() == '[') {
-        const size_t close = address.find(']');
-        host = address.substr(1, close - 1);
-        const std::string_view rest = address.substr(close + 1);
-        if (!rest.empty()) port = rest.substr(1);
-    } else {
-        const size_t colon = address.find(':');
-        if (colon != std::string_view::npos) {
-            host = address.substr(0, colon);
-            port = address.substr(colon + 1);
-        }
+    const SplitAddress split = split_address(address);
+    if (!split.ok) return {"server.invalid", 25565};
+    uint16_t port = 25565;
+    if (!split.port.empty()) {
+        port = static_cast<uint16_t>(std::strtol(std::string(split.port).c_str(), nullptr, 10));
     }
-    uint16_t number = 25565;
-    if (!port.empty()) {
-        number = static_cast<uint16_t>(std::strtol(std::string(port).c_str(), nullptr, 10));
-    }
-    return {std::string(host), number};
+    return {std::string(split.host), port};
 }
 
 ServerPinger::~ServerPinger() { wait_all(); }
@@ -195,8 +201,8 @@ void ServerPinger::take(ServerList& list) {
 
 namespace {
 
-// `ServerSelectionList.OnlineServerEntry`: a server from the file, with the
-// icon, the motd, the ping bars, the version and the hover controls.
+// The game's OnlineServerEntry: a server from the file, with the icon, the
+// motd, the ping bars, the version and the hover controls.
 class OnlineServerEntry : public EntryList::Entry {
 public:
     OnlineServerEntry(JoinMultiplayerScreen& owner, size_t at) : screen(owner), index(at) {}
@@ -385,8 +391,8 @@ Component OnlineServerEntry::narration() const {
     return translatable("narrator.select", {literal(data().name)});
 }
 
-// `ServerSelectionList.LANHeader`: the line that says the network is being
-// looked at. This client scans no network, so the row only says so.
+// The game's LANHeader: the line that says the network is being looked at.
+// This client scans no network, so the row only says so.
 class LanHeaderEntry : public EntryList::Entry {
 public:
     explicit LanHeaderEntry(int label_width)
@@ -521,11 +527,13 @@ void JoinMultiplayerScreen::init() {
     on_selected_change();
 }
 
+// `JoinMultiplayerScreen.tick`: the pinger's answers are taken in.
 void JoinMultiplayerScreen::tick() {
     Screen::tick();
     pinger.take(servers);
 }
 
+// `JoinMultiplayerScreen.removed`: the pinger is let go.
 void JoinMultiplayerScreen::removed() { pinger.wait_all(); }
 
 // `JoinMultiplayerScreen.keyPressed`: F5 builds the list again.
@@ -749,6 +757,7 @@ void DirectJoinServerScreen::removed() {
     manager->options->save(Options::default_path());
 }
 
+// `DirectJoinServerScreen.onSelect`: the address typed is the one joined.
 void DirectJoinServerScreen::on_select() {
     entry_->ip = ip_edit->value();
     if (done_) done_(true);
@@ -853,12 +862,14 @@ void ConfirmScreen::init() {
     FrameLayout::center_in_rectangle(column, 0, 0, width, height);
 }
 
+// `ConfirmScreen.setDelay`: both buttons sleep for that many ticks.
 void ConfirmScreen::set_delay(int ticks) {
     delay_ = ticks;
     if (yes_button_ != nullptr) yes_button_->active = false;
     if (no_button_ != nullptr) no_button_->active = false;
 }
 
+// `ConfirmScreen.tick`: the buttons wake when the delay runs out.
 void ConfirmScreen::tick() {
     Screen::tick();
     if (--delay_ == 0) {

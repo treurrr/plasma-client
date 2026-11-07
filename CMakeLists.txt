@@ -142,6 +142,7 @@ add_library(mcpp_net STATIC
     src/ui/screens/multiplayer.cpp
     src/ui/options_defs.cpp
     src/ui/screens/options_screens.cpp
+    src/ui/screens/chat_screen.cpp
     src/ui/hud/gui.cpp
     src/ui/hud/chat.cpp
     src/ui/hud/tab_list.cpp
@@ -292,3 +293,6 @@ endif()
 mcpp_test(hand)
 target_sources(test_hand PRIVATE src/client/hand.cpp)
 target_include_directories(test_hand PRIVATE src)
+
+# F: the multiplayer path, the options screens, chat and death.
+mcpp_test(menus)

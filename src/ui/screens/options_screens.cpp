@@ -38,8 +38,8 @@ int bind_order(std::string_view name) {
     return 0;
 }
 
-// `OptionsList.Entry`: a row that holds one wide widget or two side by side,
-// placed against the screen's middle rather than the row's.
+// The game's OptionsList.Entry: a row that holds one wide widget or two side
+// by side, placed against the screen's middle rather than the row's.
 class OptionRow : public EntryList::Entry {
 public:
     OptionRow(Screen& owner, std::vector<Widget*> held) : screen(owner), widgets(std::move(held)) {}
@@ -68,8 +68,8 @@ public:
     std::vector<Widget*> widgets;
 };
 
-// `OptionsList.HeaderEntry`: a heading, pushed down by two lines when it is
-// not the first row.
+// The game's OptionsList.HeaderEntry: a heading, pushed down by two lines
+// when it is not the first row.
 class HeaderRow : public EntryList::Entry {
 public:
     HeaderRow(Screen& owner, Component text, int padding_top)
@@ -182,6 +182,7 @@ std::unique_ptr<Widget> OptionDef::create_button(Options& options, int x, int y,
 OptionsList::OptionsList(Screen& owner, int list_w, int list_h, int top)
     : EntryList(0, top, list_w, list_h, kDefaultItemHeight), screen(owner) {}
 
+// `OptionsList.addBig`: one option across the whole row.
 void OptionsList::add_big(const OptionDef& def, Options& options) {
     auto widget = def.create_button(options, 0, 0, kBigButtonWidth);
     Widget* raw = widget.get();
@@ -221,6 +222,7 @@ void OptionsList::add_header(Component text) {
               padding + Font::kLineHeight + 4);
 }
 
+// `OptionsList.findOption`: the widget an option made, or none.
 Widget* OptionsList::find_option(std::string_view key) const {
     for (const auto& [name, widget] : by_key_) {
         if (name == key) return widget;
@@ -268,6 +270,7 @@ void OptionsSubScreen::add_title() {
     frame->add_to_header(add<StringWidget>(0, 0, w, 9, title));
 }
 
+// `OptionsSubScreen.addContents`: the list between header and footer.
 void OptionsSubScreen::add_contents() {
     auto& rows = add<OptionsList>(*this, width, frame->content_height(), frame->header_height());
     rows.in_world = manager != nullptr && manager->in_world;
@@ -277,6 +280,7 @@ void OptionsSubScreen::add_contents() {
     add_options();
 }
 
+// `OptionsSubScreen.addFooter`: Done, 200 wide.
 void OptionsSubScreen::add_footer() {
     frame->add_to_footer(
         add<Button>(0, 0, 200, 20, translatable("gui.done"), [this](Button&) { on_close(); }));
@@ -288,6 +292,7 @@ void OptionsSubScreen::on_close() {
     if (manager != nullptr) manager->set_screen(parent);
 }
 
+// `OptionsSubScreen.removed`: the settings are written.
 void OptionsSubScreen::removed() { options.save(file); }
 
 OptionsScreen::OptionsScreen(std::shared_ptr<Screen> back, Options& settings)
@@ -372,6 +377,7 @@ void OptionsScreen::init() {
     frame.arrange_elements();
 }
 
+// `OptionsScreen.removed`: the settings are written.
 void OptionsScreen::removed() { options.save(file); }
 
 VideoSettingsScreen::VideoSettingsScreen(std::shared_ptr<Screen> back, Options& settings)
@@ -583,8 +589,7 @@ void OnlineOptionsScreen::add_options() {
 
 namespace {
 
-// `LanguageSelectScreen.LanguageSelectionList.Entry`: the language's own name,
-// centred.
+// The game's LanguageSelectionList.Entry: the language's own name, centred.
 class LanguageRow : public EntryList::Entry {
 public:
     LanguageRow(const EntryList& owner, std::string language_code, Component text)
@@ -701,8 +706,8 @@ void LanguageSelectScreen::on_done() {
 
 namespace {
 
-// `KeyBindsList.CategoryEntry`: the category's name, centred at the bottom of
-// its row.
+// The game's KeyBindsList.CategoryEntry: the category's name, centred at the
+// bottom of its row.
 class CategoryRow : public EntryList::Entry {
 public:
     CategoryRow(const EntryList& owner, Component text)
@@ -721,8 +726,8 @@ public:
     Component label;
 };
 
-// `KeyBindsList.KeyEntry`: the binding's name, the key it is on, Reset, and
-// the yellow bar when two bindings share a key.
+// The game's KeyBindsList.KeyEntry: the binding's name, the key it is on,
+// Reset, and the yellow bar when two bindings share a key.
 class KeyRow : public EntryList::Entry {
 public:
     KeyRow(KeyBindsList& owner, Keybind& bind);
@@ -863,6 +868,7 @@ KeyBindsList::KeyBindsList(KeyBindsScreen& owner, Keybinds& binds, int list_w, i
     }
 }
 
+// `KeyBindsList.refreshEntries`: every row reads its binding again.
 void KeyBindsList::refresh_entries() {
     for (const auto& entry : children()) entry->refresh();
 }
@@ -871,6 +877,7 @@ KeyBindsScreen::KeyBindsScreen(std::shared_ptr<Screen> back, Options& settings, 
     : OptionsSubScreen(std::move(back), settings, translatable("controls.keybinds.title")),
       keybinds(binds) {}
 
+// `KeyBindsScreen.addContents`: the bindings list instead of options.
 void KeyBindsScreen::add_contents() {
     auto& rows = add<KeyBindsList>(*this, keybinds, width, frame->content_height(),
                                    frame->header_height());

@@ -62,8 +62,8 @@ public:
 const std::vector<OptionDef>& option_defs();
 const OptionDef* option_def(std::string_view key);
 
-// `OptionInstance.OptionInstanceSliderButton`: the slider that writes the
-// option, at once or after the game's 600 ms.
+// The game's OptionInstanceSliderButton: the slider that writes the option,
+// at once or after the game's 600 ms.
 class OptionSlider : public Slider {
 public:
     OptionSlider(const OptionDef& def, Options& options, int x, int y, int w, int h);

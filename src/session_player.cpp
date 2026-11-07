@@ -133,7 +133,7 @@ bool Session::handle_player(PacketConnection::Packet& packet) {
         // The game shows a death screen and waits for the player to press
         // respawn. Until there is one, a dead player would stay dead forever:
         // invisible to everyone, selected by nothing, on zero hearts.
-        if (player_.vitals.health <= 0.0f) {
+        if (player_.vitals.health <= 0.0f && options_.auto_respawn) {
             ByteBuffer out;
             out.write_varint(0);   // perform respawn
             send(ids_->play_sb.client_command, out);

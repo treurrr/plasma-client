@@ -257,6 +257,7 @@ void ServerList::add(ServerEntry entry, bool hide) {
     }
 }
 
+// `ServerList.remove`: the entry goes, listed or hidden.
 void ServerList::remove(size_t index) {
     if (index < entries.size()) entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(index));
 }

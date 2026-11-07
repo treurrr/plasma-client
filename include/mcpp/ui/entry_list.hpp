@@ -14,7 +14,7 @@ namespace mcpp::ui {
 
 class EntryList : public Widget {
 public:
-    // `AbstractSelectionList.Entry`: a row that knows its own box.
+    // The game's AbstractSelectionList.Entry: a row that knows its own box.
     class Entry {
     public:
         virtual ~Entry() = default;
