@@ -145,9 +145,10 @@ float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
     return ground;
 }
 
-std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
+std::vector<mcpp::world::SectionMesh> mesh_world(std::span<const mcpp::world::Chunk> chunks,
                                                  const mcpp::world::BlockTable& table,
-                                                 double* milliseconds) {
+                                                 double* milliseconds,
+                                                 double* unpack_milliseconds) {
     const auto start = std::chrono::steady_clock::now();
 
     // Unpack first, in parallel. The map is only built once every entry exists,
@@ -156,6 +157,12 @@ std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::
     parallel_for(chunks.size(), [&](size_t i) {
         unpacked[i] = std::make_unique<mcpp::world::ChunkBlocks>(chunks[i]);
     });
+
+    if (unpack_milliseconds != nullptr) {
+        *unpack_milliseconds =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                .count();
+    }
 
     std::map<std::pair<int32_t, int32_t>, const mcpp::world::ChunkBlocks*> by_position;
     for (size_t i = 0; i < chunks.size(); ++i) {

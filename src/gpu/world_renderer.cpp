@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
+#include <ctime>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -19,6 +21,27 @@
 #include <mcpp/gpu/shaders/WorldVert.hpp>
 
 namespace mcpp::gpu {
+
+namespace {
+
+// A frame's own stopwatch. None of the parts it times waits on anything, so
+// the monotonic clock measures the same span as the thread's cpu clock and is
+// read in user space instead of through a system call.
+double mark_ms() {
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<double>(now.tv_sec) * 1e3 + static_cast<double>(now.tv_nsec) / 1e6;
+}
+
+// Adds what a scope spent to a counter when it ends.
+struct ScopeCost {
+    double* into;
+    double started;
+    ~ScopeCost() { *into = mark_ms() - started; }
+};
+
+} // namespace
+
 namespace {
 
 // Section data is written straight into mapped memory from several threads;
@@ -1119,6 +1142,8 @@ void WorldRenderer::keep_blends(const std::vector<world::SectionMesh>& sections,
 }
 
 void WorldRenderer::sort_translucent(VkCommandBuffer command, const Camera& camera) {
+    const auto note_sort = ScopeCost{&cost_.sort_ms, mark_ms()};
+    cost_.sort_upload_ms = 0.0;
     if (blends_.empty()) return;
     // Near sections only, and only when the camera has moved a whole block:
     // far away the quads are too small for their order to show, and standing
@@ -1128,7 +1153,8 @@ void WorldRenderer::sort_translucent(VkCommandBuffer command, const Camera& came
     const int32_t cell[3] = {static_cast<int32_t>(std::floor(camera.eye[0])),
                              static_cast<int32_t>(std::floor(camera.eye[1])),
                              static_cast<int32_t>(std::floor(camera.eye[2]))};
-    std::vector<std::pair<float, Blend*>> due;
+    auto& due = sort_due_;
+    due.clear();
     for (auto& [origin, blend] : blends_) {
         if (blend.sorted_for[0] == cell[0] && blend.sorted_for[1] == cell[1] &&
             blend.sorted_for[2] == cell[2]) {
@@ -1159,27 +1185,25 @@ void WorldRenderer::sort_translucent(VkCommandBuffer command, const Camera& came
     dependency.pMemoryBarriers = &before;
     vkCmdPipelineBarrier2(command, &dependency);
 
-    std::vector<uint32_t> order;
-    std::vector<float> reach;
-    std::vector<uint32_t> sorted;
+    auto& order = sort_order_;
+    auto& sorted = sort_indices_;
     for (const auto& [distance, blend] : due) {
         const size_t quads = blend->indices.size() / 6;
         order.resize(quads);
-        reach.resize(quads);
         for (size_t quad = 0; quad < quads; ++quad) {
-            order[quad] = static_cast<uint32_t>(quad);
             float d = 0.0f;
             for (int axis = 0; axis < 3; ++axis) {
                 const float delta = blend->centres[quad * 3 + axis] - camera.eye[axis];
                 d += delta * delta;
             }
-            reach[quad] = d;
+            order[quad] = {d, static_cast<uint32_t>(quad)};
         }
-        std::ranges::sort(order, [&](uint32_t a, uint32_t b) { return reach[a] > reach[b]; });
+        std::ranges::sort(order, [](const Quad& a, const Quad& b) { return a.reach > b.reach; });
         sorted.resize(blend->indices.size());
         for (size_t at = 0; at < quads; ++at) {
-            std::memcpy(&sorted[at * 6], &blend->indices[order[at] * 6], 6 * sizeof(uint32_t));
+            std::memcpy(&sorted[at * 6], &blend->indices[order[at].quad * 6], 6 * sizeof(uint32_t));
         }
+        const double upload_started = mark_ms();
         // vkCmdUpdateBuffer takes at most 64 KiB at a time.
         constexpr size_t kChunk = 65536 / sizeof(uint32_t);
         for (size_t at = 0; at < sorted.size(); at += kChunk) {
@@ -1188,6 +1212,7 @@ void WorldRenderer::sort_translucent(VkCommandBuffer command, const Camera& came
                               (static_cast<VkDeviceSize>(blend->first) + at) * sizeof(uint32_t),
                               count * sizeof(uint32_t), sorted.data() + at);
         }
+        cost_.sort_upload_ms += mark_ms() - upload_started;
         std::copy(std::begin(cell), std::end(cell), blend->sorted_for);
     }
 
@@ -1407,21 +1432,29 @@ void WorldRenderer::draw_outline(VkCommandBuffer command, const PushConstants& p
 
 void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
                                   const Camera& camera) {
+    const double geometry_started = mark_ms();
+    const auto note_geometry = ScopeCost{&cost_.geometry_ms, geometry_started};
+    constexpr VkShaderStageFlags kPushStages =
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    const auto send_all = [&] {
+        vkCmdPushConstants(command, layout_, kPushStages, 0, sizeof(push), &push);
+    };
     const auto send = [&](const float origin[3]) {
         push.origin[0] = origin[0];
         push.origin[1] = origin[1];
         push.origin[2] = origin[2];
-        vkCmdPushConstants(command, layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                           sizeof(push), &push);
+        vkCmdPushConstants(command, layout_, kPushStages, offsetof(PushConstants, origin),
+                           sizeof(push.origin), push.origin);
     };
 
     drawn_sections_ = 0;
     drawn_triangles_ = 0;
 
     if (sections_.empty()) {
-        const float none[3] = {0.0f, 0.0f, 0.0f};
-        send(none);
+        push.origin[0] = 0.0f;
+        push.origin[1] = 0.0f;
+        push.origin[2] = 0.0f;
+        send_all();
         if (opaque_index_count_ > 0) {
             vkCmdDrawIndexed(command, opaque_index_count_, 1, 0, 0, 0);
         }
@@ -1430,7 +1463,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
         if (index_count_ > opaque_index_count_) {
             vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
             push.eye[3] = kTranslucentCutout;
-            send(none);
+            send_all();
             vkCmdDrawIndexed(command, index_count_ - opaque_index_count_, 1,
                              opaque_index_count_, 0, 0);
             push.eye[3] = kCutout;
@@ -1441,6 +1474,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
     }
 
     const Frustum frustum(push.view_projection);
+    send_all();
     visible_.clear();
     for (const auto& section : sections_) {
         if (culling_ && !frustum.contains(section.bounds_min, section.bounds_max)) continue;
@@ -1477,6 +1511,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
 
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
     push.eye[3] = kTranslucentCutout;
+    send_all();
     for (const auto* section : visible_) {
         const uint32_t count = section->index_count - section->opaque_count;
         if (count == 0) continue;
@@ -1564,7 +1599,9 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
     rendering.pDepthAttachment = &depth_attachment;
 
     vkCmdBeginRendering(command, &rendering);
+    const double sky_started = mark_ms();
     if (sky_ != nullptr) sky_->record(command, camera, width_, height_, atmosphere_);
+    cost_.sky_ms = mark_ms() - sky_started;
     if (index_count_ > 0) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
         const VkViewport viewport{0.0f, 0.0f, static_cast<float>(width_),
@@ -1652,7 +1689,9 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         pass.colorAttachmentCount = 1;
         pass.pColorAttachments = &over;
         vkCmdBeginRendering(command, &pass);
+        const double overlay_started = mark_ms();
         overlay(command, width_, height_);
+        cost_.overlay_ms = mark_ms() - overlay_started;
         vkCmdEndRendering(command);
     }
 
@@ -1714,15 +1753,17 @@ double WorldRenderer::submit(VkCommandBuffer command) {
     return last_gpu_ms_;
 }
 
-double WorldRenderer::draw(const Camera& camera) {
+double WorldRenderer::draw(const Camera& camera, const Overlay& overlay) {
+    const double record_started = mark_ms();
     check(vkResetCommandBuffer(frame_command_, 0), "vkResetCommandBuffer");
 
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(frame_command_, &begin), "vkBeginCommandBuffer");
-    record_frame(frame_command_, camera, false);
+    record_frame(frame_command_, camera, false, false, overlay);
     check(vkEndCommandBuffer(frame_command_), "vkEndCommandBuffer");
+    cost_.record_ms = mark_ms() - record_started;
 
     VkCommandBufferSubmitInfo command_submit{};
     command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
@@ -1732,11 +1773,15 @@ double WorldRenderer::draw(const Camera& camera) {
     submit.commandBufferInfoCount = 1;
     submit.pCommandBufferInfos = &command_submit;
 
+    const double submit_started = mark_ms();
     check(vkResetFences(device_.handle(), 1, &frame_fence_), "vkResetFences");
     check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, frame_fence_), "vkQueueSubmit2");
+    cost_.submit_ms = mark_ms() - submit_started;
     check(vkWaitForFences(device_.handle(), 1, &frame_fence_, VK_TRUE, UINT64_MAX),
           "vkWaitForFences");
+    const double readback_started = mark_ms();
     read_timestamps();
+    cost_.readback_ms = mark_ms() - readback_started;
     return last_gpu_ms_;
 }
 

@@ -7,6 +7,7 @@
 #include "mcpp/world/physics.hpp"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -42,8 +43,9 @@ float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
 
 // Unpacks every chunk once - a neighbour is read by four others - then meshes
 // every section of every chunk.
-std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
+std::vector<mcpp::world::SectionMesh> mesh_world(std::span<const mcpp::world::Chunk> chunks,
                                                  const mcpp::world::BlockTable& table,
-                                                 double* milliseconds);
+                                                 double* milliseconds,
+                                                 double* unpack_milliseconds = nullptr);
 
 } // namespace client

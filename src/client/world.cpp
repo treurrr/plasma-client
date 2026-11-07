@@ -525,6 +525,19 @@ void world_predict_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t st
 
 namespace client {
 
+mcpp::world::AttributeValues world_attributes_at(const mcpp::Session& session, int64_t day_time,
+                                                 const double eye[3], const ChunkAt& chunk_at,
+                                                 const mcpp::Weather& weather) {
+    return attributes_at(session, day_time, eye, chunk_at, weather);
+}
+
+mcpp::world::AtmosphereInputs world_atmosphere_inputs(const mcpp::Session& session,
+                                                      const mcpp::gpu::Camera& camera,
+                                                      int32_t render_distance,
+                                                      const mcpp::Weather& weather) {
+    return inputs_for(session, camera, render_distance, weather);
+}
+
 mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
                                              const std::vector<mcpp::world::Chunk>& chunks,
                                              const mcpp::gpu::Camera& camera,

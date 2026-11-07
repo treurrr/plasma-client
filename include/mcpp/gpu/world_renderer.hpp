@@ -86,7 +86,7 @@ public:
 
     // Draws a frame without reading it back, which is what a frame costs
     // in a running client; the readback alone is several milliseconds.
-    double draw(const Camera& camera);
+    double draw(const Camera& camera, const Overlay& overlay = {});
 
     // Records a frame and leaves the colour image in TRANSFER_SRC_OPTIMAL, so a
     // window can blit it into a swapchain image in the same submission.
@@ -134,6 +134,19 @@ public:
 
     double last_gpu_ms() const { return last_gpu_ms_; }
     size_t section_count() const { return sections_.size(); }
+    // Where a frame's own cpu time went, so a benchmark can say which part of
+    // the renderer it is paying for rather than guess.
+    struct FrameCost {
+        double sort_ms = 0.0;
+        double sort_upload_ms = 0.0;
+        double sky_ms = 0.0;
+        double overlay_ms = 0.0;
+        double geometry_ms = 0.0;
+        double record_ms = 0.0;
+        double submit_ms = 0.0;
+        double readback_ms = 0.0;
+    };
+    const FrameCost& last_frame_cost() const { return cost_; }
     size_t drawn_sections() const { return drawn_sections_; }
     size_t drawn_triangles() const { return drawn_triangles_; }
     double upload_ms() const { return upload_ms_; }
@@ -297,12 +310,22 @@ private:
         int32_t sorted_for[3]{INT32_MIN, INT32_MIN, INT32_MIN};
     };
     std::map<std::array<int32_t, 3>, Blend> blends_;
+    // The sort's scratch, kept so a frame does not ask the allocator for it.
+    std::vector<std::pair<float, Blend*>> sort_due_;
+    // One quad's distance from the camera and where its indices are.
+    struct Quad {
+        float reach = 0.0f;
+        uint32_t quad = 0;
+    };
+    std::vector<Quad> sort_order_;
+    std::vector<uint32_t> sort_indices_;
     void sort_translucent(VkCommandBuffer command, const Camera& camera);
     void keep_blends(const std::vector<world::SectionMesh>& sections,
                      const std::vector<size_t>& source, size_t first_section);
     template <typename Drop> void drop_sections(Drop&& drop);
     void hand_back_released();
     bool culling_ = true;
+    FrameCost cost_;
     size_t drawn_sections_ = 0;
     size_t drawn_triangles_ = 0;
 

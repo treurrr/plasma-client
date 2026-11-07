@@ -26,10 +26,37 @@ meant. spawn-200.plrc and glass.plrc predate this rule and keep their names.
 Making one
 ----------
 
-    plasma-client record <host>[:port] corpus/<area>-<what>.plrc [chunks]
+    plasma-client record <host>[:port] corpus/<area>-<what>.plrc [chunks] [name]
 
 It records until that many chunks (200 by default) have arrived and two
-seconds more, so the light and entities that follow them are in it too.
+seconds more, so the light and entities that follow them are in it too. The
+name is the player it joins as, PlasmaShot by default; give it your own when
+another recording may be running.
+
+The benchmark's four worlds
+---------------------------
+
+worldbench needs a square of chunks big enough that a render distance means
+something: at distance d a vanilla client holds (2d+1) by (2d+1) chunks, so 289
+at 8, 1089 at 16 and 4225 at 32. A server only sends what its view-distance
+covers, so the square is recorded by standing in four places that overlap:
+
+    plasma-client record 127.0.0.1:25601 corpus/world-village.plrc 1200 PlasmaB4 &
+    for dx in -64 64; do for dz in -64 64; do
+        echo "tp PlasmaB4 $((X + dx)) 200 $((Z + dz))" > ~/plasma-testserver/console.in
+        sleep 60   # longer the first time: the server is generating the terrain
+    done; done
+
+Four stops 64 blocks apart cover 33 by 33 chunks at view-distance 12, which is
+render distance 16. A bigger square needs either a bigger view-distance on the
+server or more stops; raise view-distance in server.properties if you do, and
+put it back. Spectator mode keeps the recorder from falling or being hurt while
+it waits.
+
+The four spots are the four scenes docs/METHOD.md asks for, found with the
+server's own /locate: a plains village (1456, -368), a dark forest
+(1536, -1696), open ocean (1408, -1344) and jagged peaks (1216, -1888) in the
+test server's world. Another world has them somewhere else; /locate finds them.
 
 Using one
 ---------

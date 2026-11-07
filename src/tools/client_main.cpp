@@ -1812,7 +1812,8 @@ int main(int argc, char** argv) {
             std::stringstream list(argc > 5 ? argv[5] : "8,16,32");
             for (std::string item; std::getline(list, item, ',');) distances.push_back(std::stoi(item));
             return client::world_bench(argv[2], argc > 3 ? std::stoul(argv[3]) : 200,
-                                       argc > 4 ? std::stoul(argv[4]) : 600, distances);
+                                       argc > 4 ? std::stoul(argv[4]) : 600, distances,
+                                       argc > 6 ? std::stoll(argv[6]) : 6000);
         }
         if (command == "inspect" && argc > 2) {
             return client::inspect(argv[2], argc > 3 ? argv[3] : "PlasmaShot",
