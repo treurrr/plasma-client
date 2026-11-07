@@ -1,5 +1,6 @@
 #include "audio/attenuation.hpp"
 #include "audio/sounds.hpp"
+#include "audio/voices.hpp"
 
 #include "mcpp/assets/object_store.hpp"
 #include "mcpp/jmath.hpp"
@@ -64,6 +65,16 @@ int main() {
                 std::cout << std::bit_cast<int32_t>(clamp_volume(instance_volume) * distance_gain(d, range))
                           << '\n';
             }
+        }
+    }
+
+    for (const char* effects : {"hurt", "thorns", "drowning", "burning", "poking", "freezing"}) {
+        std::cout << damage_effect_sound(effects) << '\n';
+    }
+    for (const int64_t seed : seeds) {
+        for (const bool baby : {false, true}) {
+            mcpp::jmath::LegacyRandom random(seed);
+            std::cout << std::bit_cast<int32_t>(voice_pitch(baby, random)) << '\n';
         }
     }
 }

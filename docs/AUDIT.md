@@ -39,7 +39,7 @@ the plumbing around it). Not in the work list:
 
 Ordered by what a player feels first. `fixed` entries are this pass; `open`
 entries are what is left, in the same order. What is still open, shortest
-first: the entity hurt sound (5), biome blend (9), the session's packet reads
+first: the session's packet reads
 (10), `environment.cpp` (11), the shape of the light engine (8), elytra (12).
 
 ### 1. One tick clock, not three - `fixed`
@@ -74,13 +74,13 @@ first: the entity hurt sound (5), biome blend (9), the session's packet reads
 | vanilla | `AttributeInstance.calculateValue`, `RangedAttribute.sanitizeValue` |
 | wrong | both stopped before `sanitizeValue`, so nothing clamped the result to the attribute's own range and NaN came through. `movement_efficiency`, `sneaking_speed` and `water_movement_efficiency` are `[0,1]`, `gravity` is `[-1,1]`, `step_height` is `[0,10]`; a server that stacks modifiers past those got a speed, a step or a gravity the server itself does not use, which is a correction a tick later. |
 
-### 5. `LivingEntity.handleDamageEvent` - `open`, and smaller than it looked
+### 5. `LivingEntity.handleDamageEvent` - `fixed`, and far smaller than it looked
 
 | | |
 |---|---|
 | ours | `Living::damaged`, `src/entity/motion.cpp` |
 | vanilla | `LivingEntity.handleDamageEvent` |
-| wrong | read against the Java: the walk kick and `hurtTime` are both there and right. The two fields it leaves out, `hurtDuration` and `invulnerableTime`, have no reader on our side - vanilla's only assignment to `hurtDuration` is the same 10 the hand's `bob_hurt` already uses, and `invulnerableTime` is only read where damage is applied, which a client does not do. Adding them would be dead state, so they stay out and this says why. **What is really missing is the hurt sound**: vanilla plays `getHurtSound(source)` at `getSoundVolume()` with pitch `(random.nextFloat() - random.nextFloat()) * 0.2F + 1.0F`. Nothing of ours plays it, so no mob and no player makes a sound when it is hit - in a fight that is the one cue a player listens for. It needs two things we do not have: a hurt sound per entity type, and the damage type, whose registry id `session_entities.cpp` reads out of `damage_event` and throws away (`Player.getHurtSound` picks drown, on-fire, berry or freeze by it). Rows in `tools/port_map/audit.tsv`. |
+| wrong | read against the Java: the walk kick and `hurtTime` are both there and right. The two fields it leaves out, `hurtDuration` and `invulnerableTime`, have no reader on our side - vanilla's only assignment to `hurtDuration` is the same 10 the hand's `bob_hurt` already uses, and `invulnerableTime` is only read where damage is applied, which a client does not do. Adding them would be dead state, so they stay out and this says why. **The hurt sound this row asked for is almost all the server's**, which is not what it said: vanilla's `handleDamageEvent` does play `getHurtSound(source)` at `getSoundVolume()` with pitch `(random.nextFloat() - random.nextFloat()) * 0.2F + 1.0F`, but through `Entity.playSound`, which hands `null` to `ClientLevel.playSeededSound`, and that plays nothing unless the entity it is given is the player at the keyboard. For every mob and every other player the server has already played the same sound and broadcast it, so it arrives as a `sound` packet and we have been playing it all along. Measured on the test server: a cow hurt twice and killed sends `entity.cow.hurt` twice and `entity.cow.death`, each at volume 0.4, and a zombie the same at 1.0. So no per entity type table is needed, and building one would have been dead code. `Player.playSound` is the one override that hands itself over instead, and the server's broadcast leaves that player out, so **the player's own hurt and death sound exist nowhere but in the client** - and those really were silent. They are now played from `sound_bind`, picked by the damage type that `damage_event` carries, which was also being read one id short of its own registry. Rows in `tools/port_map/voices.tsv`. |
 
 ### 6. `Utf8String.read` - `fixed`
 
@@ -106,13 +106,13 @@ first: the entity hurt sound (5), biome blend (9), the session's packet reads
 | vanilla | `BlockBehaviour.BlockStateBase.getLightBlock`, `LightEngine.getOpacity`, `BlockLightEngine.checkNode`, `SkyLightEngine`, `ChunkSkyLightSources` |
 | wrong | two things were provably off and are fixed. `opacity` decided a block's light block from its registry name (`_leaves`, `cobweb`) and from whether it occludes, while vanilla reads a per-state value that `RenderInfo::light_block` already holds: ice came out 0 where the game says 1, so sky light did not fade under ice or the half-transparent blocks. And `relight` never put the block's own `getLightEmission` back after taking the old light away, so a torch placed in a dark room lit nothing but its own cell until the server's `light_update` arrived. What is left open is the shape of the engine: two flood fills of ours against vanilla's `DynamicGraphMinFixedPoint` queue and its per-column `ChunkSkyLightSources`. With the two values right they agree on everything tried so far, and the "sky light at 15 falls straight down while opacity is 0" rule is `ChunkSkyLightSources`' rule in another form, but it has not been proved equal in general. |
 
-### 9. Biome blend - `open`
+### 9. Biome blend - `fixed`
 
 | | |
 |---|---|
 | ours | `src/world/biomes.cpp`, `src/world/mesher.cpp` tint lookup |
 | vanilla | `BiomeColors.getAverageColor`, `BlockTintCache`, `Biome.getGrassColor`/`getFoliageColor`/`getWaterColor` |
-| wrong | not done: we tint from the biome of the block itself, so a biome border is one hard line. Vanilla averages the colour over a square of radius `options.biomeBlendRadius` (default 2, so 5x5 = 25 samples) around the block, summing the three channels as ints and dividing by the count, and caches it per chunk in `BlockTintCache`. Wave 2 agent E's lead. |
+| wrong | was: we tinted from the biome of the block itself, so a biome border was one hard line. Vanilla averages the colour over a square of radius `options.biomeBlendRadius` (default 2, so 5x5 = 25 samples) around the block, summing the three channels as ints and dividing by the count, and caches it per chunk in `BlockTintCache`. Now `blend_biome_tint` in `mesher.hpp` does that averaging and the mesher carries the blended RGB in the vertex, because the average is not any one biome's colour and so cannot be a biome index any more; the shader looks it up in the vertex instead of in the biome uniform. The square reaches past the chunk through the four neighbours and, at a corner, through four diagonals added for it. One answer per 4-high cell per column serves every corner of every quad that wants it, which is where `BlockTintCache` sits in the game. **Still off**: a swamp's grass is `BIOME_INFO_NOISE` per block in vanilla and one fixed colour here, which `BiomeTable::grass` already did before this and which the blend inherits. |
 
 ### 10. `src/session_*.cpp` packet reads - `open`
 

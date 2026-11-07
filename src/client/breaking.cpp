@@ -21,6 +21,7 @@ using mcpp::world::BlockShapes;
 
 struct BreakingArea {
     mcpp::world::ParticleTable table;
+    mcpp::world::ParticleSprites sprites;
     mcpp::world::ParticleEngine engine;
     mcpp::world::BlockDestruction destruction;
     BlockPrediction prediction;
@@ -87,7 +88,25 @@ mcpp::world::ParticleLevel particle_level(const Game& game, const BreakingArea& 
         [&game, &b](mcpp::world::ParticleTable::Colour c, int32_t x, int32_t y, int32_t z) {
             return biome_unlocked(game, b, c, x, y, z);
         },
-        game.session->dimension().min_y};
+        game.session->dimension().min_y, b.sprites.is_open() ? &b.sprites : nullptr};
+}
+
+// What a level_particles packet turns into: the type we know by that name and
+// the options the packet carried.
+void spawn_packet_particles(Game& game, const mcpp::LevelParticles& packet) {
+    auto* b = area(game);
+    if (b == nullptr || !b->sprites.is_open()) return;
+    const auto type = mcpp::world::particle_type_from_name(packet.type);
+    if (type == mcpp::world::ParticleType::None) return;
+    mcpp::world::ParticleOptions options;
+    options.block_state = packet.block_state;
+    options.colour = packet.colour;
+    options.to_colour = packet.to_colour;
+    options.scale = packet.scale;
+    options.power = packet.power;
+    std::lock_guard lock(game.world.world_guard);
+    b->engine.spawn_cloud(particle_level(game, *b), type, options, packet.x, packet.y, packet.z,
+                          packet.x_dist, packet.y_dist, packet.z_dist, packet.max_speed, packet.count);
 }
 
 const mcpp::ItemStack& held(const Game& game) {
@@ -136,6 +155,9 @@ void breaking_bind(Game& game, mcpp::SessionEvents& events) {
         if (a->prediction.update(pos, state)) return;
         if (a->apply_block) a->apply_block(x, y, z, state);
     };
+    events.world.on_particles = [&game](const mcpp::LevelParticles& packet) {
+        spawn_packet_particles(game, packet);
+    };
     // `ClientLevel.handleBlockChangedAck`: what the server answered, made true.
     events.player.on_block_changed_ack = [&game](int32_t sequence) {
         for (const auto& [pos, verified] : area(game)->prediction.end_up_to(sequence)) sync_block(game, pos, verified);
@@ -161,6 +183,10 @@ void breaking_start(Game& game) {
     const int32_t protocol = mcpp::protocol::kTargetProtocol;
     if (!b.table.open(mcpp::world::ParticleTable::default_path(protocol), game.table)) {
         std::cout << "- no particle table; bake one with tools/bake_particles.py\n";
+    }
+    if (!b.sprites.open(mcpp::world::ParticleSprites::default_path(protocol),
+                        static_cast<uint32_t>(game.table.texture_count()))) {
+        std::cout << "- no particle sprites; bake them with tools/bake_particle_sprites.py\n";
     }
     if (!game.session->biomes().empty()) {
         mcpp::world::Colormaps maps;
@@ -352,11 +378,26 @@ void breaking_stop(Game& game) {
     }
 }
 
+// `WeatherEffectRenderer.tickRainParticles`: the drop it adds, which is smoke
+// where it lands on lava, magma or a lit campfire.
+void breaking_spawn_rain(Game& game, bool smoke, double x, double y, double z) {
+    auto* b = area(game);
+    if (b == nullptr || !b->sprites.is_open()) return;
+    const auto type = smoke ? mcpp::world::ParticleType::Smoke : mcpp::world::ParticleType::Rain;
+    b->engine.spawn(particle_level(game, *b), type, {}, x, y, z, 0.0, 0.0, 0.0);
+}
+
 void breaking_level_event(Game& game, int32_t type, int32_t x, int32_t y, int32_t z, int32_t data) {
     // `LevelEventHandler.levelEvent`: 2001, a block broken, shows its bits; the sound area plays its sound.
-    if (type != 2001) return;
     const int32_t pos[3] = {x, y, z};
-    destroy_effect(game, pos, data);
+    if (type == 2001) {
+        destroy_effect(game, pos, data);
+        return;
+    }
+    auto* b = area(game);
+    if (b == nullptr || !b->sprites.is_open()) return;
+    std::lock_guard lock(game.world.world_guard);
+    b->engine.level_event(particle_level(game, *b), type, pos, data);
 }
 
 } // namespace client

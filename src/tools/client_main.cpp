@@ -36,6 +36,7 @@
 #endif
 #include "mcpp/image_png.hpp"
 #include "mcpp/world/atlas.hpp"
+#include "mcpp/gpu/weather.hpp"
 #include "mcpp/world/biomes.hpp"
 #include "mcpp/translations.hpp"
 #include "mcpp/world/light.hpp"
@@ -584,7 +585,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                              static_cast<int>(extent));
 
     double mesh_ms = 0.0;
-    const auto combined = mesh_world(chunks, table, &mesh_ms);
+    const auto combined = mesh_world(chunks, table, &mesh_ms, nullptr, client::biome_tints_of(session));
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options gpu_options;
@@ -750,6 +751,21 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
     }
     if (!session.environment().selected().empty()) {
         renderer.set_atmosphere(client::world_shot_atmosphere(session, chunks, camera, sky_options));
+    }
+    // J: rain or snow over the shot, from the same @ options.
+    std::optional<mcpp::gpu::WeatherRenderer> weather;
+    const auto falling = client::world_shot_weather(session, chunks, camera, sky_options);
+    if (falling.intensity > 0.0f && std::filesystem::exists(sky_path)) {
+        weather.emplace(device, renderer, sky_path);
+        if (weather->ready()) {
+            const double eye[3] = {camera.eye[0], camera.eye[1], camera.eye[2]};
+            weather->set_frame(falling, eye);
+            renderer.set_weather(&*weather);
+            std::cout << std::format(
+                "- weather: {} rain and {} snow columns, {} and {} corners\n",
+                falling.rain.size(), falling.snow.size(), weather->rain_vertices(),
+                weather->snow_vertices());
+        }
     }
 
     mcpp::gpu::WorldRenderer::Overlay overlay;

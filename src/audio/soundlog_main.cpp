@@ -5,6 +5,7 @@
 #include "audio/engine.hpp"
 #include "audio/footsteps.hpp"
 #include "audio/level_events.hpp"
+#include "audio/voices.hpp"
 
 #include "mcpp/assets/object_store.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -270,10 +271,40 @@ int do_replay(const std::string& file, bool realtime) {
             found->second.set_block_state(x & 15, found->second.index_of(y), z & 15, state);
         }
     };
+    std::array<double, 3> self{0.0, 0.0, 0.0};
+    size_t predicted_voices = 0;
     events.player.on_position = [&](double x, double y, double z, float yaw, float pitch) {
+        self = {x, y, z};
         engine.set_listener({x, y + 1.62, z, yaw, pitch});
         std::cout << std::format("{:8.3f} listener at {:.2f} {:.2f} {:.2f} yaw {:.1f}\n", now, x,
                                  y + 1.62, z, yaw);
+    };
+    // The player's own voice, which the server never sends and the client is
+    // the only one to play. Written down as a model line, like the footsteps.
+    const auto voice = [&](const mcpp::audio::Voice& line) {
+        mcpp::audio::PlayRequest request;
+        request.event = std::string(line.event);
+        request.category = mcpp::audio::Category::Player;
+        request.x = self[0];
+        request.y = self[1];
+        request.z = self[2];
+        request.volume = line.volume;
+        request.pitch = line.pitch;
+        ++predicted_voices;
+        std::cout << std::format("{:8.3f} voice   {} at {:.3f} {:.3f} {:.3f} volume {:.4f} pitch {:.4f}\n",
+                                 now, request.event, request.x, request.y, request.z, line.volume,
+                                 line.pitch);
+        engine.play(request, client_random);
+    };
+    events.entities.on_damage_type = [&](int32_t id, std::string_view damage_type) {
+        if (id != session_ptr->entity_id()) return;
+        std::cout << std::format("{:8.3f} packet  damage_event type '{}'\n", now, damage_type);
+        voice(mcpp::audio::player_hurt_voice(session_ptr->registries(), damage_type, client_random));
+    };
+    events.entities.on_event = [&](int32_t id, uint8_t status) {
+        if (status != 3 || id != session_ptr->entity_id()) return;
+        std::cout << std::format("{:8.3f} packet  entity_event 3\n", now);
+        voice(mcpp::audio::player_death_voice(client_random));
     };
     // Other players walk by the same rules the client uses for its own feet,
     // so the server's footsteps for them are what the model has to match.
@@ -440,8 +471,9 @@ int do_replay(const std::string& file, bool realtime) {
     }
     advance(now + 3.0);
     (void)session_ptr;
-    std::cout << std::format("# {} packets, {} voices still playing, {} footsteps from the model\n",
-                             packet, engine.active(), predicted);
+    std::cout << std::format(
+        "# {} packets, {} voices still playing, {} footsteps and {} own voices from the model\n",
+        packet, engine.active(), predicted, predicted_voices);
     const auto mixing = engine.mixer().stats();
     const auto sounds = engine.stats();
     std::cout << std::format(

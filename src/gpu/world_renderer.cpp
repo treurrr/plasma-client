@@ -1,5 +1,7 @@
 #include "mcpp/gpu/world_renderer.hpp"
 
+#include "mcpp/gpu/weather.hpp"
+
 #include "mcpp/gpu/outline.hpp"
 #include "mcpp/gpu/sky.hpp"
 #include "vk_util.hpp"
@@ -761,7 +763,7 @@ void WorldRenderer::create_pipeline() {
     attributes[0] = {0, 0, VK_FORMAT_R16G16B16A16_UINT, offsetof(world::Vertex, position)};
     attributes[1] = {1, 0, VK_FORMAT_R16G16_UNORM, offsetof(world::Vertex, uv)};
     attributes[2] = {2, 0, VK_FORMAT_R16G16_UINT, offsetof(world::Vertex, texture)};
-    attributes[3] = {3, 0, VK_FORMAT_R16G16_UINT, offsetof(world::Vertex, biome)};
+    attributes[3] = {3, 0, VK_FORMAT_R32_UINT, offsetof(world::Vertex, tint)};
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -1640,6 +1642,11 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         const Mat4 matrix =
             view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));
         after_translucent_(command, matrix.m, width_, height_, atmosphere_.fog_colour, camera);
+    }
+    if (weather_ != nullptr) {
+        const Mat4 matrix =
+            view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));
+        weather_->record(command, matrix.m, camera);
     }
     if (sky_ != nullptr) sky_->record_clouds(command, camera, width_, height_, atmosphere_);
     // D: `GameRenderer.renderLevel` clears the depth before the hand, so the

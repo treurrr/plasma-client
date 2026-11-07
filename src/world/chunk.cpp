@@ -142,6 +142,15 @@ void PalettedContainer::rewrite(uint8_t bits) {
     for (size_t i = 0; i < entry_count_; ++i) write_raw(i, raw[i]);
 }
 
+// `Level.getHeight`: the chunk's own entry, or the bottom where the server
+// sent no heightmap and nothing is known to be in the way.
+int32_t Chunk::motion_blocking_at(int32_t local_x, int32_t local_z) const {
+    if (motion_blocking.size() != 256 || local_x < 0 || local_x > 15 || local_z < 0 || local_z > 15) {
+        return min_y;
+    }
+    return motion_blocking[static_cast<size_t>(local_z) * 16 + static_cast<size_t>(local_x)];
+}
+
 size_t Chunk::non_empty_sections() const {
     size_t count = 0;
     for (const auto& section : sections) {
@@ -265,9 +274,13 @@ Chunk read_chunk(ByteBuffer& in, int32_t min_y) {
 
     const int32_t heightmap_count = in.read_varint();
     if (heightmap_count < 0) throw ProtocolError("negative heightmap count");
+    std::vector<uint64_t> motion_blocking;
     for (int32_t i = 0; i < heightmap_count; ++i) {
-        in.read_varint();
-        read_prefixed_longs(in);
+        // Heightmap's Types: 4 is MOTION_BLOCKING, the one the weather falls
+        // onto; the others are the server's own business.
+        const int32_t type = in.read_varint();
+        auto longs = read_prefixed_longs(in);
+        if (type == 4) motion_blocking = std::move(longs);
     }
 
     const int32_t data_size = in.read_varint();
@@ -282,6 +295,24 @@ Chunk read_chunk(ByteBuffer& in, int32_t min_y) {
         section.blocks = PalettedContainer::read(sections, kBlocksPerSection, kMaxBlockIndirectBits);
         section.biomes = PalettedContainer::read(sections, kBiomesPerSection, kMaxBiomeIndirectBits);
         chunk.sections.push_back(std::move(section));
+    }
+
+    // The entries are as wide as the world is tall, which only the sections
+    // just read say, so the heightmap is unpacked now rather than above.
+    if (!motion_blocking.empty()) {
+        const int32_t height = static_cast<int32_t>(chunk.sections.size()) * 16;
+        int32_t bits = 1;
+        while ((1 << bits) < height + 1) ++bits;
+        const int32_t per_long = 64 / bits;
+        const uint64_t mask = (uint64_t{1} << bits) - 1;
+        chunk.motion_blocking.assign(256, 0);
+        for (int32_t index = 0; index < 256; ++index) {
+            const size_t slot = static_cast<size_t>(index / per_long);
+            if (slot >= motion_blocking.size()) break;
+            const int32_t shift = (index % per_long) * bits;
+            const auto value = static_cast<int32_t>((motion_blocking[slot] >> shift) & mask);
+            chunk.motion_blocking[static_cast<size_t>(index)] = static_cast<int16_t>(value + min_y);
+        }
     }
 
     const int32_t block_entity_count = in.read_varint();

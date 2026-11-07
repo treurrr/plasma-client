@@ -28,6 +28,7 @@
 #include "mcpp/world/render_table.hpp"
 #include "mcpp/world/light.hpp"
 #include "mcpp/world/mesher.hpp"
+#include "mcpp/world/weather.hpp"
 #include "mcpp/world/physics.hpp"
 
 #include <atomic>
@@ -44,6 +45,10 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+namespace mcpp::gpu {
+class WeatherRenderer;
+}
 
 namespace client {
 
@@ -108,6 +113,16 @@ struct WorldArea {
     uint64_t flicker_seed = 0x5DEECE66Dull;
     int32_t water_vision_time = 0;
     int32_t render_distance = 12;
+    // J: the biome colours and the blend radius the mesher averages with,
+    // built once because the colour maps come off disk.
+    mcpp::world::BiomeTints biome_tints;
+    // J: the columns of rain and snow around the camera this frame, and the
+    // clock the rain sound keeps between ticks.
+    mcpp::world::WeatherState weather;
+    int32_t rain_sound_time = 0;
+    int32_t weather_ticks = 0;
+    // Held by pointer so the gpu header stays out of every client file.
+    std::shared_ptr<mcpp::gpu::WeatherRenderer> weather_renderer;
 };
 
 struct EntitiesArea {
@@ -338,6 +353,14 @@ mcpp::world::AtmosphereInputs world_atmosphere_inputs(const mcpp::Session& sessi
                                                       const mcpp::Weather& weather);
 // World: the sky, fog and lightmap a worldshot of a recorded world is drawn
 // with. Options after an '@' in the view: t=<day time>, rain=, thunder=, rd=.
+// J: the weather a shot is taken under, from the same options: rain= turns it
+// on, snow= makes every column snow whatever the biome says, which no chunk
+// around an arbitrary shot is guaranteed to do.
+mcpp::world::WeatherState world_shot_weather(const mcpp::Session& session,
+                                             const std::vector<mcpp::world::Chunk>& chunks,
+                                             const mcpp::gpu::Camera& camera,
+                                             std::string_view options);
+
 mcpp::world::Atmosphere world_shot_atmosphere(const mcpp::Session& session,
                                              const std::vector<mcpp::world::Chunk>& chunks,
                                              const mcpp::gpu::Camera& camera,

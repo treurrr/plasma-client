@@ -92,11 +92,34 @@ public:
         return static_cast<double>((high << 27) + low) * static_cast<double>(1.110223e-16f);
     }
 
+    // `MarsagliaPolarGaussian.nextGaussian`: the polar method, which makes two
+    // at a time and hands out the second on the next call.
+    double next_gaussian() {
+        if (have_next_gaussian_) {
+            have_next_gaussian_ = false;
+            return next_gaussian_;
+        }
+        double a = 0.0;
+        double b = 0.0;
+        double square = 0.0;
+        do {
+            a = 2.0 * next_double() - 1.0;
+            b = 2.0 * next_double() - 1.0;
+            square = a * a + b * b;
+        } while (square >= 1.0 || square == 0.0);
+        const double scale = std::sqrt(-2.0 * std::log(square) / square);
+        next_gaussian_ = b * scale;
+        have_next_gaussian_ = true;
+        return a * scale;
+    }
+
 private:
     static constexpr uint64_t kMultiplier = 25214903917ull;
     static constexpr uint64_t kIncrement = 11ull;
     static constexpr uint64_t kMask = (1ull << 48) - 1;
     uint64_t seed_ = 0;
+    double next_gaussian_ = 0.0;
+    bool have_next_gaussian_ = false;
 };
 
 // Java's (int) of a float: NaN is 0, and past the int range it stops at the

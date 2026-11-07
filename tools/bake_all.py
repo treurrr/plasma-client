@@ -58,7 +58,9 @@ def main(args):
 
     table = out / f"blocks-{protocol}.plbk"
     run("bake_block_table.py", jar, report, protocol, table)
-    run("bake_atlas.py", jar, table, out / f"atlas-{protocol}.plat")
+    sprites = out / f"particle_sprites-{protocol}.txt"
+    run("bake_particle_sprites.py", jar, sprites)
+    run("bake_atlas.py", jar, table, out / f"atlas-{protocol}.plat", sprites)
     run("bake_colormaps.py", jar, out / f"colormaps-{protocol}.plcm")
     run("bake_sky.py", jar, out / f"sky-{protocol}.plsk")
     # The entity model layers first: the items the game draws with a block

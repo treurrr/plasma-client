@@ -1,0 +1,20 @@
+# What a living thing is heard saying when it is hit and when it dies. The
+# client plays it for the player at the keyboard only: every other entity's
+# hurt and death sound is already in a sound packet, because Entity.playSound
+# hands null to ClientLevel.playSeededSound and that plays nothing, while the
+# server's broadcast leaves out only the player whose own sound it is.
+# Proved on the test server: a cow hurt and killed sends entity.cow.hurt and
+# entity.cow.death at volume 0.4, a zombie the same at 1.0, and the player's
+# own hurt and death send nothing at all.
+LivingEntity.getHurtSound	skip		the client never reaches it: a mob's hurt sound comes from the server as a sound packet
+LivingEntity.getDeathSound	skip		the same; the server plays it in actuallyHurt and broadcasts it
+LivingEntity.playHurtSound	skip		server side, inside hurtServer
+LivingEntity.makeSound	skip		server side, inside hurtServer
+LivingEntity.playSecondaryHurtSound	skip		server side: thorns is broadcast as its own sound packet
+Entity.playSound	skip		on a client it plays nothing unless the entity is the player, which Player.playSound is
+Player.playSound	inline	src/client/sound.cpp::sound_bind	the one override a client plays, for the player's own voice
+ClientLevel.playSeededSound	inline	src/client/sound.cpp::sound_bind	the entity-is-the-player test that decides whether anything plays
+DamageEffects	port	src/audio/voices.cpp::damage_effect_sound
+DamageType	port	src/audio/voices.cpp::damage_type_effects	only the effects field; the rest is the server's arithmetic
+LivingEntity.getFallDamageSound	port	src/audio/footsteps.cpp::Footsteps::tick	already there with the block fall sound
+LivingEntity.getFallSounds	port	src/audio/footsteps.cpp::Footsteps::tick	the player's small and big fall

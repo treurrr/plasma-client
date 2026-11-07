@@ -2,6 +2,3 @@
 LivingEntity.isFallFlying	absent		elytra: Body has no fall-flying state, so Player.getBlockSpeedFactor's second half can never be true
 LivingEntity.travelFallFlying	absent		elytra flight is not simulated
 LivingEntity.updateFallFlyingMovement	absent		elytra flight is not simulated
-LivingEntity.getHurtSound	absent		no per entity type hurt sound table, and the damage type id of damage_event is read and thrown away
-Player.getHurtSound	absent		the same, for the player's own drown, burn, berry and freeze sounds
-BiomeColors.getAverageColor	absent		biome blend: tinted from the block's own biome, not the 5x5 average

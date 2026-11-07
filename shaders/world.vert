@@ -7,19 +7,13 @@ layout(push_constant) uniform Push {
     vec4 extra;
 } push;
 
-// Four colours per biome - grass, foliage, water, dry foliage - each 0xRRGGBB,
-// in the order the server listed them.
-layout(set = 0, binding = 1) uniform Biomes {
-    uvec4 colour[256];
-} biomes;
-
 // The game's lightmap: block light along u, sky light along v, filtered.
 layout(set = 0, binding = 3) uniform sampler2D lightmap;
 
 layout(location = 0) in uvec4 in_position;   // xyz fixed point, w tint and brightness
 layout(location = 1) in vec2 in_uv;
 layout(location = 2) in uvec2 in_texture_light;
-layout(location = 3) in uvec2 in_biome;
+layout(location = 3) in uint in_tint;   // the blended biome colour, 0x00RRGGBB
 
 const float kPositionScale = 2048.0;
 const float kPositionBias = 1.0;
@@ -58,12 +52,11 @@ void main() {
                                       vec3(0.5020, 0.6549, 0.3333),   // birch
                                       vec3(0.1255, 0.5020, 0.1882),   // lily pad
                                       vec3(1.0));
-    const int kBiomeChannel[8] = int[](-1, 0, 1, 2, -1, -1, -1, 3);
+    // Which tints come from the biome at all; the mesher has already averaged
+    // those over the square the blend radius covers.
+    const bool kFromBiome[8] = bool[](false, true, true, true, false, false, false, true);
     uint tint = flags & 7u;
-    int channel = kBiomeChannel[tint];
-    vec3 tint_colour = channel < 0
-        ? kFixedTint[tint]
-        : unpack(biomes.colour[in_biome.x & 0xFFu][channel]);
+    vec3 tint_colour = kFromBiome[tint] ? unpack(in_tint) : kFixedTint[tint];
 
     uint block = in_texture_light.y & 0xFFu;
     uint sky = (in_texture_light.y >> 8) & 0xFFu;

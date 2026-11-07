@@ -1,0 +1,17 @@
+# Rain and snow. The column pass and the drops are ported whole and proved
+# bit-exact against the game's own WeatherEffectRenderer; what is left out is
+# noted here rather than left silent.
+WeatherRenderState	skip		it is a record; ours is WeatherState in include/mcpp/world/weather.hpp
+WeatherEffectRenderer.ColumnInstance	skip		it is a record; ours is WeatherColumn in include/mcpp/world/weather.hpp
+WeatherEffectRenderer.render	skip		picks the two render types; which pipeline a quad goes to is ours
+WeatherEffectRenderer.getPrecipitationAt	inline	src/client/world.cpp::weather_level	the chunk test and the biome lookup, where the chunks are
+LightTexture.pack	port	include/mcpp/world/weather.hpp::light_pack
+LightTexture.block	port	include/mcpp/world/weather.hpp::light_block
+LightTexture.sky	port	include/mcpp/world/weather.hpp::light_sky
+Biome.getPrecipitationAt	port	src/world/weather.cpp::precipitation_at
+Biome.warmEnoughToRain	inline	src/world/weather.cpp::precipitation_at
+Biome.coldEnoughToSnow	inline	src/world/weather.cpp::precipitation_at
+Biome.getHeightAdjustedTemperature	inline	src/world/weather.cpp::precipitation_at	without the noise it adds above sea level + 17
+Biome.getTemperature	inline	src/world/weather.cpp::precipitation_at	without the per-position cache, which is the game's own speed
+BiomeSpecialEffects.TemperatureModifier	absent		the frozen biomes' noise: a snow line on a mountain can be a block out
+PerlinSimplexNoise	absent		needed by the temperature noise above and by a swamp's grass colour

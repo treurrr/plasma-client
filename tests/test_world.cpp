@@ -4,10 +4,13 @@
 #include "mcpp/world/atmosphere.hpp"
 #include "mcpp/world/environment.hpp"
 #include "mcpp/world/light.hpp"
+#include "mcpp/world/mesher.hpp"
+#include "mcpp/world/weather.hpp"
 #include "mcpp/world/render_table.hpp"
 #include "mcpp/world/shapes.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -412,6 +415,225 @@ void test_lightmap() {
 
 } // namespace
 
+
+// `ClientLevel.calculateBlockTint`: the colour averaged over the square the
+// biomeBlendRadius option asks for. The expected values are written out from
+// the game's own arithmetic by hand - sum each channel over the square, divide
+// by the area, truncate - not taken from the code under test.
+void test_biome_blend() {
+    // Two biomes, far apart in colour so every step of the fade is visible.
+    // Row 0 is grass, 1 foliage, 2 water, 3 dry foliage, as BiomeTable writes.
+    BiomeTints tints;
+    tints.colour = {
+        0x91BD59u, 0x77AB2Fu, 0x3F76E4u, 0x8F9A2Fu,   // biome 0, a plains
+        0x80B497u, 0x6A7039u, 0x00539Cu, 0xB0C15Fu,   // biome 1, a swamp
+    };
+
+    // A border down x = 0: everything west of it is biome 0, the rest biome 1.
+    const auto split = [](int32_t x, int32_t) -> uint16_t { return x < 0 ? 0 : 1; };
+
+    tints.blend_radius = 0;
+    check(blend_biome_tint(tints, 0, -1, 0, split) == 0x91BD59u,
+          "at radius 0 a block takes its own biome, which is the hard line");
+    check(blend_biome_tint(tints, 0, 0, 0, split) == 0x80B497u,
+          "and the block the other side of the border takes the other biome");
+
+    // Radius 2: a 5x5 square, so the column x holds 5 blocks each of
+    // x-2..x+2. At x = 0 that is two columns of biome 0 (x-2, x-1) and three
+    // of biome 1, ten and fifteen blocks of 25.
+    tints.blend_radius = 2;
+    const auto average = [](int32_t zeros, uint32_t a, uint32_t b) {
+        const int32_t ones = 25 - zeros;
+        const auto channel = [&](int shift) {
+            const int32_t sum = zeros * static_cast<int32_t>((a >> shift) & 0xFFu) +
+                                ones * static_cast<int32_t>((b >> shift) & 0xFFu);
+            return static_cast<uint32_t>(sum / 25 & 0xFF);
+        };
+        return channel(16) << 16 | channel(8) << 8 | channel(0);
+    };
+    const std::pair<int32_t, int32_t> steps[] = {
+        {-3, 25}, {-2, 20}, {-1, 15}, {0, 10}, {1, 5}, {2, 0}, {3, 0},
+    };
+    for (const auto& [x, zeros] : steps) {
+        for (int channel = 0; channel < kTintChannels; ++channel) {
+            const uint32_t a = tints.colour[static_cast<size_t>(channel)];
+            const uint32_t b = tints.colour[static_cast<size_t>(kTintChannels + channel)];
+            const uint32_t want = average(zeros, a, b);
+            const uint32_t got = blend_biome_tint(tints, channel, x, 0, split);
+            check(got == want, std::format("the blend at x {} channel {} is {}, got {}", x,
+                                           channel, hex(want), hex(got)));
+        }
+    }
+    // Seven columns wide instead of one: a border is no longer one line but a
+    // ramp, which is the whole point of the row.
+    uint32_t last = 0;
+    int steps_seen = 0;
+    for (int32_t x = -4; x <= 4; ++x) {
+        const uint32_t here = blend_biome_tint(tints, 0, x, 0, split);
+        if (x > -4 && here != last) ++steps_seen;
+        last = here;
+    }
+    check(steps_seen == 5,
+          std::format("a 5x5 blend crosses a border in five steps, saw {}", steps_seen));
+
+    // The widest the option goes, and the truncation it leans on: 15x15 is 225
+    // blocks, and a channel that does not divide evenly rounds down.
+    const uint32_t wide = static_cast<uint32_t>((0x91 * 7 + 0x80 * 8) * 15 / 225) << 16 |
+                          static_cast<uint32_t>((0xBD * 7 + 0xB4 * 8) * 15 / 225) << 8 |
+                          static_cast<uint32_t>((0x59 * 7 + 0x97 * 8) * 15 / 225);
+    tints.blend_radius = 7;
+    check(blend_biome_tint(tints, 0, 0, 0, split) == wide,
+          "at radius 7 the square is 15 blocks on a side");
+    tints.blend_radius = 12;
+    check(blend_biome_tint(tints, 0, 0, 0, split) == wide,
+          "and a radius past the option's own range is held at seven");
+
+    // A biome past the end of the table falls back rather than reading off it.
+    tints.blend_radius = 0;
+    check(blend_biome_tint(tints, 0, 0, 0, [](int32_t, int32_t) -> uint16_t { return 99; }) ==
+              kDefaultTint[0],
+          "a biome the table does not hold falls back to the game's own grass");
+}
+
+
+// `WeatherEffectRenderer.tickRainParticles`: how many drops fall, where they
+// land, and how often one of them is heard. The counts are the game's own
+// formula written out, not taken from the code under test.
+// What a frame of weather costs on the cpu at the default radius: the extract
+// pass over the 21 by 21 square and the corners it turns into.
+void time_weather() {
+    WeatherLevel level;
+    level.min_y = -64;
+    level.height = [](int32_t, int32_t) { return 64; };
+    level.precipitation = [](int32_t x, int32_t, int32_t z) {
+        return (x + z) % 3 == 0 ? Precipitation::Snow : Precipitation::Rain;
+    };
+    level.light = [](int32_t, int32_t, int32_t) { return light_pack(0, 15); };
+    const double camera[3] = {0.5, 70.0, 0.5};
+    WeatherState state;
+    std::vector<WeatherVertex> quads;
+    const auto start = std::chrono::steady_clock::now();
+    constexpr int kFrames = 2000;
+    size_t corners = 0;
+    for (int frame = 0; frame < kFrames; ++frame) {
+        extract_weather(level, frame, 0.5f, camera, 1.0f, 10, state);
+        quads.clear();
+        weather_quads(state.rain, camera, 1.0f, state.radius, state.intensity, quads);
+        weather_quads(state.snow, camera, 0.8f, state.radius, state.intensity, quads);
+        corners += quads.size();
+    }
+    const auto spent = std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - start)
+                           .count();
+    std::cout << std::format(
+        "weather: {} columns, {} corners, {:.3f} ms a frame on one core\n",
+        state.rain.size() + state.snow.size(), corners / kFrames, spent / kFrames);
+}
+
+void test_rain_tick() {
+    // A flat world at y = 64 that rains everywhere.
+    RainTick world;
+    world.min_y = -64;
+    world.height = [](int32_t, int32_t) { return 64; };
+    world.precipitation = [](int32_t, int32_t, int32_t) { return Precipitation::Rain; };
+    world.surface = [](int32_t, int32_t, int32_t, double, double) { return 1.0; };
+    world.hot = [](int32_t, int32_t, int32_t) { return false; };
+    int32_t drops = 0;
+    int32_t smoke = 0;
+    double lowest = 1000.0;
+    double highest = -1000.0;
+    world.particle = [&](bool hot, double, double y, double) {
+        ++drops;
+        if (hot) ++smoke;
+        lowest = std::min(lowest, y);
+        highest = std::max(highest, y);
+    };
+    std::vector<std::string> heard;
+    world.sound = [&](std::string_view event, int32_t, int32_t, int32_t, float volume, float pitch) {
+        heard.push_back(std::format("{} {:.1f} {:.1f}", event, volume, pitch));
+    };
+
+    const double camera[3] = {0.5, 65.0, 0.5};
+    int32_t rain_sound_time = 0;
+    // 0.225 drops a block over a (2r+1) square, thinned by the square of the
+    // rain level: at r = 10 and full rain that is (int)(0.225 * 441) = 99.
+    tick_rain_particles(world, 1, 1.0f, camera, 10, rain_sound_time);
+    check(drops == 99, std::format("full rain at radius 10 drops 99 times, got {}", drops));
+    check(smoke == 0, "nothing here is hot enough to smoke");
+    // Every drop sits on top of the block below the column's own top.
+    check(lowest >= 64.0 && highest < 65.0,
+          std::format("the drops land on the block top, {} to {}", lowest, highest));
+
+    // Half the rain is a quarter of the drops: (int)(0.225 * 441 * 0.25) = 24.
+    drops = 0;
+    tick_rain_particles(world, 2, 0.5f, camera, 10, rain_sound_time);
+    check(drops == 24, std::format("half rain drops 24 times, got {}", drops));
+
+    // Decreased halves it again, and minimal stops at the first drop that
+    // lands, which is what the sound still needs.
+    drops = 0;
+    world.detail = RainTick::Detail::Decreased;
+    tick_rain_particles(world, 3, 1.0f, camera, 10, rain_sound_time);
+    check(drops == 49, std::format("decreased drops 49 times, got {}", drops));
+    drops = 0;
+    world.detail = RainTick::Detail::Minimal;
+    tick_rain_particles(world, 4, 1.0f, camera, 10, rain_sound_time);
+    check(drops == 0, std::format("minimal makes no particle at all, got {}", drops));
+    world.detail = RainTick::Detail::All;
+
+    // No rain, no work at all.
+    drops = 0;
+    heard.clear();
+    tick_rain_particles(world, 5, 0.0f, camera, 10, rain_sound_time);
+    check(drops == 0 && heard.empty(), "a rain level of zero does nothing");
+
+    // The sound: nextInt(3) against a counter that climbs a tick at a time,
+    // so it cannot be heard every tick however hard it rains.
+    heard.clear();
+    rain_sound_time = 0;
+    for (int32_t tick = 10; tick < 60; ++tick) {
+        tick_rain_particles(world, tick, 1.0f, camera, 10, rain_sound_time);
+    }
+    check(!heard.empty() && heard.size() < 50,
+          std::format("the rain is heard now and then over fifty ticks, {} times", heard.size()));
+    for (const auto& line : heard) {
+        check(line == "weather.rain 0.2 1.0",
+              std::format("rain on open ground is weather.rain at 0.2, got '{}'", line));
+    }
+
+    // Under a roof the camera hears the rain above it instead: the drop lands
+    // over the camera's head and the camera's own column has a top. The roof
+    // has to be within ten blocks of the camera or no drop lands at all.
+    heard.clear();
+    rain_sound_time = 0;
+    world.height = [](int32_t, int32_t) { return 68; };
+    const double under[3] = {0.5, 60.0, 0.5};
+    for (int32_t tick = 10; tick < 60; ++tick) {
+        tick_rain_particles(world, tick, 1.0f, under, 10, rain_sound_time);
+    }
+    bool above = false;
+    for (const auto& line : heard) {
+        if (line == "weather.rain.above 0.1 0.5") above = true;
+    }
+    check(above, "rain landing over the camera's head is heard from above");
+    // And a roof further off than ten blocks drops nothing at all, so the
+    // weather stops being heard rather than coming through it.
+    heard.clear();
+    drops = 0;
+    rain_sound_time = 0;
+    world.height = [](int32_t, int32_t) { return 80; };
+    tick_rain_particles(world, 12, 1.0f, under, 10, rain_sound_time);
+    check(drops == 0 && heard.empty(), "a roof twenty blocks up lets nothing through");
+
+    // A column with nothing on it is skipped, and so is one too far below.
+    heard.clear();
+    drops = 0;
+    world.height = [](int32_t, int32_t) { return -64; };
+    rain_sound_time = 0;
+    tick_rain_particles(world, 11, 1.0f, camera, 10, rain_sound_time);
+    check(drops == 0 && heard.empty(), "nothing falls on a column at the bottom of the world");
+}
+
 int main() {
     test_texture_animation();
     test_tracks();
@@ -419,6 +641,9 @@ int main() {
     test_recording();
     test_relight();
     test_lightmap();
+    test_biome_blend();
+    test_rain_tick();
+    time_weather();
     if (failures == 0) {
         std::cout << std::format("all world tests passed ({} skipped)\n", skipped);
         return 0;

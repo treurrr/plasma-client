@@ -18,6 +18,7 @@
 namespace mcpp::gpu {
 
 class Sky;
+class WeatherRenderer;
 class Outline;
 
 struct Camera {
@@ -93,6 +94,9 @@ public:
     // Drawn inside the world's own pass, before the terrain, so it needs no
     // second attachment and no second clear.
     void set_sky(Sky* sky) { sky_ = sky; }
+    // J: rain and snow, after the translucent terrain and the particles
+    // and before the clouds, which is where the game draws them.
+    void set_weather(const WeatherRenderer* weather) { weather_ = weather; }
     // The block to draw a box around, or nothing when the crosshair is on sky.
     void set_outline(const Outline* outline) { outline_ = outline; }
     // `translucent` is whether the aimed block's chunk render type sorts on
@@ -192,6 +196,7 @@ private:
 
     Device& device_;
     Sky* sky_ = nullptr;
+    const WeatherRenderer* weather_ = nullptr;
     const Outline* outline_ = nullptr;
     int32_t outlined_[3]{};
     bool outlined_present_ = false;

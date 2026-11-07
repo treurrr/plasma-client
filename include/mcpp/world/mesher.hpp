@@ -26,8 +26,11 @@ struct Vertex {
     // byte, sky light in the high one, both over 255 rather than over 15, so
     // the quarter steps a corner blend produces survive to the lightmap.
     uint16_t light;
-    uint16_t biome;         // the biome index the tint is looked up in
-    uint16_t spare;
+    // The tint the three bits in `packed` ask for, already blended over the
+    // square the biome blend radius covers, as 0x00RRGGBB. It travels in the
+    // vertex rather than as a biome index because the average is not any one
+    // biome's colour.
+    uint32_t tint;
 
     static uint16_t encode(float blocks) {
         const float shifted = (blocks + static_cast<float>(kPositionBias)) *
@@ -112,17 +115,77 @@ struct Neighbours {
     const ChunkBlocks* east = nullptr;    // x + 1
     const ChunkBlocks* north = nullptr;   // z - 1
     const ChunkBlocks* south = nullptr;   // z + 1
+    // Only the biome blend reads these: its square leaves the chunk on both
+    // axes at once at a corner, and nothing else samples a diagonal that far.
+    const ChunkBlocks* north_west = nullptr;
+    const ChunkBlocks* north_east = nullptr;
+    const ChunkBlocks* south_west = nullptr;
+    const ChunkBlocks* south_east = nullptr;
 };
+
+// The colours the game tints with and how wide it averages them.
+struct BiomeTints {
+    // Four per biome - grass, foliage, water, dry foliage, each 0xRRGGBB - in
+    // the order the server listed the biomes, which is `BiomeTable::tints`.
+    std::vector<uint32_t> colour;
+    // options.txt's biomeBlendRadius: 0 for the block's own biome, 2 by
+    // default for the 5x5 square around it.
+    int32_t blend_radius = 2;
+
+    bool empty() const { return colour.empty(); }
+};
+
+// The four tints a quad's tint index can ask for, in the order a biome's row
+// holds them, and which index asks for which. -1 is one of the fixed tints
+// (spruce, birch, lily pad) or none, which the shader has its own table for.
+constexpr int kTintChannels = 4;
+constexpr int kTintChannel[8] = {-1, 0, 1, 2, -1, -1, -1, 3};
+// What a caller with no biome table gets: the colours the game falls back to.
+constexpr uint32_t kDefaultTint[kTintChannels] = {0x91BD59u, 0x77AB2Fu, 0x3F76E4u, 0x77AB2Fu};
+
+// `Biome.getGrassColor`, `Biome.getFoliageColor`, `Biome.getWaterColor`: what
+// one biome contributes to one channel, resolved by `BiomeTable::tints`.
+inline uint32_t biome_tint(const BiomeTints& tints, uint16_t biome, int channel) {
+    const size_t at = static_cast<size_t>(biome) * kTintChannels + static_cast<size_t>(channel);
+    return at < tints.colour.size() ? tints.colour[at] : kDefaultTint[channel];
+}
+
+// `ClientLevel.calculateBlockTint`, `BiomeColors.getAverageColor`: a channel
+// averaged over the (2r+1)x(2r+1) square of blocks around one, each channel
+// summed as an int and divided by the area, which truncates. r is the
+// biomeBlendRadius option: at 0 the block's own biome decides alone, and that
+// is the hard line a border used to be.
+template <typename BiomeAt>
+uint32_t blend_biome_tint(const BiomeTints& tints, int channel, int32_t x, int32_t z,
+                          BiomeAt&& biome_at) {
+    const int32_t radius = std::clamp(tints.blend_radius, 0, 7);
+    if (radius == 0) return biome_tint(tints, biome_at(x, z), channel);
+    int32_t red = 0;
+    int32_t green = 0;
+    int32_t blue = 0;
+    for (int32_t dz = -radius; dz <= radius; ++dz) {
+        for (int32_t dx = -radius; dx <= radius; ++dx) {
+            const uint32_t colour = biome_tint(tints, biome_at(x + dx, z + dz), channel);
+            red += static_cast<int32_t>((colour & 0xFF0000u) >> 16);
+            green += static_cast<int32_t>((colour & 0xFF00u) >> 8);
+            blue += static_cast<int32_t>(colour & 0xFFu);
+        }
+    }
+    const int32_t area = (radius * 2 + 1) * (radius * 2 + 1);
+    return static_cast<uint32_t>((red / area & 0xFF) << 16 | (green / area & 0xFF) << 8 |
+                                 (blue / area & 0xFF));
+}
 
 // One mesh per non-empty section, with positions relative to that section's
 // corner. A face whose cullface points at a neighbouring full cube is dropped.
 std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& blocks,
-                                       const BlockTable& table, const Neighbours& neighbours = {});
+                                       const BlockTable& table, const Neighbours& neighbours = {},
+                                       const BiomeTints& tints = {});
 
 // The same geometry merged into one buffer, in world coordinates. Convenient
 // for a one-off render or a test; the renderer wants the sections.
 Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
-                const Neighbours& neighbours = {});
+                const Neighbours& neighbours = {}, const BiomeTints& tints = {});
 
 // One baked quad's corners in the block, in the order the mesher emits them,
 // turned the way its model and blockstate turn it, and the face it ends up on.

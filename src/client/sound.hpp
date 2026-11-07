@@ -22,6 +22,10 @@ void sound_ui(Game& game, std::string_view event, float pitch = 1.0f, float volu
 void sound_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t state,
                  mcpp::audio::BlockSoundKind kind);
 
+// J: a sound the world itself makes, already placed: rain on the roof.
+void sound_world(Game& game, std::string_view event, mcpp::audio::Category category, double x,
+                 double y, double z, float volume, float pitch);
+
 // The options screen's sliders (soundCategory_* in options.txt), heard from
 // the next frame on.
 mcpp::audio::CategoryVolumes* sound_volumes(Game& game);
