@@ -157,6 +157,7 @@ add_library(mcpp_net STATIC
     src/entity/motion.cpp
     src/entity/humanoid.cpp
     src/entity/scene.cpp
+    src/entity/block_entities.cpp
     src/skins.cpp
     src/gpu/entity_renderer.cpp
 )
@@ -189,6 +190,7 @@ add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/m
     src/client/player_rules.cpp src/client/movetest.cpp src/client/crafttest.cpp
     src/client/chattest.cpp
     src/client/outlineshot.cpp
+    src/client/blockshot.cpp
     ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)
@@ -278,6 +280,7 @@ mcpp_probe(ao_probe)
 
 # D: the first person hand and the item in it.
 mcpp_probe(hand_probe)
+mcpp_probe(blockentity_probe)
 target_sources(hand_probe PRIVATE src/client/hand.cpp)
 target_include_directories(hand_probe PRIVATE src)
 mcpp_shader(hand.vert HandVert)

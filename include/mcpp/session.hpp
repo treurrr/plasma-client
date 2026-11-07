@@ -332,6 +332,9 @@ struct SessionEvents {
         // and its compound.
         std::function<void(int32_t, int32_t, int32_t, int32_t, const nbt::Value&)>
             on_block_entity;
+        // G: a block entity's own event: x, y, z, what happened and its one
+        // byte of detail. A chest's is how many players have it open.
+        std::function<void(int32_t, int32_t, int32_t, uint8_t, uint8_t)> on_block_event;
         // The world border: centre, diameter now, diameter it is moving to and
         // in how many milliseconds, and the two warning settings.
         std::function<void(const WorldBorder&)> on_border;

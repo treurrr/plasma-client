@@ -149,6 +149,16 @@ class Pose:
         else:
             self.normal = self.normal @ np.diag([1.0 / x, 1.0 / y, 1.0 / z])
 
+    def copy(self):
+        other = Pose()
+        other.matrix = self.matrix.copy()
+        other.normal = self.normal.copy()
+        return other
+
+    def set(self, other):
+        self.matrix = other.matrix.copy()
+        self.normal = other.normal.copy()
+
     def point(self, position):
         return (self.matrix @ np.array([*position, 1.0]))[:3]
 
@@ -304,7 +314,11 @@ def render(quads, pose, textures, tile, flat_light=False, tints=None):
         if image is None:
             continue
         # `ItemRenderer.getLayerColorSafe`: a tint index nothing answers is white.
-        tint = tints(quad["tint"]) if tints is not None and quad["tint"] >= 0 else WHITE
+        # A quad may carry its own colour instead, which is how a dyed layer of
+        # a banner or a shield reaches the model it is drawn over.
+        tint = quad.get("colour")
+        if tint is None:
+            tint = tints(quad["tint"]) if tints is not None and quad["tint"] >= 0 else WHITE
         for a, b, c in ((0, 1, 2), (0, 2, 3)):
             _triangle(colour, depth, screen[[a, b, c]], quad["uv"][[a, b, c]], image,
                       lit, tint)

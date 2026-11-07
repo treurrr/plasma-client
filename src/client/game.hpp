@@ -5,6 +5,7 @@
 // and code to its own file; play.cpp and the other areas stay as they are.
 #include "client/common.hpp"
 
+#include "mcpp/entity/block_entities.hpp"
 #include "mcpp/entity/scene.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/entity_renderer.hpp"
@@ -113,6 +114,9 @@ struct EntitiesArea {
     std::optional<mcpp::skins::Cache> skins;
     std::optional<mcpp::entity::Scene> scene;
     std::optional<mcpp::gpu::EntityRenderer> renderer;
+    // G: the blocks the game draws with a model of their own.
+    mcpp::entity::BlockEntityTable block_entity_table;
+    mcpp::entity::BlockEntityScene block_entities;
 };
 
 struct PlayerArea {

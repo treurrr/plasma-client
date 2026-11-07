@@ -101,6 +101,33 @@ Matrix rotation_zyx(float z, float y, float x);
 // gives them, all in part space. Appends; returns how many vertices.
 uint32_t bake(const Model& model, std::vector<Vertex>& out);
 
+// `PoseStack.Pose.translate` and the matrix under it, to the bit. The game builds a
+// placement one operation at a time, in single precision, and takes a shorter
+// route through each one when the matrix still has a shape it recognises; a
+// plain 4x4 multiply gets the same answer but not always the same last bit,
+// and an oracle that compares with the game cares.
+struct Placement {
+    // What the matrix still is, as `Matrix4fc` counts it.
+    enum Shape : uint8_t { kPerspective = 1, kAffine = 2, kIdentity = 4, kTranslation = 8,
+                           kOrthonormal = 16 };
+    Matrix matrix = identity();
+    uint8_t shape = kIdentity | kAffine | kTranslation | kOrthonormal;
+
+    void translate(float x, float y, float z);
+    void scale(float x, float y, float z);
+    // x, y, z, w.
+    void rotate(const std::array<float, 4>& quaternion);
+};
+
+// `Axis.rotation`: the turns a renderer asks a pose stack for, built from
+// half angles the way the matrix library builds them.
+std::array<float, 4> quaternion_x(float radians);
+std::array<float, 4> quaternion_y(float radians);
+std::array<float, 4> quaternion_z(float radians);
+std::array<float, 4> quaternion_xyz(float x, float y, float z);
+// Degrees through a float, which is what `rotationDegrees` passes on.
+float to_radians(float degrees);
+
 // Each part's matrix from part space to where `root` puts the model, in the
 // order of model.parts. A hidden part, and everything below it, gets a zero
 // matrix, which draws nothing.

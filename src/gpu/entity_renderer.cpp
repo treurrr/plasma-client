@@ -702,7 +702,7 @@ void EntityRenderer::create_pipelines(VkFormat colour_format, VkFormat depth_for
         raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         raster.polygonMode = VK_POLYGON_MODE_FILL;
         raster.cullMode = v.cull ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
-        raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         raster.lineWidth = 1.0f;
         VkPipelineDepthStencilStateCreateInfo depth{};
         depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;

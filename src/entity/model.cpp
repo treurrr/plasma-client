@@ -7,6 +7,11 @@
 #include <stdexcept>
 
 namespace mcpp::entity {
+
+constexpr float kPi = 3.1415927f;
+constexpr float kHalfPi = kPi / 2.0f;
+constexpr float kTwoPi = kPi * 2.0f;
+
 namespace {
 
 std::vector<std::string_view> words(std::string_view line) {
@@ -355,6 +360,146 @@ uint32_t bake(const Model& model, std::vector<Vertex>& out) {
         for (const Box& box : model.parts[i].boxes) bake_box(box, static_cast<uint32_t>(i), out);
     }
     return static_cast<uint32_t>(out.size() - before);
+}
+
+
+namespace {
+
+// The fused multiply and add the matrix library asks for, as the game gets
+// it: useMathFma is off by default, so it is a plain multiply and an add, each
+// rounded on its own.
+float fma(float a, float b, float c) { return a * b + c; }
+
+// The cosine that belongs with a sine already in hand, the way the matrix
+// library finds it: a square root and the quadrant.
+float cos_from_sin(float sine, float angle) {
+    const float cosine = std::sqrt(1.0f - sine * sine);
+    const float a = angle + kHalfPi;
+    float b = a - static_cast<float>(static_cast<int32_t>(a / kTwoPi)) * kTwoPi;
+    if (b < 0.0f) b = kTwoPi + b;
+    return b >= kPi ? -cosine : cosine;
+}
+
+bool abs_equals_one(float value) { return std::fabs(value) == 1.0f; }
+
+} // namespace
+
+std::array<float, 4> quaternion_x(float radians) {
+    const float half = radians * 0.5f;
+    const float s = std::sin(half);
+    return {s, 0.0f, 0.0f, cos_from_sin(s, half)};
+}
+
+std::array<float, 4> quaternion_y(float radians) {
+    const float half = radians * 0.5f;
+    const float s = std::sin(half);
+    return {0.0f, s, 0.0f, cos_from_sin(s, half)};
+}
+
+std::array<float, 4> quaternion_z(float radians) {
+    const float half = radians * 0.5f;
+    const float s = std::sin(half);
+    return {0.0f, 0.0f, s, cos_from_sin(s, half)};
+}
+
+// The turn an item transform and a face's own rotation ask for: x, then y,
+// then z, all from half angles.
+std::array<float, 4> quaternion_xyz(float x, float y, float z) {
+    const float hx = x * 0.5f, hy = y * 0.5f, hz = z * 0.5f;
+    const float sx = std::sin(hx), sy = std::sin(hy), sz = std::sin(hz);
+    const float cx = cos_from_sin(sx, hx), cy = cos_from_sin(sy, hy), cz = cos_from_sin(sz, hz);
+    const float cycz = cy * cz, sysz = sy * sz, sycz = sy * cz, cysz = cy * sz;
+    return {sx * cycz + cx * sysz, cx * sycz - sx * cysz, cx * cysz + sx * sycz,
+            cx * cycz - sx * sysz};
+}
+
+// `Axis.rotationDegrees`: degrees through a float on their way to a turn.
+float to_radians(float degrees) { return degrees * static_cast<float>(M_PI / 180.0); }
+
+// `PoseStack.Pose.translate`: an identity matrix just takes the offset;
+// anything else gets a fused term per axis in the last column.
+void Placement::translate(float x, float y, float z) {
+    if (shape & kIdentity) {
+        matrix = identity();
+        matrix[12] = x;
+        matrix[13] = y;
+        matrix[14] = z;
+        shape = kAffine | kTranslation | kOrthonormal;
+        return;
+    }
+    for (int row = 0; row < 4; ++row) {
+        matrix[12 + row] = fma(matrix[row], x,
+                               fma(matrix[4 + row], y, fma(matrix[8 + row], z, matrix[12 + row])));
+    }
+    shape &= static_cast<uint8_t>(~(kPerspective | kIdentity));
+}
+
+// `PoseStack.Pose.scale`.
+void Placement::scale(float x, float y, float z) {
+    const bool one = abs_equals_one(x) && abs_equals_one(y) && abs_equals_one(z);
+    if (shape & kIdentity) {
+        matrix = identity();
+        matrix[0] = x;
+        matrix[5] = y;
+        matrix[10] = z;
+        shape = static_cast<uint8_t>(kAffine | (one ? kOrthonormal : 0));
+        return;
+    }
+    const float factor[3] = {x, y, z};
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 4; ++row) matrix[column * 4 + row] *= factor[column];
+    }
+    shape &= static_cast<uint8_t>(
+        ~(kPerspective | kIdentity | kTranslation | (one ? 0 : kOrthonormal)));
+}
+
+// `PoseStack.Pose.rotate`: the quaternion as a basis, then this matrix times
+// it, down whichever of the four routes the matrix's shape allows.
+void Placement::rotate(const std::array<float, 4>& quaternion) {
+    const float qx = quaternion[0], qy = quaternion[1], qz = quaternion[2], qw = quaternion[3];
+    const float w2 = qw * qw, x2 = qx * qx, y2 = qy * qy, z2 = qz * qz;
+    const float zw = qz * qw, dzw = zw + zw, xy = qx * qy, dxy = xy + xy;
+    const float xz = qx * qz, dxz = xz + xz, yw = qy * qw, dyw = yw + yw;
+    const float yz = qy * qz, dyz = yz + yz, xw = qx * qw, dxw = xw + xw;
+    const float r[3][3] = {{w2 + x2 - z2 - y2, dxy + dzw, dxz - dyw},
+                           {-dzw + dxy, y2 - z2 + w2 - x2, dyz + dxw},
+                           {dyw + dxz, dyz - dxw, z2 - y2 - x2 + w2}};
+    if (shape & kIdentity) {
+        matrix = identity();
+        for (int column = 0; column < 3; ++column) {
+            for (int row = 0; row < 3; ++row) matrix[column * 4 + row] = r[column][row];
+        }
+        shape = kAffine | kOrthonormal;
+        return;
+    }
+    if (shape & kTranslation) {
+        const Matrix kept = matrix;
+        matrix = Matrix{};
+        for (int column = 0; column < 3; ++column) {
+            for (int row = 0; row < 3; ++row) matrix[column * 4 + row] = r[column][row];
+        }
+        matrix[12] = kept[12];
+        matrix[13] = kept[13];
+        matrix[14] = kept[14];
+        matrix[15] = kept[15];
+        shape &= static_cast<uint8_t>(~(kPerspective | kIdentity | kTranslation));
+        return;
+    }
+    Matrix out = matrix;
+    const bool affine = (shape & kAffine) != 0;
+    for (int column = 0; column < 3; ++column) {
+        const int rows = affine ? 3 : 4;
+        for (int row = 0; row < rows; ++row) {
+            out[column * 4 + row] =
+                affine ? matrix[row] * r[column][0] + matrix[4 + row] * r[column][1] +
+                             matrix[8 + row] * r[column][2]
+                       : fma(matrix[row], r[column][0],
+                             fma(matrix[4 + row], r[column][1], matrix[8 + row] * r[column][2]));
+        }
+        if (affine) out[column * 4 + 3] = 0.0f;
+    }
+    matrix = out;
+    shape &= static_cast<uint8_t>(~(kPerspective | kIdentity | kTranslation));
 }
 
 void pose_matrices(const Model& model, const Pose& pose, const Matrix& root,
