@@ -633,9 +633,12 @@ private:
     std::array<int32_t, 2> hand_chain_{};
 };
 
+// `CreeperPowerLayer.submit`: only a creeper struck by lightning wears it.
+bool is_powered(const MobState& s) { return s.powered; }
+
 constexpr std::array<MobOverlay, 1> kCreeperOverlays = {{
     {"creeper#armor", "creeper/creeper_armor", Overlay::EnergySwirl,
-     gpu::EntityRenderer::Type::Translucent},
+     gpu::EntityRenderer::Type::Translucent, nullptr, "", is_powered},
 }};
 
 constexpr std::array<MobOverlay, 1> kSpiderOverlays = {{

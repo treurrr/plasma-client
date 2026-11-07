@@ -620,20 +620,28 @@ uint32_t sheep_wool_colour(const MobState& s) {
 
 // `WolfCollarLayer.submit`, `CatCollarLayer.submit`: the collar's own dye, and
 // nothing drawn at all when the animal wears none.
+// `SimpleEquipmentLayer.submit`: a saddle is drawn only when the animal
+// wears one.
+bool is_saddled(const MobState& s) { return s.saddled; }
+
+// `SheepWoolLayer.submit`, `SheepWoolUndercoatLayer.submit`.
+bool is_woolly(const MobState& s) { return !s.sheared; }
+
 uint32_t collar_colour(const MobState& s) {
     return s.collar_color < 0 ? 0 : dye_texture_colour(s.collar_color);
 }
 
 constexpr std::array<MobOverlay, 1> kPigOverlays = {{
     {"pig#saddle", "equipment/pig_saddle/saddle", Overlay::Plain,
-     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "pig_baby#saddle"},
+     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "pig_baby#saddle", is_saddled},
 }};
 
 constexpr std::array<MobOverlay, 2> kSheepOverlays = {{
     {"sheep#wool_undercoat", "sheep/sheep_wool_undercoat", Overlay::Plain,
-     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "sheep_baby#wool_undercoat"},
+     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "sheep_baby#wool_undercoat",
+     is_woolly},
     {"sheep#wool", "sheep/sheep_wool", Overlay::Plain, gpu::EntityRenderer::Type::CutoutNoCull,
-     sheep_wool_colour, "sheep_baby#wool"},
+     sheep_wool_colour, "sheep_baby#wool", is_woolly},
 }};
 
 constexpr std::array<MobOverlay, 1> kWolfOverlays = {{
@@ -648,27 +656,27 @@ constexpr std::array<MobOverlay, 1> kCatOverlays = {{
 
 constexpr std::array<MobOverlay, 1> kHorseOverlays = {{
     {"horse#saddle", "equipment/horse_saddle/saddle", Overlay::Plain,
-     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "horse_baby#saddle"},
+     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "horse_baby#saddle", is_saddled},
 }};
 
 constexpr std::array<MobOverlay, 1> kDonkeyOverlays = {{
     {"donkey#saddle", "equipment/donkey_saddle/saddle", Overlay::Plain,
-     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "donkey_baby#saddle"},
+     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "donkey_baby#saddle", is_saddled},
 }};
 
 constexpr std::array<MobOverlay, 1> kMuleOverlays = {{
     {"mule#saddle", "equipment/mule_saddle/saddle", Overlay::Plain,
-     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "mule_baby#saddle"},
+     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "mule_baby#saddle", is_saddled},
 }};
 
 constexpr std::array<MobOverlay, 1> kSkeletonHorseOverlays = {{
     {"skeleton_horse#saddle", "equipment/skeleton_horse_saddle/saddle", Overlay::Plain,
-     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "skeleton_horse_baby#saddle"},
+     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "skeleton_horse_baby#saddle", is_saddled},
 }};
 
 constexpr std::array<MobOverlay, 1> kZombieHorseOverlays = {{
     {"zombie_horse#saddle", "equipment/zombie_horse_saddle/saddle", Overlay::Plain,
-     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "zombie_horse_baby#saddle"},
+     gpu::EntityRenderer::Type::CutoutNoCull, nullptr, "zombie_horse_baby#saddle", is_saddled},
 }};
 
 constexpr std::array<MobType, 14> kAnimalTypes = {{

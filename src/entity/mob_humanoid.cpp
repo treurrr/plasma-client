@@ -257,7 +257,8 @@ private:
 };
 
 // `HumanoidArmorLayer`: the four slots are baked as sub-layers of the body
-// they cover, and every one of them is a plain `HumanoidModel`.
+// they cover, and `ArmorModelSet.bake` builds each of them with the mob's own
+// model class, so a zombie's armour swings its arms out like the zombie does.
 constexpr std::array<std::string_view, 4> kArmourSlots = {"#helmet", "#chestplate", "#leggings",
                                                           "#boots"};
 constexpr std::array<std::string_view, 12> kArmouredBodies = {
@@ -266,18 +267,19 @@ constexpr std::array<std::string_view, 12> kArmouredBodies = {
     "skeleton", "stray",      "wither_skeleton", "bogged",
 };
 
-bool is_armour_layer(std::string_view layer) {
+// The body an armour sub-layer covers, empty when the layer is not one.
+std::string_view armour_body(std::string_view layer) {
     const size_t hash = layer.find('#');
-    if (hash == std::string_view::npos) return false;
+    if (hash == std::string_view::npos) return {};
     const std::string_view body = layer.substr(0, hash);
     const std::string_view slot = layer.substr(hash);
     bool slot_known = false;
     for (std::string_view known : kArmourSlots) slot_known = slot_known || slot == known;
-    if (!slot_known) return false;
+    if (!slot_known) return {};
     for (std::string_view known : kArmouredBodies) {
-        if (body == known) return true;
+        if (body == known) return body;
     }
-    return false;
+    return {};
 }
 
 constexpr std::array<MobOverlay, 1> kDrownedOverlays = {{
@@ -319,6 +321,12 @@ constexpr std::array<MobType, 10> kTypes = {{
 } // namespace
 
 std::unique_ptr<MobModel> make_humanoid_mob_model(std::string_view layer, const Model& model) {
+    if (const std::string_view body = armour_body(layer); !body.empty()) {
+        // `AbstractSkeletonRenderer`: a bogged's armour is a plain
+        // `SkeletonModel`, without the mushrooms its own skull wears.
+        return make_humanoid_mob_model(body == "bogged" ? std::string_view("skeleton") : body,
+                                       model);
+    }
     if (layer == "zombie" || layer == "zombie_baby" || layer == "husk" || layer == "husk_baby") {
         return std::make_unique<Zombie>(model);
     }
@@ -342,7 +350,6 @@ std::unique_ptr<MobModel> make_humanoid_mob_model(std::string_view layer, const 
         layer == "villager_baby_no_hat") {
         return std::make_unique<Villager>(model);
     }
-    if (is_armour_layer(layer)) return std::make_unique<Humanoid>(model);
     return nullptr;
 }
 

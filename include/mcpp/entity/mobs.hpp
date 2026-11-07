@@ -91,7 +91,10 @@ struct MobState {
     // `HumanoidRenderState`.
     float swim_amount = 0.0f;
     float speed_value = 1.0f;
-    float max_crossbow_charge_duration = 25.0f;
+    // `HumanoidRenderState.maxCrossbowChargeDuration`: zero until the renderer
+    // reads `CrossbowItem.getChargeDuration` off the item in hand, which is
+    // what the crossbow arm pose divides by.
+    float max_crossbow_charge_duration = 0.0f;
     float ticks_using_item = 0.0f;
     bool attack_arm_left = false;
     bool use_item_off_hand = false;
@@ -302,6 +305,9 @@ struct MobOverlay {
     uint32_t (*colour)(const MobState&) = nullptr;
     // The layer a baby wears instead, empty when it wears the same one.
     std::string_view baby_layer;
+    // Whether the layer is drawn at all: a creeper's charge, a saddle, a
+    // sheep's wool. Always, when the layer names no condition.
+    bool (*when)(const MobState&) = nullptr;
 };
 
 // One entity type as its renderer draws it.

@@ -75,6 +75,7 @@ int entityshot(int argc, char** argv) {
     bool close = false;
     bool crouch = false;
     bool baby = false;
+    bool gear = false;
     std::string armour;
     for (int i = 3; i < argc; ++i) {
         const std::string argument = argv[i];
@@ -93,6 +94,7 @@ int entityshot(int argc, char** argv) {
         else if (argument == "--crouch") crouch = true;
         else if (argument == "--age") age = std::stof(next());
         else if (argument == "--baby") baby = true;
+        else if (argument == "--gear") gear = true;
         else if (argument == "--armour") armour = next();
         else prefix = argument;
     }
@@ -201,6 +203,8 @@ int entityshot(int argc, char** argv) {
     // Enough of a sheep, a wolf and a cat to show their wool and their collars.
     state.collar_color = 14;
     state.wool_color = 4;
+    state.saddled = gear;
+    state.powered = gear;
     if (walk >= 0.0f) {
         state.walk_speed = 1.0f;
         state.walk_position = walk * 2.0f * 3.14159265f / 0.6662f;
@@ -248,6 +252,7 @@ int entityshot(int argc, char** argv) {
     };
     if (row != nullptr) {
         for (const mcpp::entity::MobOverlay& one : row->overlays) {
+            if (one.when != nullptr && !one.when(state)) continue;
             std::string name(one.layer.empty() ? row->layer : one.layer);
             if (baby) {
                 if (!one.baby_layer.empty()) name = std::string(one.baby_layer);
@@ -284,7 +289,24 @@ int entityshot(int argc, char** argv) {
         }
     }
 
-    const float height = row != nullptr ? row->shadow_radius * 2.6f + 0.6f : 1.8f;
+    float height = 1.8f;
+    if (row != nullptr) {
+        std::ifstream sizes(mcpp::entity::default_registries_path(kProtocol).parent_path() /
+                            std::format("entity_dimensions-{}.txt", kProtocol));
+        std::string line;
+        while (std::getline(sizes, line)) {
+            if (!line.starts_with(model_name) || line.size() <= model_name.size() ||
+                line[model_name.size()] != ' ') {
+                continue;
+            }
+            std::istringstream row_in(line.substr(model_name.size()));
+            float width = 0.0f;
+            float tall = 0.0f;
+            if (row_in >> width >> tall) height = std::max(tall, width);
+            break;
+        }
+        if (baby) height *= 0.5f;
+    }
     const float middle = height * 0.5f;
     const float reach = height * 1.9f;
     std::vector<Shot> shots = {

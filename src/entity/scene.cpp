@@ -272,7 +272,12 @@ void Scene::event(int32_t id, uint8_t status) {
 }
 
 void Scene::equipment(int32_t id, const Equipment& worn) {
-    if (Tracked* tracked = find(id)) tracked->worn = worn;
+    Tracked* tracked = find(id);
+    if (tracked == nullptr) return;
+    tracked->worn = worn;
+    // `EquineRenderState.saddle`, `PigRenderState.saddle`: a saddle is a slot
+    // of its own, and the layer that draws it asks only whether it is filled.
+    tracked->state.saddled = worn.slots[Equipment::Saddle].count > 0;
 }
 
 void Scene::riding(int32_t id, bool passenger) {
@@ -581,6 +586,7 @@ void Scene::draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View
 
     for (size_t at = 0; at < info.overlays[age].size(); ++at) {
         const MobOverlay& over = info.row->overlays[at];
+        if (over.when != nullptr && !over.when(s)) continue;
         gpu::EntityRenderer::Instance tinted = instance;
         if (over.colour != nullptr) {
             tinted.colour = over.colour(s);
@@ -590,7 +596,6 @@ void Scene::draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View
         }
         submit(renderer, info.overlays[age][at], s, root, tinted);
     }
-    // `SheepWoolLayer`: a shorn sheep wears neither of its wool layers.
     if (info.has_armour) {
         submit_armour(renderer, info.armour[age], tracked, root, instance);
     }
