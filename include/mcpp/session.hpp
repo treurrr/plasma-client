@@ -203,8 +203,10 @@ struct Attribute {
     double base = 0.0;
     std::vector<Modifier> modifiers;
 
-    // Additions first, then the multiples of what they summed to, then each
-    // multiplier on the whole: the game's own order.
+    // `AttributeInstance.calculateValue`: additions first, then the multiples
+    // of what they summed to, then each multiplier on the whole. Its last
+    // step needs the attribute's name, so it is `sanitize_attribute` below,
+    // which every reader of this applies.
     double value() const {
         double sum = base;
         for (const auto& m : modifiers) if (m.operation == 0) sum += m.amount;
@@ -868,5 +870,11 @@ private:
     std::string profile_uuid_;
     int32_t entity_id_ = -1;
 };
+
+// `RangedAttribute.sanitizeValue`, `Attribute.sanitizeValue`: the last step of
+// an attribute's value, which holds it inside the range the attribute was
+// registered with and turns NaN into that range's lowest value. An attribute
+// no range is known for is returned as it came.
+double sanitize_attribute(std::string_view name, double value);
 
 } // namespace mcpp

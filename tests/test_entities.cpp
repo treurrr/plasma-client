@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <format>
 #include <fstream>
 #include <iostream>
@@ -357,10 +358,67 @@ void test_skins() {
     check(decoded.rgba == std::vector<uint8_t>{255, 0, 0, 255, 0, 0, 0, 0}, "png pixels");
 }
 
+// `DeltaTracker.Timer.advanceGameTime`: the clock keeps what is left of a tick
+// after a frame. Seven-millisecond frames are 0.14 of a tick each, so a
+// thousand of them are exactly 7 s, which is 140 ticks; a clock that threw the
+// remainder away at every tick would run one tick per eight frames and reach
+// 125. A single frame of 260 ms is five whole ticks with a fifth of one left.
+void test_clock() {
+    mcpp::entity::TickClock clock;
+    int total = 0;
+    for (int frame = 0; frame < 1000; ++frame) total += clock.advance(0.007f);
+    check(total == 140, "a thousand 7 ms frames are 140 ticks");
+    check(clock.ticks() == 140, "and the clock counted them");
+    mcpp::entity::TickClock slow;
+    check(slow.advance(0.26f) == 5, "a 260 ms frame is five ticks");
+    check(near(static_cast<double>(slow.partial()), 0.2, 1e-5),
+          "with a fifth of a tick left over");
+    mcpp::entity::TickClock stalled;
+    check(stalled.advance(2.0f) == 10, "a long stall runs ten ticks at most");
+}
+
+// `RangedAttribute.sanitizeValue`: every attribute of the game is registered
+// with a range and its value stops inside it. The ranges here are the ones
+// Attributes registers: movement_efficiency [0,1], gravity [-1,1], max_health
+// [1,1024], scale [0.0625,16], step_height [0,10].
+void test_attribute_range() {
+    check(mcpp::sanitize_attribute("minecraft:movement_efficiency", 2.0) == 1.0,
+          "movement efficiency stops at one");
+    check(mcpp::sanitize_attribute("minecraft:gravity", -4.0) == -1.0,
+          "gravity stops at minus one");
+    check(mcpp::sanitize_attribute("minecraft:gravity", 0.08) == 0.08,
+          "and a value inside the range is left alone");
+    check(mcpp::sanitize_attribute("minecraft:max_health", 0.0) == 1.0,
+          "no maximum health at all becomes one");
+    check(mcpp::sanitize_attribute("minecraft:scale", 0.0) == 0.0625, "scale has a floor");
+    check(mcpp::sanitize_attribute("minecraft:step_height", 50.0) == 10.0,
+          "a step is at most ten blocks");
+    check(mcpp::sanitize_attribute("minecraft:gravity",
+                                   std::numeric_limits<double>::quiet_NaN()) == -1.0,
+          "NaN becomes the lowest value of the range");
+    check(mcpp::sanitize_attribute("plasma:not_an_attribute", 1.0e9) == 1.0e9,
+          "an attribute with no known range is left as it came");
+
+    // `AttributeInstance.calculateValue` over the three operations and then the
+    // range: base 0 with +0.5 added is 0.5, one times the sum added on top is
+    // 1.0, and half of the whole on top of it is 1.5 - which movement
+    // efficiency's range cuts back to 1.
+    mcpp::Attribute a;
+    a.base = 0.0;
+    a.modifiers.push_back({"plasma:add", 0.5, 0});
+    a.modifiers.push_back({"plasma:base", 1.0, 1});
+    a.modifiers.push_back({"plasma:total", 0.5, 2});
+    check(near(a.value(), 1.5), "the three operations in the game's order");
+    check(mcpp::sanitize_attribute("minecraft:movement_efficiency", a.value()) == 1.0,
+          "and the range after them");
+}
+
 } // namespace
 
 int main() {
     test_packets();
+    test_clock();
+    test_attribute_range();
     test_model();
     test_motion();
     test_skins();

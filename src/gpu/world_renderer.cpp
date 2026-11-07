@@ -1386,6 +1386,25 @@ void WorldRenderer::draw_in_world(VkCommandBuffer command, const PushConstants& 
     vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
 }
 
+// `LevelRenderer.renderBlockOutline`: the aimed block's outline belongs to one
+// of the two passes vanilla offers it, and `isTranslucent` - the aimed block's
+// chunk render type sorting on upload - picks which. An ordinary block's
+// outline goes in before the translucent group, so water or stained glass in
+// front of it hides the lines; a translucent block's goes in after it.
+void WorldRenderer::draw_outline(VkCommandBuffer command, const PushConstants& push,
+                                 bool translucent_pass) {
+    if (outline_ == nullptr || !outlined_present_) return;
+    if (outlined_translucent_ != translucent_pass) return;
+    outline_->record(command, push.view_projection.m, outlined_);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+    const uint32_t dynamic_offsets[2] = {frame_offset_, animation_offset_};
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1,
+                            &descriptor_set_, 2, dynamic_offsets);
+    const VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(command, 0, 1, &vertex_buffer_, &offset);
+    vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
+}
+
 void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
                                   const Camera& camera) {
     const auto send = [&](const float origin[3]) {
@@ -1407,6 +1426,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
             vkCmdDrawIndexed(command, opaque_index_count_, 1, 0, 0, 0);
         }
         draw_in_world(command, push, camera);
+        draw_outline(command, push, false);
         if (index_count_ > opaque_index_count_) {
             vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, blended_pipeline_);
             push.eye[3] = kTranslucentCutout;
@@ -1433,6 +1453,7 @@ void WorldRenderer::draw_geometry(VkCommandBuffer command, PushConstants& push,
         drawn_triangles_ += section.opaque_count / 3;
     }
     draw_in_world(command, push, camera);
+    draw_outline(command, push, false);
 
     bool any_blended = false;
     for (const auto* section : visible_) {
@@ -1572,9 +1593,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         vkCmdBindIndexBuffer(command, index_buffer_, 0, VK_INDEX_TYPE_UINT32);
 
         draw_geometry(command, push, camera);
-        if (outline_ != nullptr && outlined_present_) {
-            outline_->record(command, push.view_projection.m, outlined_);
-        }
+        draw_outline(command, push, true);
     } else if (in_world_) {
         const Mat4 matrix =
             view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));

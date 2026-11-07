@@ -57,8 +57,7 @@ void entities_input(Game&) {}
 
 void entities_tick(Game& game) {
     auto& area = game.entities;
-    const int ticks = area.clock.advance(game.dt);
-    for (int i = 0; i < ticks; ++i) area.scene->tick();
+    for (int i = 0; i < game.ticks; ++i) area.scene->tick();
 }
 
 void entities_draw(Game& game) {
@@ -71,7 +70,7 @@ void entities_draw(Game& game) {
         view.eye[axis] = game.camera.eye[axis];
         view.forward[axis] = game.camera.target[axis] - game.camera.eye[axis];
     }
-    view.partial = area.clock.partial();
+    view.partial = game.clock.partial();
     const auto light = [&game](int32_t x, int32_t y, int32_t z) -> std::array<uint8_t, 2> {
         auto& world = game.world;
         std::lock_guard lock(world.world_guard);

@@ -25,15 +25,12 @@ using ChunkMap = std::map<std::pair<int32_t, int32_t>, Chunk>;
 // Returns every chunk whose light changed, which are the ones to mesh again.
 class LightEngine {
 public:
-    explicit LightEngine(const BlockTable& table) : table_(table) {}
-
     std::set<std::pair<int32_t, int32_t>> relight(ChunkMap& world, int32_t x, int32_t y,
                                                   int32_t z);
 
 private:
     int opacity(int32_t state);
 
-    const BlockTable& table_;
     std::vector<int8_t> opacity_;   // per block state, filled as states are met
 };
 

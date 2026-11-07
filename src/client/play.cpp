@@ -87,7 +87,6 @@ int play(const std::string& target, size_t chunk_limit) {
     size_t frames = 0;
     std::vector<double> frame_times;
     frame_times.reserve(20000);
-    float tick_accumulator = 0.0f;
     double gpu_total = 0.0;
 
     window.capture_cursor(true);
@@ -110,6 +109,13 @@ int play(const std::string& target, size_t chunk_limit) {
         game.dt = std::chrono::duration<float>(game.now - previous).count();
         previous = game.now;
 
+        // `DeltaTracker.Timer.advanceGameTime`, `Minecraft.runTick`: one clock
+        // for the whole frame. What is left over after the whole ticks is how
+        // far between two ticks the picture is drawn, and it is kept, not
+        // thrown away: the game never loses a part of a tick to a fast frame.
+        game.ticks = game.clock.advance(game.dt);
+        game.tick_due = game.ticks > 0;
+
         player_move(game);
 
         // Drain whatever the server sent, then report where we are. Standing
@@ -123,10 +129,6 @@ int play(const std::string& target, size_t chunk_limit) {
                 break;
             }
         }
-
-        tick_accumulator += game.dt;
-        game.tick_due = tick_accumulator >= 0.05f;
-        if (game.tick_due) tick_accumulator = 0.0f;
 
         player_tick(game);
         screens_tick(game);
