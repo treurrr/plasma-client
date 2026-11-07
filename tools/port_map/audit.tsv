@@ -2,4 +2,3 @@
 LivingEntity.isFallFlying	absent		elytra: Body has no fall-flying state, so Player.getBlockSpeedFactor's second half can never be true
 LivingEntity.travelFallFlying	absent		elytra flight is not simulated
 LivingEntity.updateFallFlyingMovement	absent		elytra flight is not simulated
-BiomeColors.getAverageColor	absent		biome blend: tinted from the block's own biome, not the 5x5 average

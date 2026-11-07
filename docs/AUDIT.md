@@ -39,7 +39,7 @@ the plumbing around it). Not in the work list:
 
 Ordered by what a player feels first. `fixed` entries are this pass; `open`
 entries are what is left, in the same order. What is still open, shortest
-first: biome blend (9), the session's packet reads
+first: the session's packet reads
 (10), `environment.cpp` (11), the shape of the light engine (8), elytra (12).
 
 ### 1. One tick clock, not three - `fixed`
@@ -106,13 +106,13 @@ first: biome blend (9), the session's packet reads
 | vanilla | `BlockBehaviour.BlockStateBase.getLightBlock`, `LightEngine.getOpacity`, `BlockLightEngine.checkNode`, `SkyLightEngine`, `ChunkSkyLightSources` |
 | wrong | two things were provably off and are fixed. `opacity` decided a block's light block from its registry name (`_leaves`, `cobweb`) and from whether it occludes, while vanilla reads a per-state value that `RenderInfo::light_block` already holds: ice came out 0 where the game says 1, so sky light did not fade under ice or the half-transparent blocks. And `relight` never put the block's own `getLightEmission` back after taking the old light away, so a torch placed in a dark room lit nothing but its own cell until the server's `light_update` arrived. What is left open is the shape of the engine: two flood fills of ours against vanilla's `DynamicGraphMinFixedPoint` queue and its per-column `ChunkSkyLightSources`. With the two values right they agree on everything tried so far, and the "sky light at 15 falls straight down while opacity is 0" rule is `ChunkSkyLightSources`' rule in another form, but it has not been proved equal in general. |
 
-### 9. Biome blend - `open`
+### 9. Biome blend - `fixed`
 
 | | |
 |---|---|
 | ours | `src/world/biomes.cpp`, `src/world/mesher.cpp` tint lookup |
 | vanilla | `BiomeColors.getAverageColor`, `BlockTintCache`, `Biome.getGrassColor`/`getFoliageColor`/`getWaterColor` |
-| wrong | not done: we tint from the biome of the block itself, so a biome border is one hard line. Vanilla averages the colour over a square of radius `options.biomeBlendRadius` (default 2, so 5x5 = 25 samples) around the block, summing the three channels as ints and dividing by the count, and caches it per chunk in `BlockTintCache`. Wave 2 agent E's lead. |
+| wrong | was: we tinted from the biome of the block itself, so a biome border was one hard line. Vanilla averages the colour over a square of radius `options.biomeBlendRadius` (default 2, so 5x5 = 25 samples) around the block, summing the three channels as ints and dividing by the count, and caches it per chunk in `BlockTintCache`. Now `blend_biome_tint` in `mesher.hpp` does that averaging and the mesher carries the blended RGB in the vertex, because the average is not any one biome's colour and so cannot be a biome index any more; the shader looks it up in the vertex instead of in the biome uniform. The square reaches past the chunk through the four neighbours and, at a corner, through four diagonals added for it. One answer per 4-high cell per column serves every corner of every quad that wants it, which is where `BlockTintCache` sits in the game. **Still off**: a swamp's grass is `BIOME_INFO_NOISE` per block in vanilla and one fixed colour here, which `BiomeTable::grass` already did before this and which the blend inherits. |
 
 ### 10. `src/session_*.cpp` packet reads - `open`
 

@@ -1,5 +1,9 @@
 #include "client/common.hpp"
 
+#include "mcpp/world/biomes.hpp"
+#include "mcpp/session.hpp"
+#include "mcpp/protocol_versions.hpp"
+
 #include "mcpp/translations.hpp"
 
 #include <algorithm>
@@ -145,9 +149,24 @@ float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
     return ground;
 }
 
+mcpp::world::BiomeTints biome_tints_of(const mcpp::Session& session) {
+    mcpp::world::BiomeTints tints;
+    if (session.biomes().empty()) return tints;
+    mcpp::world::Colormaps maps;
+    maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
+    tints.colour = session.biomes().tints(maps);
+    // A shot takes the radius from the environment rather than from
+    // options.txt, so one scene can be rendered at several of them.
+    if (const char* radius = std::getenv("PLASMA_BIOME_BLEND")) {
+        tints.blend_radius = std::atoi(radius);
+    }
+    return tints;
+}
+
 std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
                                                  const mcpp::world::BlockTable& table,
-                                                 double* milliseconds) {
+                                                 double* milliseconds,
+                                                 const mcpp::world::BiomeTints& tints) {
     const auto start = std::chrono::steady_clock::now();
 
     // Unpack first, in parallel. The map is only built once every entry exists,
@@ -174,8 +193,12 @@ std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::
             .east = find_blocks(chunk.x + 1, chunk.z),
             .north = find_blocks(chunk.x, chunk.z - 1),
             .south = find_blocks(chunk.x, chunk.z + 1),
+            .north_west = find_blocks(chunk.x - 1, chunk.z - 1),
+            .north_east = find_blocks(chunk.x + 1, chunk.z - 1),
+            .south_west = find_blocks(chunk.x - 1, chunk.z + 1),
+            .south_east = find_blocks(chunk.x + 1, chunk.z + 1),
         };
-        per_chunk[i] = mcpp::world::mesh_sections(chunk, *unpacked[i], table, neighbours);
+        per_chunk[i] = mcpp::world::mesh_sections(chunk, *unpacked[i], table, neighbours, tints);
     });
 
     size_t total = 0;

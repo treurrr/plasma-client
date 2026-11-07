@@ -11,6 +11,10 @@
 #include <string_view>
 #include <vector>
 
+namespace mcpp {
+class Session;
+}
+
 namespace client {
 
 // A signed-in account if there is one. The client does not refuse to run
@@ -42,8 +46,13 @@ float ground_near_centre(const std::vector<mcpp::world::Chunk>& chunks,
 
 // Unpacks every chunk once - a neighbour is read by four others - then meshes
 // every section of every chunk.
+// The four tints per biome the server listed, with the colour maps resolved
+// and the blend radius PLASMA_BIOME_BLEND asks for.
+mcpp::world::BiomeTints biome_tints_of(const mcpp::Session& session);
+
 std::vector<mcpp::world::SectionMesh> mesh_world(const std::vector<mcpp::world::Chunk>& chunks,
                                                  const mcpp::world::BlockTable& table,
-                                                 double* milliseconds);
+                                                 double* milliseconds,
+                                                 const mcpp::world::BiomeTints& tints = {});
 
 } // namespace client

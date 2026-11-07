@@ -1,0 +1,8 @@
+# The colour a block is tinted with, averaged over the square the
+# biomeBlendRadius option asks for. The mesher does it once per chunk and
+# puts the answer in the vertex, so the per-chunk cache the game keeps on
+# the main thread has no counterpart here.
+BiomeColors	port	include/mcpp/world/mesher.hpp::biome_tint	the four resolvers, as the four columns of a biome's row
+BlockTintCache	skip		the blend is meshed into the vertex, so nothing reads it per frame
+Cursor3D	inline	include/mcpp/world/mesher.hpp::blend_biome_tint	the square the average walks, which is flat in y
+BiomeSpecialEffects.GrassColorModifier	port	src/world/biomes.cpp::BiomeTable::grass	swamp takes its fixed colour, not the per-block noise

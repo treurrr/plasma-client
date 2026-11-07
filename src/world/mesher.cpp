@@ -513,7 +513,8 @@ int32_t ChunkBlocks::at(int32_t x, int32_t y, int32_t z) const {
 }
 
 std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& blocks,
-                                       const BlockTable& table, const Neighbours& neighbours) {
+                                       const BlockTable& table, const Neighbours& neighbours,
+                                       const BiomeTints& tints) {
     std::vector<SectionMesh> meshes;
     const auto section_count = static_cast<int32_t>(blocks.section_count());
     const RenderTable& render = render_table();
@@ -521,7 +522,6 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
     std::vector<int32_t> padded_state(kPaddedCells);
     std::vector<uint8_t> padded_solid(kPaddedCells);
     std::vector<uint8_t> padded_light(kPaddedCells);
-    std::vector<uint16_t> padded_biome(kPaddedCells);
     // What ambient occlusion and smooth lighting read, once per cell instead
     // of once per corner of every quad that touches it.
     std::vector<uint32_t> padded_packed(kPaddedCells);
@@ -551,7 +551,12 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
     const auto biome_at = [&](int32_t x, int32_t y, int32_t z) -> uint16_t {
         const bool past_x = x < 0 || x > 15;
         const bool past_z = z < 0 || z > 15;
-        if (past_x && past_z) return 0;
+        if (past_x && past_z) {
+            // The blend's square is the only thing that reaches a diagonal.
+            const ChunkBlocks* corner = x < 0 ? (z < 0 ? neighbours.north_west : neighbours.south_west)
+                                              : (z < 0 ? neighbours.north_east : neighbours.south_east);
+            return corner ? corner->biome_at(x & 15, y, z & 15) : 0;
+        }
         if (past_x) {
             const ChunkBlocks* side = x < 0 ? neighbours.west : neighbours.east;
             return side ? side->biome_at(x & 15, y, z) : 0;
@@ -561,6 +566,31 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
             return side ? side->biome_at(x, y, z & 15) : 0;
         }
         return blocks.biome_at(x, y, z);
+    };
+
+    // The blend over a 5x5 square costs 25 reads a block, and every corner of
+    // every tinted quad wants it. A biome is the same across a 4x4x4 cell, so
+    // one answer per cell and per column of the section serves them all, which
+    // is ours: the game caches whole 16x16 layers in BlockTintCache instead.
+    std::array<uint32_t, kTintChannels * 4 * kSection * kSection> blend_cache{};
+    std::array<uint8_t, kTintChannels * 4 * kSection * kSection> blend_known{};
+    int32_t blend_section = -1;
+    const auto blended_tint = [&](int channel, int32_t x, int32_t local_y, int32_t z, int32_t section) {
+        if (section != blend_section) {
+            blend_known.fill(0);
+            blend_section = section;
+        }
+        const size_t key = ((static_cast<size_t>(channel) * 4 +
+                             static_cast<size_t>(local_y / 4)) * kSection +
+                            static_cast<size_t>(z)) * kSection + static_cast<size_t>(x);
+        if (blend_known[key] != 0) return blend_cache[key];
+        const int32_t y = section * kSection + local_y;
+        const uint32_t colour = blend_biome_tint(
+            tints, channel, x, z,
+            [&](int32_t bx, int32_t bz) { return biome_at(bx, y, bz); });
+        blend_known[key] = 1;
+        blend_cache[key] = colour;
+        return colour;
     };
 
     // Daylight on anything we cannot see, so an unloaded neighbour reads as
@@ -593,7 +623,6 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     padded_solid[cell] = state >= 0 && table.occludes(state);
                     const uint8_t nibbles = light_at(px, section * kSection + py, pz);
                     padded_light[cell] = nibbles;
-                    padded_biome[cell] = biome_at(px, section * kSection + py, pz);
 
                     // `LevelRenderer.getLightColor`: a block that renders
                     // emissive is full bright, and one that glows lifts the
@@ -629,7 +658,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     if (state <= 0) continue;
                     const auto quads = table.quads(state);
                     if (render_table().fluid(state).fluid != Fluid::None) {
-                        const uint16_t biome = padded_biome[padded_index(x, local_y, z)] & 0xFF;
+                        const bool lava_here =
+                            render_table().fluid(state).fluid == Fluid::Lava;
+                        const uint32_t water_tint =
+                            lava_here ? 0u : blended_tint(2, x, local_y, z, section);
                         const auto emit = [&](const LiquidVertex corners[4], int32_t texture, int face,
                                               uint8_t light, bool water) {
                             if (texture < 0) return;
@@ -646,7 +678,7 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                                 vertex.set_brightness(kFaceShade[face]);
                                 vertex.light = static_cast<uint16_t>(
                                     ((light >> 4) * 16u) | ((light & 0x0Fu) * 16u) << 8);
-                                vertex.biome = biome;
+                                vertex.tint = water_tint;
                                 mesh.vertices.push_back(vertex);
                             }
                             // The game winds its faces the other way round from this mesher.
@@ -914,11 +946,14 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                             vertex.packed = quad.tint >= 0
                                                 ? static_cast<uint16_t>(quad.tint + 1)
                                                 : uint16_t{0};
+                            const int tint_channel = kTintChannel[vertex.packed & 7u];
                             vertex.set_brightness(brightness[corner]);
                             vertex.light = static_cast<uint16_t>(
                                 (corner_light[corner] & 0xFFu) |
                                 (((corner_light[corner] >> 16) & 0xFFu) << 8));
-                            vertex.biome = padded_biome[own_cell] & 0xFF;
+                            vertex.tint = tint_channel >= 0
+                                             ? blended_tint(tint_channel, x, local_y, z, section)
+                                             : 0u;
                             mesh.vertices.push_back(vertex);
                         }
 
@@ -962,10 +997,10 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 }
 
 Mesh mesh_chunk(const Chunk& chunk, const ChunkBlocks& blocks, const BlockTable& table,
-                const Neighbours& neighbours) {
+                const Neighbours& neighbours, const BiomeTints& tints) {
     Mesh merged;
     std::vector<uint32_t> blended;
-    for (const auto& section : mesh_sections(chunk, blocks, table, neighbours)) {
+    for (const auto& section : mesh_sections(chunk, blocks, table, neighbours, tints)) {
         const auto base = static_cast<uint32_t>(merged.vertices.size());
         // The merged form keeps section-local positions; only the renderer's
         // section path knows where each section sits.

@@ -235,10 +235,24 @@ void world_bind(Game& game, mcpp::SessionEvents& events) {
     };
 }
 
+// The colours the mesher averages over a biome border, built once: the colour
+// maps are read off disk and the server's biome list stays put while connected.
+// Filled before the mesher thread starts, and only read after that.
+static const mcpp::world::BiomeTints& biome_tints(Game& game) {
+    auto& tints = game.world.biome_tints;
+    if (tints.colour.empty() && game.session && !game.session->biomes().empty()) {
+        mcpp::world::Colormaps maps;
+        maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
+        tints.colour = game.session->biomes().tints(maps);
+        tints.blend_radius = game.screens.options.get_int("biomeBlendRadius");
+    }
+    return tints;
+}
+
 void world_load(Game& game) {
     auto& area = game.world;
     double mesh_ms = 0.0;
-    area.first_meshes = mesh_world(area.chunks, game.table, &mesh_ms);
+    area.first_meshes = mesh_world(area.chunks, game.table, &mesh_ms, biome_tints(game));
     std::lock_guard lock(area.world_guard);
     for (const auto& chunk : area.chunks) area.world.insert_or_assign({chunk.x, chunk.z}, chunk);
 }
@@ -261,10 +275,8 @@ void world_start(Game& game) {
                                sky_path);
         renderer.set_sky(&*game.world.sky);
     }
-    if (!game.session->biomes().empty()) {
-        mcpp::world::Colormaps maps;
-        maps.open(mcpp::world::Colormaps::default_path(mcpp::protocol::kTargetProtocol));
-        renderer.set_biome_colours(game.session->biomes().tints(maps));
+    if (!biome_tints(game).colour.empty()) {
+        renderer.set_biome_colours(game.world.biome_tints.colour);
     }
     game.world.render.open(
         mcpp::world::RenderTable::default_path(mcpp::protocol::kTargetProtocol));
@@ -302,7 +314,7 @@ void world_start(Game& game) {
                 continue;
             }
             double batch_ms = 0.0;
-            auto pieces = mesh_world(arrived, game.table, &batch_ms);
+            auto pieces = mesh_world(arrived, game.table, &batch_ms, game.world.biome_tints);
             const size_t count = arrived.size();
             {
                 std::lock_guard lock(area.guard);
@@ -483,8 +495,12 @@ void world_tick(Game& game) {
             neighbours.east = side(1, 0);
             neighbours.north = side(0, -1);
             neighbours.south = side(0, 1);
-            renderer.replace(
-                mcpp::world::mesh_sections(found->second, *blocks, game.table, neighbours));
+            neighbours.north_west = side(-1, -1);
+            neighbours.north_east = side(1, -1);
+            neighbours.south_west = side(-1, 1);
+            neighbours.south_east = side(1, 1);
+            renderer.replace(mcpp::world::mesh_sections(found->second, *blocks, game.table,
+                                                        neighbours, game.world.biome_tints));
         }
     }
 

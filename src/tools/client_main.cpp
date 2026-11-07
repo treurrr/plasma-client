@@ -583,7 +583,7 @@ int do_worldshot(const std::string& target, const std::string& out_path, size_t 
                              static_cast<int>(extent));
 
     double mesh_ms = 0.0;
-    const auto combined = mesh_world(chunks, table, &mesh_ms);
+    const auto combined = mesh_world(chunks, table, &mesh_ms, client::biome_tints_of(session));
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options gpu_options;

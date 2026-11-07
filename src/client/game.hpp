@@ -107,6 +107,9 @@ struct WorldArea {
     uint64_t flicker_seed = 0x5DEECE66Dull;
     int32_t water_vision_time = 0;
     int32_t render_distance = 12;
+    // J: the biome colours and the blend radius the mesher averages with,
+    // built once because the colour maps come off disk.
+    mcpp::world::BiomeTints biome_tints;
 };
 
 struct EntitiesArea {

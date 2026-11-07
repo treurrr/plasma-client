@@ -3,6 +3,7 @@
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/environment.hpp"
 #include "mcpp/world/light.hpp"
+#include "mcpp/world/mesher.hpp"
 #include "mcpp/world/render_table.hpp"
 #include "mcpp/world/shapes.hpp"
 
@@ -364,12 +365,93 @@ void test_relight() {
 
 } // namespace
 
+
+// `ClientLevel.calculateBlockTint`: the colour averaged over the square the
+// biomeBlendRadius option asks for. The expected values are written out from
+// the game's own arithmetic by hand - sum each channel over the square, divide
+// by the area, truncate - not taken from the code under test.
+void test_biome_blend() {
+    // Two biomes, far apart in colour so every step of the fade is visible.
+    // Row 0 is grass, 1 foliage, 2 water, 3 dry foliage, as BiomeTable writes.
+    BiomeTints tints;
+    tints.colour = {
+        0x91BD59u, 0x77AB2Fu, 0x3F76E4u, 0x8F9A2Fu,   // biome 0, a plains
+        0x80B497u, 0x6A7039u, 0x00539Cu, 0xB0C15Fu,   // biome 1, a swamp
+    };
+
+    // A border down x = 0: everything west of it is biome 0, the rest biome 1.
+    const auto split = [](int32_t x, int32_t) -> uint16_t { return x < 0 ? 0 : 1; };
+
+    tints.blend_radius = 0;
+    check(blend_biome_tint(tints, 0, -1, 0, split) == 0x91BD59u,
+          "at radius 0 a block takes its own biome, which is the hard line");
+    check(blend_biome_tint(tints, 0, 0, 0, split) == 0x80B497u,
+          "and the block the other side of the border takes the other biome");
+
+    // Radius 2: a 5x5 square, so the column x holds 5 blocks each of
+    // x-2..x+2. At x = 0 that is two columns of biome 0 (x-2, x-1) and three
+    // of biome 1, ten and fifteen blocks of 25.
+    tints.blend_radius = 2;
+    const auto average = [](int32_t zeros, uint32_t a, uint32_t b) {
+        const int32_t ones = 25 - zeros;
+        const auto channel = [&](int shift) {
+            const int32_t sum = zeros * static_cast<int32_t>((a >> shift) & 0xFFu) +
+                                ones * static_cast<int32_t>((b >> shift) & 0xFFu);
+            return static_cast<uint32_t>(sum / 25 & 0xFF);
+        };
+        return channel(16) << 16 | channel(8) << 8 | channel(0);
+    };
+    const std::pair<int32_t, int32_t> steps[] = {
+        {-3, 25}, {-2, 20}, {-1, 15}, {0, 10}, {1, 5}, {2, 0}, {3, 0},
+    };
+    for (const auto& [x, zeros] : steps) {
+        for (int channel = 0; channel < kTintChannels; ++channel) {
+            const uint32_t a = tints.colour[static_cast<size_t>(channel)];
+            const uint32_t b = tints.colour[static_cast<size_t>(kTintChannels + channel)];
+            const uint32_t want = average(zeros, a, b);
+            const uint32_t got = blend_biome_tint(tints, channel, x, 0, split);
+            check(got == want, std::format("the blend at x {} channel {} is {}, got {}", x,
+                                           channel, hex(want), hex(got)));
+        }
+    }
+    // Seven columns wide instead of one: a border is no longer one line but a
+    // ramp, which is the whole point of the row.
+    uint32_t last = 0;
+    int steps_seen = 0;
+    for (int32_t x = -4; x <= 4; ++x) {
+        const uint32_t here = blend_biome_tint(tints, 0, x, 0, split);
+        if (x > -4 && here != last) ++steps_seen;
+        last = here;
+    }
+    check(steps_seen == 5,
+          std::format("a 5x5 blend crosses a border in five steps, saw {}", steps_seen));
+
+    // The widest the option goes, and the truncation it leans on: 15x15 is 225
+    // blocks, and a channel that does not divide evenly rounds down.
+    const uint32_t wide = static_cast<uint32_t>((0x91 * 7 + 0x80 * 8) * 15 / 225) << 16 |
+                          static_cast<uint32_t>((0xBD * 7 + 0xB4 * 8) * 15 / 225) << 8 |
+                          static_cast<uint32_t>((0x59 * 7 + 0x97 * 8) * 15 / 225);
+    tints.blend_radius = 7;
+    check(blend_biome_tint(tints, 0, 0, 0, split) == wide,
+          "at radius 7 the square is 15 blocks on a side");
+    tints.blend_radius = 12;
+    check(blend_biome_tint(tints, 0, 0, 0, split) == wide,
+          "and a radius past the option's own range is held at seven");
+
+    // A biome past the end of the table falls back rather than reading off it.
+    tints.blend_radius = 0;
+    check(blend_biome_tint(tints, 0, 0, 0, [](int32_t, int32_t) -> uint16_t { return 99; }) ==
+              kDefaultTint[0],
+          "a biome the table does not hold falls back to the game's own grass");
+}
+
 int main() {
     test_texture_animation();
     test_tracks();
     test_datapack();
     test_recording();
     test_relight();
+    test_biome_blend();
     if (failures == 0) {
         std::cout << std::format("all world tests passed ({} skipped)\n", skipped);
         return 0;
