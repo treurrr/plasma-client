@@ -83,6 +83,11 @@ struct Living {
     bool passenger = false;
     bool baby = false;
     bool on_ground = false;
+    // `LivingEntity.getSwimAmount`: how far into the swimming pose it is, which
+    // the server never sends; the client eases it from the pose it does send.
+    bool visually_swimming = false;
+    float swim_amount = 0.0f;
+    float swim_amount_o = 0.0f;
     float max_head_rotation = 50.0f;
 
     // add_entity: placed, not eased, with the body facing where the head does.
@@ -109,6 +114,8 @@ struct Living {
     float head_at(float partial) const;
     float x_rot_at(float partial) const;
     float attack_at(float partial) const;
+    // `LivingEntity.getSwimAmount`.
+    float swim_at(float partial) const;
 
 private:
     void set_old();
@@ -116,6 +123,7 @@ private:
     void interpolate();
     void head_step();
     void update_swing_time();
+    void update_swim_amount();
     void turn_body_and_wrap();
     void tick_head_turn(float target);
     void tick_body_rotation_control();

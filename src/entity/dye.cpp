@@ -31,9 +31,13 @@ int8_t cycle_dye(ColourCycle cycle, uint8_t at) {
     return static_cast<int8_t>(at);
 }
 
+// `ARGB.alpha`.
 uint32_t alpha(uint32_t c) { return c >> 24; }
+// `ARGB.red`.
 uint32_t red(uint32_t c) { return (c >> 16) & 0xFF; }
+// `ARGB.green`.
 uint32_t green(uint32_t c) { return (c >> 8) & 0xFF; }
+// `ARGB.blue`.
 uint32_t blue(uint32_t c) { return c & 0xFF; }
 
 // `ARGB.color`.

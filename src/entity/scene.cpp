@@ -1,6 +1,7 @@
 #include "mcpp/entity/scene.hpp"
 
 #include "mcpp/entity/dye.hpp"
+#include "mcpp/nbt.hpp"
 #include "mcpp/world/atmosphere.hpp"
 #include "mcpp/entity/mob_tick.hpp"
 
@@ -10,6 +11,7 @@
 #include <cstdlib>
 #include <format>
 #include <fstream>
+#include <sstream>
 
 namespace mcpp::entity {
 namespace {
@@ -88,6 +90,18 @@ Scene::Scene(std::vector<std::string> types, skins::Cache* skins)
     tracked_.reserve(1024);
     matrices_.resize(256);
     type_info_.resize(types_.size());
+    // `EntityType.getDimensions`: every type's box, baked by
+    // tools/bake_entity_dimensions.py.
+    std::ifstream sizes(default_registries_path(774).parent_path() /
+                        "entity_dimensions-774.txt");
+    std::string line;
+    while (std::getline(sizes, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream row(line);
+        std::string name;
+        std::array<float, 3> box{};
+        if (row >> name >> box[0] >> box[1] >> box[2]) dimensions_[name] = box;
+    }
 }
 
 void Scene::bind(const gpu::EntityRenderer& renderer) { bind(renderer, nullptr); }
@@ -175,6 +189,11 @@ Scene::TypeInfo& Scene::type_info(int32_t type) {
         }
     }
     info.hand_model = hand_model_for(row->layer);
+    if (const auto box = dimensions_.find(type_name(type)); box != dimensions_.end()) {
+        info.width = box->second[0];
+        info.height = box->second[1];
+        info.eye_height = box->second[2];
+    }
     if (row->humanoid_armour) {
         info.has_armour = true;
         for (int age = 0; age < 2; ++age) {
@@ -323,6 +342,7 @@ void Scene::metadata(int32_t id, const proto::Metadata& data) {
     s.pose = static_cast<EntityPose>(data.int_at(proto::Metadata::kPose, 0));
     // `LivingEntity.isVisuallySwimming`: the swimming pose, however it was reached.
     s.visually_swimming = s.pose == EntityPose::Swimming;
+    tracked->living.visually_swimming = s.visually_swimming;
     if (s.pose == EntityPose::Crouching) s.crouching = true;
 
     // `LivingEntity.isUsingItem`: the hand-states byte.
@@ -365,6 +385,16 @@ void Scene::metadata(int32_t id, const proto::Metadata& data) {
     }
     // `Mob.getAgeScale`: a baby is half size, and its shadow with it.
     s.age_scale = s.baby ? 0.5f : 1.0f;
+
+    // `MobRenderer.shouldShowName`: a mob's name is drawn when the server
+    // says it should be, and a sheep called "jeb_" wears the rainbow.
+    if (const nbt::Value* named = data.custom_name()) {
+        tracked->custom_name = nbt::component_to_text(*named);
+    } else {
+        tracked->custom_name.clear();
+    }
+    tracked->show_name = data.custom_name_visible() && !tracked->custom_name.empty();
+    s.jeb_sheep = tracked->custom_name == "jeb_";
 
     tracked->data = data;
     tick_mob_counters(type, data, tracked->living.on_ground, tracked->living.walk.speed,
@@ -461,6 +491,8 @@ void Scene::fill_shared_state(Tracked& tracked, const View& view) const {
     s.death_time = l.death_time > 0 ? static_cast<float>(l.death_time) + p : 0.0f;
     s.red_overlay = l.hurt_time > 0 || l.death_time > 0;
     s.partial = p;
+    s.swim_amount = l.swim_at(p);
+    s.visually_swimming = l.visually_swimming;
     read_mob_counters(type_name(tracked.type), tracked.own, p, s);
 }
 
@@ -566,7 +598,11 @@ void Scene::draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View
     TypeInfo& info = type_info(tracked.type);
     if (info.row == nullptr) return;
     fill_shared_state(tracked, view);
-    const MobState& s = tracked.state;
+    MobState& s = tracked.state;
+    // `Entity.getDimensions`: a baby stands in half the box.
+    s.bounding_box_width = info.width * s.age_scale;
+    s.bounding_box_height = info.height * s.age_scale;
+    s.eye_height = info.eye_height * s.age_scale;
     const size_t age = s.baby ? 1 : 0;
     const Layer& base = info.base[age];
     if (base.animator == nullptr || base.model < 0 || base.texture < 0) return;
@@ -623,6 +659,10 @@ void Scene::draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View
     }
     if (info.row->items_in_hand) {
         items_in_hand(info.hand_model, *base.animator, tracked, root, lit);
+    }
+    if (view.name_tags && tracked.show_name) {
+        name_tag(renderer, tracked, view, tracked.custom_name, x, tracked.living.y_at(p), z, false,
+                 lit);
     }
 }
 
@@ -727,14 +767,15 @@ void Scene::draw_player(gpu::EntityRenderer& renderer, Tracked& tracked, const V
 void Scene::name_tag(gpu::EntityRenderer& renderer, const Tracked& tracked, const View& view,
                      std::string_view text, double x, double y, double z, bool discrete,
                      std::array<uint8_t, 2> light) {
-    const double height = discrete ? kCrouchingHeight : kPlayerHeight;
+    const double height =
+        tracked.kind == Kind::Player ? (discrete ? kCrouchingHeight : kPlayerHeight)
+                                     : tracked.state.bounding_box_height;
     const double dx = x - view.eye[0];
     const double dy = y - view.eye[1];
     const double dz = z - view.eye[2];
     const double distance = dx * dx + dy * dy + dz * dz;
     if (distance >= 4096.0) return;
     if (discrete && distance >= 1024.0) return;
-    (void)tracked;
 
     float forward[3] = {view.forward[0], view.forward[1], view.forward[2]};
     const float length =

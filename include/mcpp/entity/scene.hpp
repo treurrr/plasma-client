@@ -115,6 +115,11 @@ private:
         bool has_armour = false;
         // `ArmedModel.translateToHand`: whose version of it this body uses.
         HandModel hand_model = HandModel::Plain;
+        // `EntityType.getDimensions`: the box the type stands in, which the
+        // name tag floats over and the light is read at.
+        float width = 0.6f;
+        float height = 1.8f;
+        float eye_height = 1.62f;
     };
 
     struct Skin {
@@ -136,6 +141,9 @@ private:
         proto::Metadata data;
         // The counters this mob's own tick keeps, which no packet carries.
         MobTick own;
+        // `Entity.getCustomName`, and whether the server wants it shown.
+        std::string custom_name;
+        bool show_name = false;
     };
     struct PlayerLine {
         std::string name;
@@ -188,6 +196,8 @@ private:
     // One model object per layer, and one worked-out row per entity type.
     std::map<std::string, std::unique_ptr<MobModel>, std::less<>> models_;
     std::vector<TypeInfo> type_info_;
+    // Width, height and eye height by type name, from the baked table.
+    std::map<std::string, std::array<float, 3>, std::less<>> dimensions_;
 
     int32_t wide_model_ = -1;
     int32_t slim_model_ = -1;

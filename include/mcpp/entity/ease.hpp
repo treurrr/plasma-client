@@ -10,7 +10,9 @@
 // through the game's sine table.
 namespace mcpp::entity::ease {
 
+// `Mth.square`.
 inline float square(float x) { return x * x; }
+// `Mth.cube`.
 inline float cube(float x) { return x * x * x; }
 
 inline float in_back(float x) { return square(x) * (2.70158f * x - 1.70158f); }

@@ -185,6 +185,14 @@ void Living::set_old() {
     x_rot_o = x_rot;
 }
 
+// `LivingEntity.updateSwimAmount`: nine hundredths a tick in and out of the
+// swimming pose.
+void Living::update_swim_amount() {
+    swim_amount_o = swim_amount;
+    if (visually_swimming) swim_amount = std::min(1.0f, swim_amount + 0.09f);
+    else swim_amount = std::max(0.0f, swim_amount - 0.09f);
+}
+
 void Living::base_tick() {
     o_attack_anim = attack_anim;
     if (hurt_time > 0) --hurt_time;
@@ -317,6 +325,7 @@ void Living::tick_remote_player() {
     set_old();
     ++tick_count;
     base_tick();
+    update_swim_amount();
     interpolate();
     head_step();
     update_swing_time();
@@ -342,12 +351,18 @@ void Living::tick_mob() {
     set_old();
     ++tick_count;
     base_tick();
+    update_swim_amount();
     interpolate();
     head_step();
     update_swing_time();
     tick_body_rotation_control();
     turn_body_and_wrap();
     walk_animation(false);
+}
+
+// `LivingEntity.getSwimAmount`.
+float Living::swim_at(float partial) const {
+    return lerp(partial, swim_amount_o, swim_amount);
 }
 
 double Living::x_at(float partial) const { return xo + static_cast<double>(partial) * (x - xo); }

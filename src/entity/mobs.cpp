@@ -41,10 +41,12 @@ void AnimationState::start(int64_t tick) {
     accumulated = 0.0f;
 }
 
+// `AnimationState.startIfStopped`.
 void AnimationState::start_if_stopped(int64_t tick) {
     if (!started) start(tick);
 }
 
+// `AnimationState.stop`.
 void AnimationState::stop() {
     started = false;
     accumulated = 0.0f;

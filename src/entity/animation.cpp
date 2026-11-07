@@ -318,6 +318,8 @@ void KeyframeAnimation::apply_millis(int64_t time_ms, float scale, Pose& pose) c
     }
 }
 
+// `KeyframeAnimation.apply`: the overload a running `AnimationState` reaches,
+// whose `ifStarted` guard is at the call site.
 void KeyframeAnimation::apply(float elapsed_ms, Pose& pose, float scale) const {
     apply_millis(static_cast<int64_t>(elapsed_ms), scale, pose);
 }
