@@ -138,6 +138,11 @@ add_library(mcpp_net STATIC
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp
+    src/ui/entry_list.cpp
+    src/ui/screens/multiplayer.cpp
+    src/ui/options_defs.cpp
+    src/ui/screens/options_screens.cpp
+    src/ui/screens/chat_screen.cpp
     src/ui/hud/gui.cpp
     src/ui/hud/chat.cpp
     src/ui/hud/tab_list.cpp
@@ -182,6 +187,7 @@ add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/m
     src/client/common.cpp src/client/screenshot.cpp src/client/hud_shot.cpp
     src/client/clicktest.cpp src/client/inspect.cpp src/client/entityshot.cpp
     src/client/player_rules.cpp src/client/movetest.cpp src/client/crafttest.cpp
+    src/client/chattest.cpp
     src/client/outlineshot.cpp
     ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
@@ -288,3 +294,6 @@ endif()
 mcpp_test(hand)
 target_sources(test_hand PRIVATE src/client/hand.cpp)
 target_include_directories(test_hand PRIVATE src)
+
+# F: the multiplayer path, the options screens, chat and death.
+mcpp_test(menus)

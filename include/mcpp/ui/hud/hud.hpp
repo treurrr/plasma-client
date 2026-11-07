@@ -167,6 +167,9 @@ public:
     int lines_per_page(const Options& options, bool focused) const;
     size_t size() const { return trimmed_.size(); }
     const std::deque<Line>& lines() const { return trimmed_; }
+    // F: how many lines up the view is, which the chat screen reads to find
+    // the line under the pointer.
+    int scroll_amount() const { return scroll_; }
 
     std::deque<std::string> recent;
 

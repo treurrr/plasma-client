@@ -4,16 +4,28 @@
 #include "mcpp/nbt.hpp"
 
 #include <cstdlib>
+#include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <type_traits>
+#include <variant>
 
 namespace mcpp::ui {
 namespace {
 
+constexpr uint8_t kEnd = 0;
 constexpr uint8_t kByte = 1;
+constexpr uint8_t kShort = 2;
+constexpr uint8_t kInt = 3;
+constexpr uint8_t kLong = 4;
+constexpr uint8_t kFloat = 5;
+constexpr uint8_t kDouble = 6;
+constexpr uint8_t kByteArray = 7;
 constexpr uint8_t kString = 8;
 constexpr uint8_t kList = 9;
 constexpr uint8_t kCompound = 10;
+constexpr uint8_t kIntArray = 11;
+constexpr uint8_t kLongArray = 12;
 
 void name(ByteBuffer& out, std::string_view text) {
     out.write_u16(static_cast<uint16_t>(text.size()));
@@ -42,6 +54,79 @@ std::filesystem::path data_home() {
 
 constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+// The tag number of a value as it was read. An empty list lost the type of
+// the elements it never had, so it goes back as a list of nothing, which is
+// how the game writes an empty list itself.
+uint8_t tag_of(const nbt::Value& value) {
+    return std::visit(
+        [](const auto& held) -> uint8_t {
+            using T = std::decay_t<decltype(held)>;
+            if constexpr (std::is_same_v<T, std::monostate>) return kEnd;
+            else if constexpr (std::is_same_v<T, int8_t>) return kByte;
+            else if constexpr (std::is_same_v<T, int16_t>) return kShort;
+            else if constexpr (std::is_same_v<T, int32_t>) return kInt;
+            else if constexpr (std::is_same_v<T, int64_t>) return kLong;
+            else if constexpr (std::is_same_v<T, float>) return kFloat;
+            else if constexpr (std::is_same_v<T, double>) return kDouble;
+            else if constexpr (std::is_same_v<T, std::string>) return kString;
+            else if constexpr (std::is_same_v<T, nbt::List>) return kList;
+            else if constexpr (std::is_same_v<T, nbt::Compound>) return kCompound;
+            else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) return kByteArray;
+            else if constexpr (std::is_same_v<T, std::vector<int32_t>>) return kIntArray;
+            else return kLongArray;
+        },
+        value.storage());
+}
+
+void write_payload(ByteBuffer& out, const nbt::Value& value);
+
+void write_field(ByteBuffer& out, std::string_view key, const nbt::Value& value) {
+    out.write_u8(tag_of(value));
+    name(out, key);
+    write_payload(out, value);
+}
+
+void write_payload(ByteBuffer& out, const nbt::Value& value) {
+    std::visit(
+        [&out](const auto& held) {
+            using T = std::decay_t<decltype(held)>;
+            if constexpr (std::is_same_v<T, std::monostate>) {
+                return;
+            } else if constexpr (std::is_same_v<T, int8_t>) {
+                out.write_u8(static_cast<uint8_t>(held));
+            } else if constexpr (std::is_same_v<T, int16_t>) {
+                out.write_u16(static_cast<uint16_t>(held));
+            } else if constexpr (std::is_same_v<T, int32_t>) {
+                out.write_i32(held);
+            } else if constexpr (std::is_same_v<T, int64_t>) {
+                out.write_i64(held);
+            } else if constexpr (std::is_same_v<T, float>) {
+                out.write_f32(held);
+            } else if constexpr (std::is_same_v<T, double>) {
+                out.write_f64(held);
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                name(out, held);
+            } else if constexpr (std::is_same_v<T, nbt::List>) {
+                out.write_u8(held.empty() ? kEnd : tag_of(held.front()));
+                out.write_i32(static_cast<int32_t>(held.size()));
+                for (const auto& item : held) write_payload(out, item);
+            } else if constexpr (std::is_same_v<T, nbt::Compound>) {
+                for (const auto& [key, field] : held) write_field(out, key, field);
+                out.write_u8(kEnd);
+            } else if constexpr (std::is_same_v<T, std::vector<uint8_t>>) {
+                out.write_i32(static_cast<int32_t>(held.size()));
+                out.write_bytes(std::span(held.data(), held.size()));
+            } else if constexpr (std::is_same_v<T, std::vector<int32_t>>) {
+                out.write_i32(static_cast<int32_t>(held.size()));
+                for (const int32_t item : held) out.write_i32(item);
+            } else {
+                out.write_i32(static_cast<int32_t>(held.size()));
+                for (const int64_t item : held) out.write_i64(item);
+            }
+        },
+        value.storage());
+}
+
 } // namespace
 
 std::vector<size_t> ServerList::visible() const {
@@ -52,7 +137,7 @@ std::vector<size_t> ServerList::visible() const {
     return out;
 }
 
-// `ServerList.load`, `ServerData.read`: each entry's name, ip, icon, pack status and hidden flag.
+// `ServerList.load`, `ServerData.read`: each entry's name, ip, icon, pack status and hidden flag, and every other field kept as it was.
 std::optional<ServerList> ServerList::decode(std::span<const uint8_t> bytes) {
     // The file's root is named, where the network form is not; dropping the
     // name turns one into the other.
@@ -67,6 +152,8 @@ std::optional<ServerList> ServerList::decode(std::span<const uint8_t> bytes) {
     try {
         ByteBuffer in(std::move(network));
         const auto root = nbt::read_network_tag(in);
+        if (const auto* fields = root.as_compound()) list.root_extra = *fields;
+        list.root_extra.erase("servers");
         const auto* servers = root.find("servers");
         if (servers == nullptr || servers->as_list() == nullptr) return list;
         for (const auto& item : *servers->as_list()) {
@@ -79,6 +166,15 @@ std::optional<ServerList> ServerList::decode(std::span<const uint8_t> bytes) {
                                                            : ServerEntry::Packs::Disabled;
             }
             if (const auto* v = item.find("hidden")) entry.hidden = v->as_int().value_or(0) != 0;
+            // Every field a newer game may have written, kept whole; the five
+            // this client knows are written from its own members instead.
+            if (const auto* fields = item.as_compound()) {
+                nbt::Compound rest = *fields;
+                for (const char* known : {"name", "ip", "icon", "acceptTextures", "hidden"}) {
+                    rest.erase(known);
+                }
+                entry.extra = nbt::Value{std::move(rest)};
+            }
             list.entries.push_back(std::move(entry));
         }
     } catch (const std::exception&) {
@@ -87,26 +183,90 @@ std::optional<ServerList> ServerList::decode(std::span<const uint8_t> bytes) {
     return list;
 }
 
+// `ServerList.save`, `ServerData.write`: name, ip, the icon when there is one, the pack status when it is not Prompt, the hidden flag, and the fields this client does not know, back where they were.
 std::vector<uint8_t> ServerList::encode() const {
     ByteBuffer out;
     out.write_u8(kCompound);
     name(out, "");
+    for (const auto& [key, field] : root_extra) write_field(out, key, field);
     out.write_u8(kList);
     name(out, "servers");
     out.write_u8(kCompound);
     out.write_i32(static_cast<int32_t>(entries.size()));
     for (const auto& entry : entries) {
-        byte_field(out, "hidden", entry.hidden ? 1 : 0);
-        string_field(out, "ip", entry.ip);
-        string_field(out, "name", entry.name);
-        if (!entry.icon.empty()) string_field(out, "icon", entry.icon);
-        if (entry.packs != ServerEntry::Packs::Prompt) {
-            byte_field(out, "acceptTextures", entry.packs == ServerEntry::Packs::Enabled ? 1 : 0);
+        nbt::Compound fields;
+        if (const auto* rest = entry.extra.as_compound()) fields = *rest;
+        for (const char* known : {"name", "ip", "icon", "acceptTextures", "hidden"}) {
+            fields.erase(known);
         }
-        out.write_u8(0);
+        fields.emplace("name", nbt::Value{entry.name});
+        fields.emplace("ip", nbt::Value{entry.ip});
+        if (!entry.icon.empty()) fields.emplace("icon", nbt::Value{entry.icon});
+        if (entry.packs != ServerEntry::Packs::Prompt) {
+            fields.emplace("acceptTextures",
+                           nbt::Value{static_cast<int8_t>(
+                               entry.packs == ServerEntry::Packs::Enabled ? 1 : 0)});
+        }
+        fields.emplace("hidden", nbt::Value{static_cast<int8_t>(entry.hidden ? 1 : 0)});
+        for (const auto& [key, field] : fields) write_field(out, key, field);
+        out.write_u8(kEnd);
     }
-    out.write_u8(0);
+    out.write_u8(kEnd);
     return out.data();
+}
+
+ServerEntry* ServerList::find(std::string_view ip) {
+    for (auto& entry : entries) {
+        if (entry.ip == ip) return &entry;
+    }
+    return nullptr;
+}
+
+// `ServerList.unhide`: a hidden entry with that address becomes a listed one.
+ServerEntry* ServerList::unhide(std::string_view ip) {
+    for (auto& entry : entries) {
+        if (entry.hidden && entry.ip == ip) {
+            entry.hidden = false;
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+// `ServerList.add`: a listed entry goes last, a hidden one first, and no more
+// than sixteen hidden ones are kept.
+void ServerList::add(ServerEntry entry, bool hide) {
+    entry.hidden = hide;
+    if (!hide) {
+        entries.push_back(std::move(entry));
+        return;
+    }
+    entries.insert(entries.begin(), std::move(entry));
+    size_t hidden_count = 0;
+    for (size_t i = 0; i < entries.size();) {
+        if (!entries[i].hidden) {
+            ++i;
+            continue;
+        }
+        ++hidden_count;
+        if (hidden_count > 16) {
+            entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        ++i;
+    }
+}
+
+// `ServerList.remove`: the entry goes, listed or hidden.
+void ServerList::remove(size_t index) {
+    if (index < entries.size()) entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(index));
+}
+
+// `ServerList.swap`: two listed entries trade places.
+void ServerList::swap(size_t a, size_t b) {
+    const auto shown = visible();
+    if (a >= shown.size() || b >= shown.size()) return;
+    std::swap(entries[shown[a]], entries[shown[b]]);
 }
 
 bool ServerList::load(const std::filesystem::path& path) {

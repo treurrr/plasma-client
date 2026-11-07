@@ -2,6 +2,7 @@
 
 #include "mcpp/features.hpp"
 #include "mcpp/protocol_versions.hpp"
+#include "mcpp/ui/chat_screen.hpp"
 #include "mcpp/ui/container_screen.hpp"
 #include "mcpp/ui/menu.hpp"
 #include "mcpp/ui/pause_screen.hpp"
@@ -71,6 +72,22 @@ bool bound(const Game& game, std::string_view name, int key) {
 } // namespace
 
 void screens_bind(Game& game, mcpp::SessionEvents& events) {
+    // F: the death screen asks to respawn, so the session must not do it by
+    // itself. This runs before the session is built, which is where the
+    // option is read.
+    game.options.auto_respawn = false;
+    // `ClientPacketListener.handlePlayerCombatKill`: the death screen, with
+    // what killed the player and the score it shows.
+    events.ui.on_combat_kill = [&game](const mcpp::nbt::Value& message) {
+        auto& screens = game.screens;
+        if (!screens.quads) return;
+        // The score the game shows is the player's own, which this client
+        // does not track yet; the experience total stands in for it until it
+        // does.
+        open_screen(game, std::make_shared<mcpp::ui::DeathScreen>(
+                              mcpp::ui::from_nbt(message), game.session->hardcore(),
+                              game.session->vitals().total_experience));
+    };
     events.ui.on_chat = [&game](std::string_view line) {
         auto& screens = game.screens;
         std::lock_guard lock(screens.chat_guard);
@@ -149,6 +166,10 @@ void screens_start(Game& game) {
     manager.font = &*screens.font;
     manager.username = game.options.username;
     manager.host.disconnect = [&game] { game.screens.leave = true; };
+    // F: what the death screen's Respawn button asks for.
+    manager.host.respawn = [&game] { game.session->send_respawn(); };
+    manager.host.chat = [&game](const std::string& line) { game.session->send_chat(line); };
+    manager.host.command = [&game](const std::string& line) { game.session->send_command(line); };
     manager.lang = &screens.lang;
     manager.options = &screens.options;
     manager.keybinds = &screens.keybinds;

@@ -33,6 +33,8 @@ public:
     std::optional<double> as_double() const;
 
     std::string string_or(std::string_view fallback) const;
+    // F: the tag as it was read, so a file can be written back whole.
+    const Storage& storage() const { return storage_; }
 
 private:
     Storage storage_;
