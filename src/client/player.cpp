@@ -278,11 +278,10 @@ void player_tick(Game& game) {
         player.tags_seen = session.tags().size();
     }
 
-    // The game's clock: whole ticks run, the rest is how far between two
-    // ticks the picture is drawn. Never more than ten ticks in one frame.
-    player.partial_tick += static_cast<double>(game.dt) / mcpp::world::kTickSeconds;
-    const auto due = static_cast<int>(player.partial_tick);
-    player.partial_tick -= due;
+    // The game's clock, advanced for the whole frame in play.cpp: whole ticks
+    // run, the rest is how far between two ticks the picture is drawn.
+    const int due = game.ticks;
+    player.partial_tick = game.clock.partial();
     const mcpp::world::BlockAt at = [&game](int32_t x, int32_t y, int32_t z) {
         return block_unlocked(game, x, y, z);
     };

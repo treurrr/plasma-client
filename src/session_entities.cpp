@@ -79,7 +79,60 @@ const std::map<std::string, Attribute, std::less<>>& Session::attributes(int32_t
 double Session::attribute(int32_t entity, std::string_view name, double fallback) const {
     const auto& all = attributes(entity);
     const auto found = all.find(name);
-    return found == all.end() ? fallback : found->second.value();
+    return found == all.end() ? fallback : sanitize_attribute(name, found->second.value());
+}
+
+// `RangedAttribute.sanitizeValue`, `Attributes.Attributes`: every attribute of
+// the game is a ranged one, and these are the ranges it registers them with.
+double sanitize_attribute(std::string_view name, double value) {
+    struct Range {
+        std::string_view name;
+        double min;
+        double max;
+    };
+    static constexpr Range kRanges[] = {
+        {"minecraft:armor", 0.0, 30.0},
+        {"minecraft:armor_toughness", 0.0, 20.0},
+        {"minecraft:attack_damage", 0.0, 2048.0},
+        {"minecraft:attack_knockback", 0.0, 5.0},
+        {"minecraft:attack_speed", 0.0, 1024.0},
+        {"minecraft:block_break_speed", 0.0, 1024.0},
+        {"minecraft:block_interaction_range", 0.0, 64.0},
+        {"minecraft:burning_time", 0.0, 1024.0},
+        {"minecraft:camera_distance", 0.0, 32.0},
+        {"minecraft:entity_interaction_range", 0.0, 64.0},
+        {"minecraft:explosion_knockback_resistance", 0.0, 1.0},
+        {"minecraft:fall_damage_multiplier", 0.0, 100.0},
+        {"minecraft:flying_speed", 0.0, 1024.0},
+        {"minecraft:follow_range", 0.0, 2048.0},
+        {"minecraft:gravity", -1.0, 1.0},
+        {"minecraft:jump_strength", 0.0, 32.0},
+        {"minecraft:knockback_resistance", 0.0, 1.0},
+        {"minecraft:luck", -1024.0, 1024.0},
+        {"minecraft:max_absorption", 0.0, 2048.0},
+        {"minecraft:max_health", 1.0, 1024.0},
+        {"minecraft:mining_efficiency", 0.0, 1024.0},
+        {"minecraft:movement_efficiency", 0.0, 1.0},
+        {"minecraft:movement_speed", 0.0, 1024.0},
+        {"minecraft:oxygen_bonus", 0.0, 1024.0},
+        {"minecraft:safe_fall_distance", -1024.0, 1024.0},
+        {"minecraft:scale", 0.0625, 16.0},
+        {"minecraft:sneaking_speed", 0.0, 1.0},
+        {"minecraft:spawn_reinforcements", 0.0, 1.0},
+        {"minecraft:step_height", 0.0, 10.0},
+        {"minecraft:submerged_mining_speed", 0.0, 20.0},
+        {"minecraft:sweeping_damage_ratio", 0.0, 1.0},
+        {"minecraft:tempt_range", 0.0, 2048.0},
+        {"minecraft:water_movement_efficiency", 0.0, 1.0},
+        {"minecraft:waypoint_receive_range", 0.0, 6.0e7},
+        {"minecraft:waypoint_transmit_range", 0.0, 6.0e7},
+    };
+    for (const auto& range : kRanges) {
+        if (range.name != name) continue;
+        if (std::isnan(value)) return range.min;
+        return value < range.min ? range.min : std::min(value, range.max);
+    }
+    return value;
 }
 
 bool Session::handle_entities(PacketConnection::Packet& packet) {
