@@ -269,6 +269,7 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
         item_names_.clear();
         item_armour_.clear();
     }
+    item_tile_ = tile;
     upload_texture(pixels, tile, tile, item_layers_, item_image_, item_memory_, item_view_,
                    VK_IMAGE_VIEW_TYPE_2D_ARRAY);
 
@@ -357,6 +358,7 @@ void UiRenderer::create_atlas(const std::filesystem::path& items,
         glyphs_.clear();
         slicing_.clear();
     }
+    gui_side_ = gui_side;
     upload_texture(gui_pixels, gui_side, gui_side, 1, gui_image_, gui_memory_, gui_view_,
                    VK_IMAGE_VIEW_TYPE_2D);
 
@@ -717,6 +719,122 @@ void UiRenderer::copy_layer(VkImage image, uint32_t layer, uint32_t width, uint3
     vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
     vkDestroyBuffer(device_.handle(), staging, nullptr);
     vkFreeMemory(device_.handle(), memory, nullptr);
+}
+
+// The same copy as copy_layer, into a rectangle of a layer rather than all of
+// it: an interface sprite keeps the place it was packed into.
+void UiRenderer::copy_region(VkImage image, uint32_t layer, int32_t x, int32_t y, uint32_t width,
+                             uint32_t height, const std::vector<uint8_t>& pixels) {
+    check(vkQueueWaitIdle(device_.graphics_queue()), "vkQueueWaitIdle ui region");
+    VkBufferCreateInfo staging_create{};
+    staging_create.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    staging_create.size = pixels.size();
+    staging_create.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkBuffer staging = VK_NULL_HANDLE;
+    check(vkCreateBuffer(device_.handle(), &staging_create, nullptr, &staging),
+          "vkCreateBuffer ui region");
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device_.handle(), staging, &requirements);
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex =
+        memory_type(device_.physical(), requirements.memoryTypeBits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    check(vkAllocateMemory(device_.handle(), &allocate, nullptr, &memory),
+          "vkAllocateMemory ui region");
+    check(vkBindBufferMemory(device_.handle(), staging, memory, 0), "vkBindBufferMemory ui region");
+    void* mapped = nullptr;
+    check(vkMapMemory(device_.handle(), memory, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory");
+    std::memcpy(mapped, pixels.data(), pixels.size());
+    vkUnmapMemory(device_.handle(), memory);
+
+    VkCommandBufferAllocateInfo command_allocate{};
+    command_allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command_allocate.commandPool = pool_;
+    command_allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_allocate.commandBufferCount = 1;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    check(vkAllocateCommandBuffers(device_.handle(), &command_allocate, &command),
+          "vkAllocateCommandBuffers ui region");
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check(vkBeginCommandBuffer(command, &begin_info), "vkBeginCommandBuffer ui region");
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
+    region.imageOffset = {x, y, 0};
+    region.imageExtent = {width, height, 1};
+    vkCmdCopyBufferToImage(command, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                           &region);
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &barrier);
+    check(vkEndCommandBuffer(command), "vkEndCommandBuffer ui region");
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command;
+    check(vkQueueSubmit(device_.graphics_queue(), 1, &submit, VK_NULL_HANDLE),
+          "vkQueueSubmit ui region");
+    check(vkQueueWaitIdle(device_.graphics_queue()), "vkQueueWaitIdle ui region");
+    vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
+    vkDestroyBuffer(device_.handle(), staging, nullptr);
+    vkFreeMemory(device_.handle(), memory, nullptr);
+}
+
+int32_t UiRenderer::item_layer_of(std::string_view name) const {
+    for (size_t i = 0; i < item_names_.size(); ++i) {
+        if (item_names_[i] == name) return static_cast<int32_t>(i);
+    }
+    return -1;
+}
+
+std::array<uint32_t, 4> UiRenderer::sprite_rect(std::string_view name) const {
+    const auto found = sprites_.find(name);
+    if (found == sprites_.end()) return {0, 0, 0, 0};
+    const Sprite& sprite = found->second;
+    const float side = static_cast<float>(gui_side_);
+    return {static_cast<uint32_t>(sprite.u * side + 0.5f),
+            static_cast<uint32_t>(sprite.v * side + 0.5f),
+            static_cast<uint32_t>(sprite.width), static_cast<uint32_t>(sprite.height)};
+}
+
+bool UiRenderer::set_item_icon(int32_t layer, const std::vector<uint8_t>& rgba, uint32_t width,
+                               uint32_t height) {
+    if (layer < 0 || static_cast<uint32_t>(layer) >= item_layers_) return false;
+    if (width != item_tile_ || height != item_tile_) return false;
+    if (rgba.size() != static_cast<size_t>(width) * height * 4) return false;
+    copy_layer(item_image_, static_cast<uint32_t>(layer), width, height, rgba);
+    return true;
+}
+
+bool UiRenderer::set_sprite_pixels(std::string_view name, const std::vector<uint8_t>& rgba,
+                                   uint32_t width, uint32_t height) {
+    const auto rect = sprite_rect(name);
+    if (rect[2] == 0 || rect[3] == 0) return false;
+    if (width != rect[2] || height != rect[3]) return false;
+    if (rgba.size() != static_cast<size_t>(width) * height * 4) return false;
+    copy_region(gui_image_, 0, static_cast<int32_t>(rect[0]), static_cast<int32_t>(rect[1]), width,
+                height, rgba);
+    return true;
 }
 
 void UiRenderer::set_dynamic(uint32_t layer, const std::vector<uint8_t>& rgba, uint32_t width,

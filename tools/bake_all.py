@@ -71,6 +71,10 @@ def main(args):
     run("bake_items.py", jar, Path(report).parent / "registries.json",
         Path(report).parent / "items.json", protocol,
         out / f"items-{protocol}.plit", *item_args)
+    # Which textures each flat icon was composed from, so a server's resource
+    # pack can be composed over it mid-session without a re-bake.
+    run("bake_item_layers.py", jar, out / f"items-{protocol}.plit",
+        out / f"item_layers-{protocol}.txt")
     run("bake_held.py", jar, Path(report).parent / "registries.json", protocol,
         out / f"held-{protocol}.plhd")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu",

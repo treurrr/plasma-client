@@ -338,3 +338,16 @@ endif()
 mcpp_test(perf)
 # N: a session handed over by a launcher the player is already signed in to.
 mcpp_test(launcher_auth)
+
+# R: the server's own resource pack - the packets, the download and the pack
+# on top of the baked tables while the game runs. See docs/PACKS.md.
+target_sources(mcpp_net PRIVATE
+    src/packs/pack_protocol.cpp
+    src/packs/zip.cpp
+    src/packs/pack_cache.cpp
+    src/packs/resource_pack.cpp
+    src/packs/mipmap.cpp
+    src/packs/pack_apply.cpp
+    src/packs/pack_system.cpp)
+mcpp_test(packs)
+target_sources(plasma-client PRIVATE src/client/packshot.cpp)

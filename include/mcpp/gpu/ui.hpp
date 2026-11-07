@@ -1,6 +1,7 @@
 #pragma once
 #include "mcpp/gpu/device.hpp"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -134,6 +135,21 @@ public:
     void panorama(float x, float y, float width, float height, float yaw, float pitch,
                   uint32_t rgba = 0xFFFFFFFFu);
 
+    // A server's resource pack, landing on the baked tables while the game
+    // runs. An item icon is one array layer and is replaced whole; an
+    // interface sprite is a rectangle of the one sheet and is written back
+    // into the rectangle it was packed into, so nothing is re-packed and no uv
+    // moves. See docs/PACKS.md.
+    int32_t item_layer_of(std::string_view name) const;
+    uint32_t item_tile() const { return item_tile_; }
+    uint32_t gui_side() const { return gui_side_; }
+    bool set_item_icon(int32_t layer, const std::vector<uint8_t>& rgba, uint32_t width,
+                       uint32_t height);
+    bool set_sprite_pixels(std::string_view name, const std::vector<uint8_t>& rgba,
+                           uint32_t width, uint32_t height);
+    // Its rectangle in the sheet, in texels, or {0,0,0,0} when there is none.
+    std::array<uint32_t, 4> sprite_rect(std::string_view name) const;
+
     static std::filesystem::path default_items_path(int32_t protocol);
     static std::filesystem::path default_gui_path(int32_t protocol);
     // Everything after the blur mark, or everything when there is none.
@@ -176,6 +192,8 @@ private:
     void write_descriptors();
     void copy_layer(VkImage image, uint32_t layer, uint32_t width, uint32_t height,
                     const std::vector<uint8_t>& pixels);
+    void copy_region(VkImage image, uint32_t layer, int32_t x, int32_t y, uint32_t width,
+                     uint32_t height, const std::vector<uint8_t>& pixels);
     void create_pipeline(VkFormat colour_format);
     void destroy();
 
@@ -205,6 +223,8 @@ private:
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     uint32_t item_layers_ = 0;
+    uint32_t item_tile_ = 0;
+    uint32_t gui_side_ = 1;
     std::vector<std::string> item_names_;
     std::vector<uint8_t> item_armour_;
     std::map<std::string, Sprite, std::less<>> sprites_;

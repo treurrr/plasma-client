@@ -2,6 +2,7 @@
 #include "mcpp/auth.hpp"
 #include "mcpp/packet_io.hpp"
 #include "mcpp/nbt.hpp"
+#include "mcpp/packs/pack_protocol.hpp"
 #include "mcpp/proto/commands.hpp"
 #include "mcpp/proto/metadata.hpp"
 #include "mcpp/proto/packet_ids.hpp"
@@ -507,6 +508,15 @@ struct SessionEvents {
         // The server moved us to another one; the session has reconnected there.
         std::function<void(std::string_view, uint16_t)> on_transfer;
     } data;
+
+    // R: the server's own resource pack. Without handlers the session declines
+    // every pack, which is what it did before there was anything to load one
+    // with; with them it hands the packet over and sends whatever answer comes
+    // back. See include/mcpp/packs/pack_system.hpp and docs/PACKS.md.
+    struct Packs {
+        std::function<void(const packs::Push&)> on_push;
+        std::function<void(const packs::Pop&)> on_pop;
+    } packs;
 };
 
 // One stack in a slot. An empty slot is a count of zero. `readable` goes false
@@ -725,6 +735,10 @@ public:
     void send_recipe_book_settings(int32_t book, bool open, bool filtering);
     // C: the book has shown a recipe it was highlighting.
     void send_recipe_seen(int32_t recipe);
+
+    // R: the answer to a pack the server pushed, in whichever state we are
+    // in. `ServerboundResourcePackPacket`.
+    void send_resource_pack(const packs::PackId& id, packs::Action action);
     // H: the scoreboard as the server last described it.
     const Scoreboard& scoreboard() const { return ui_.scoreboard; }
 

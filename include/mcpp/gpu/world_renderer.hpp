@@ -64,6 +64,24 @@ public:
     void upload(const world::Mesh& mesh);
     void upload(const std::vector<world::SectionMesh>& sections);
 
+    // A server's resource pack, landing on the atlas while the game runs. One
+    // texture is one array layer, so a pack that replaces a texture replaces
+    // that layer's mip chain and nothing else: no atlas is re-stitched, no uv
+    // moves, and every mesh already on the gpu stays exactly as valid as it
+    // was. See docs/PACKS.md.
+    struct AtlasLayerPatch {
+        uint32_t layer = 0;
+        // One entry per atlas mip level, level 0 first, each a square of
+        // (tile >> level) texels of tightly packed rgba.
+        std::vector<std::vector<uint8_t>> levels;
+    };
+    // Every patch in one staging buffer and one submit; returns the gpu time
+    // the copy took in milliseconds.
+    double patch_atlas(std::span<const AtlasLayerPatch> patches);
+    uint32_t atlas_tile() const { return atlas_tile_; }
+    uint32_t atlas_layers() const { return atlas_layers_; }
+    uint32_t atlas_mips() const { return atlas_mips_; }
+
     // Streaming: reserve once, then append chunks as the server sends them.
     // Appending never reallocates, so a chunk arriving mid-game cannot stall
     // the frame the way a full re-upload would.
@@ -274,6 +292,7 @@ private:
     VkDescriptorSet descriptor_set_ = VK_NULL_HANDLE;
     uint32_t atlas_tile_ = 0;
     uint32_t atlas_layers_ = 0;
+    uint32_t atlas_mips_ = 1;
 
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline blended_pipeline_ = VK_NULL_HANDLE;
