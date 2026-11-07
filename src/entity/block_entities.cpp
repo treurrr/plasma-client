@@ -651,7 +651,7 @@ void BlockEntityScene::build(const BlockEntityRow& row, const BlockEntityTable& 
         Placement place = root;
         place.translate(0.5f, 0.0f, 0.5f);
         piece.root = place.matrix;
-        const int32_t rootPart = model->find("root");
+        const int32_t rootPart = model->find(kRootPath);
         if (rootPart >= 0) {
             piece.pose[rootPart].y = 0.0f;
             piece.pose[rootPart].y_rot = kYRot[kOpposite[row.facing]] * kRadians;

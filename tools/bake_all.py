@@ -76,6 +76,7 @@ def main(args):
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu",
         Path(report).parent / "registries.json", Path(report).parent / "items.json")
     run("bake_datapack.py", jar, out / f"datapack-{protocol}")
+    ask_the_game("export/export_animations.py", out / f"animations-{protocol}.txt")
     ask_the_game("bake_block_render.py", out / f"block-render-{protocol}.txt")
     ask_the_game("oracle/bake_shapes.py", out / f"collision_shapes-{protocol}.txt")
     ask_the_game("bake_entity_dimensions.py", out / f"entity_dimensions-{protocol}.txt")

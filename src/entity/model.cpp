@@ -196,8 +196,8 @@ void ModelSet::parse(std::string_view text) {
             if (const size_t slash = part.path.rfind('/'); slash != std::string::npos) {
                 part.parent = model->find(std::string_view(part.path).substr(0, slash));
                 if (part.parent < 0) reader.fail("part before its parent");
-            } else if (part.path != "root") {
-                part.parent = model->find("root");
+            } else if (part.path != kRootPath) {
+                part.parent = model->find(kRootPath);
             }
             while (!reader.done()) {
                 const auto key = reader.word();

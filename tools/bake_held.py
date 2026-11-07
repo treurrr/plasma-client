@@ -25,7 +25,7 @@ from resolve_block_models import Assets, deref_texture
 from PIL import Image
 
 MAGIC = b"PLHD"
-VERSION = 2
+VERSION = 3
 TILE = 16
 # A bow and a crossbow swap models as they are drawn. The first stage is the
 # item at rest, the rest are what `minecraft:bow/pull` dispatches to.
@@ -225,6 +225,8 @@ def main(args):
                 if resolved_first is not None:
                     right = display_of(resolved_first, "firstperson_righthand")
                     left = display_of(resolved_first, "firstperson_lefthand")
+                    third_right = display_of(resolved_first, "thirdperson_righthand")
+                    third_left = display_of(resolved_first, "thirdperson_lefthand")
                 built = []
                 for stage, model_name in enumerate(stages):
                     begin = quad_count
@@ -263,6 +265,8 @@ def main(args):
             index.extend(struct.pack("<3f", *thresholds[:STAGES - 1]))
             index.extend(struct.pack("<9fI", *right))
             index.extend(struct.pack("<9fI", *left))
+            index.extend(struct.pack("<9fI", *third_right))
+            index.extend(struct.pack("<9fI", *third_left))
 
     pixels = b"".join(layer_pixels)
     header = MAGIC + struct.pack("<8I", VERSION, protocol, TILE, len(layer_pixels),

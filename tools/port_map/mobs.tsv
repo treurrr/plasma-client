@@ -1,0 +1,124 @@
+# H: every mob a player meets, what it wears and what it holds.
+# The model classes, the equipment layers and the per-mob tick counters all
+# carry their own citations; these are the ones this wave deliberately did not
+# port, and where the rest is done outside the ledger's reach.
+
+# Baked once by a tool, in python the ledger does not read.
+EquipmentClientInfo	skip		baked by tools/bake_equipment.py into equipment-774.txt
+EquipmentAssetManager	skip		the same: nothing is loaded from a resource pack at runtime
+PalettedPermutations	skip		the trim sprites are built once by tools/bake_equipment.py
+LayerDefinitions	skip		baked by tools/export/export_models.py into entity_models-774.txt
+AnimationDefinition	skip		baked by tools/export/export_animations.py into animations-774.txt
+
+# Layers over a mob that this wave does not draw.
+VillagerProfessionLayer	absent		the villager's biome, profession and level overlays: MobState has no villager data
+IronGolemCrackinessLayer	absent		how battered an iron golem looks
+IronGolemFlowerLayer	absent		a held block, which is block geometry rather than a model layer
+SnowGolemHeadLayer	absent		the same: the pumpkin is a block model
+MushroomCowMushroomLayer	absent		the same: the mooshroom's mushrooms are block models
+CarriedBlockLayer	absent		the same: what an enderman carries
+BlockDecorationLayer	absent		the same: the block on a copper golem's antenna
+CustomHeadLayer	absent		a skull or a block worn on the head
+WingsLayer	absent		the elytra: the equipment asset and its layer are baked, nothing draws them yet
+HorseMarkingLayer	absent		a horse's markings: MobState has no variant
+WolfArmorLayer	absent		wolf armour, an animal armour slot rather than a humanoid one
+LlamaDecorLayer	absent		the llama is not drawn at all yet
+StuckInBodyLayer	absent		arrows and bee stingers stuck in a body
+ArrowLayer	absent		the same
+BeeStingerLayer	absent		the same
+CapeLayer	absent		the player's cape
+Deadmau5EarsLayer	absent		a named player's ears
+ParrotOnShoulderLayer	absent		the parrot is not drawn at all yet
+SpinAttackEffectLayer	absent		the riptide swirl
+FoxHeldItemLayer	absent		what a fox carries in its mouth
+CrossedArmsItemLayer	absent		the villager's and the allay's own item; held_items.cpp has the pose, nothing calls it
+WitchItemLayer	absent		the witch's potion
+PandaHoldsItemLayer	absent		the panda is not drawn at all yet
+DolphinCarryingItemLayer	absent		the dolphin is not drawn at all yet
+TropicalFishPatternLayer	absent		the fish are not drawn at all yet
+SkeletonClothingLayer	absent		the stray's and the bogged's outer layer is drawn as a plain overlay instead
+
+# A trim is baked and loaded; what is missing is the wire side.
+ArmorTrim.layerAssetId	port	src/entity/equipment.cpp::EquipmentTrims::sprite_id	which sprite a trim asks for
+EquipmentLayerRenderer.TrimSpriteKey	absent		nothing decodes the minecraft:trim component off the wire yet, so no trim is drawn
+
+# Poses that need an item's own components, which nothing reads yet.
+SpearAnimations	absent		the minecraft:kinetic_weapon sway; thirdPersonHandUse and thirdPersonAttackHand are ported without it
+CopperGolemModel.translateToHand	absent		its tail needs CopperGolemState, which MobState has no field for
+
+# Texture by variant: MobType holds one texture per type.
+PigRenderer.getTextureLocation	absent		the temperate pig's texture is used for every variant
+CowRenderer.getTextureLocation	absent		the same
+ChickenRenderer.getTextureLocation	absent		the same
+WolfRenderer.getTextureLocation	absent		the same, and an angry wolf keeps the wild texture
+CatRenderer.getTextureLocation	absent		the same
+FoxRenderer.getTextureLocation	absent		the same, and a sleeping fox keeps the awake texture
+AbstractHorseRenderer.getTextureLocation	absent		the same
+AxolotlRenderer.getTextureLocation	absent		the same
+CopperGolemRenderer.getTextureLocation	absent		the same: the unaffected copper is used at every oxidation
+
+# The mesh builders: their output is the baked layer table, not code here.
+AbstractEquineModel.createBabyMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+AbstractEquineModel.createBodyMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+AbstractEquineModel.createFullScaleBabyMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+AllayModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ArmadilloModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+AxolotlModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+BeeModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+BeeStingerModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+BoggedModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+BreezeModel.createBaseMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+BreezeModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+BreezeModel.createEyesLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+BreezeModel.createWindLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ChickenModel.createBaseChickenModel	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ChickenModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ColdChickenModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ColdCowModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ColdPigModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CopperGolemModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CopperGolemModel.createEyesLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CopperGolemModel.createRunningPoseBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CopperGolemModel.createSittingPoseBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CopperGolemModel.createStarPoseBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CowModel.createBaseCowModel	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CowModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+CreeperModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+DonkeyModel.createBabyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+DonkeyModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+DonkeyModel.createSaddleLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+DrownedModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+EndermanModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+EquineSaddleModel.createFullScaleSaddleLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+EquineSaddleModel.createSaddleLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+FelineModel.createBodyMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+FoxModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+HumanoidModel.createArmorMeshSet	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+HumanoidModel.createBaseArmorMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+HumanoidModel.createMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+IronGolemModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+MagmaCubeModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+PigModel.createBasePigModel	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+PigModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+PlayerModel.createArmorMeshSet	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+PlayerModel.createMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+QuadrupedModel.createBodyMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+QuadrupedModel.createLegs	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SheepFurModel.createFurLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SheepModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SkeletonModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SkeletonModel.createDefaultSkeletonMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SkeletonModel.createSingleModelDualBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SlimeModel.createInnerBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SlimeModel.createOuterBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SnowGolemModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+SpiderModel.createSpiderBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+VillagerModel.createBodyModel	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+VillagerModel.createNoHatModel	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+WarmCowModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+WitchModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+WolfModel.createMeshDefinition	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ZombieVillagerModel.createArmorLayerSet	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ZombieVillagerModel.createBaseArmorMesh	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ZombieVillagerModel.createBodyLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py
+ZombieVillagerModel.createNoHatLayer	skip		the mesh is baked into entity_models-774.txt by tools/export/export_models.py

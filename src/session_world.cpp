@@ -213,6 +213,7 @@ bool Session::handle_world(PacketConnection::Packet& packet) {
         const uint8_t kept = in.read_u8();
         entities_.entities.clear();
         entities_.effects.clear();
+        entities_.equipment.clear();
         if ((kept & 0x01) == 0) {
             entities_.attributes.clear();
         } else {

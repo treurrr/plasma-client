@@ -3,11 +3,15 @@
 #include "client/common.hpp"
 
 #include "mcpp/entity/assets.hpp"
+#include "mcpp/entity/held_items.hpp"
+#include "mcpp/entity/equipment.hpp"
 #include "mcpp/entity/humanoid.hpp"
+#include "mcpp/entity/mobs.hpp"
 #include "mcpp/entity/scene.hpp"
 #include "mcpp/session.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/entity_renderer.hpp"
+#include "mcpp/gpu/hand.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 #include "mcpp/image_png.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -18,6 +22,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <cstring>
@@ -52,9 +57,11 @@ std::string read_file(const std::filesystem::path& path) {
 // no world, nothing between the camera and the model.
 int entityshot(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "usage: entityshot <model> [out-prefix] [--skin <png>|<texture>] "
-                     "[--models <file>] [--property <file>] [--walk <phase>] [--yaw <head>] [--pitch <deg>] "
-                     "[--close] [--crouch] [--age <ticks>] [--swing <0..1>]\n";
+        std::cerr << "usage: entityshot <model|minecraft:type> [out-prefix] "
+                     "[--skin <png>|<texture>] [--models <file>] [--property <file>] "
+                     "[--walk <phase>] [--yaw <head>] [--pitch <deg>] [--close] [--crouch] "
+                     "[--age <ticks>] [--swing <0..1>] [--baby] [--armour <asset>] "
+                     "[--hold <item>]\n";
         return 2;
     }
     const std::string model_name = argv[2];
@@ -69,6 +76,10 @@ int entityshot(int argc, char** argv) {
     float age = 0.0f;
     bool close = false;
     bool crouch = false;
+    bool baby = false;
+    bool gear = false;
+    std::string armour;
+    std::string held;
     for (int i = 3; i < argc; ++i) {
         const std::string argument = argv[i];
         const auto next = [&]() -> std::string {
@@ -85,6 +96,10 @@ int entityshot(int argc, char** argv) {
         else if (argument == "--close") close = true;
         else if (argument == "--crouch") crouch = true;
         else if (argument == "--age") age = std::stof(next());
+        else if (argument == "--baby") baby = true;
+        else if (argument == "--gear") gear = true;
+        else if (argument == "--hold") held = next();
+        else if (argument == "--armour") armour = next();
         else prefix = argument;
     }
 
@@ -94,11 +109,25 @@ int entityshot(int argc, char** argv) {
         return 1;
     }
     if (!models_file.empty()) assets.use_models(read_file(models_file));
-    const mcpp::entity::Model* model = assets.models().find(model_name);
+    // A registry name ("minecraft:zombie") draws the whole type: its own layer,
+    // the layers the game stacks on it, and its armour. A bare layer name
+    // ("zombie#helmet") draws that one layer alone.
+    const mcpp::entity::MobType* row = mcpp::entity::mob_type(model_name);
+    std::string layer_name = model_name;
+    if (row != nullptr) {
+        layer_name = baby && !row->baby_layer.empty() ? std::string(row->baby_layer)
+                                                     : std::string(row->layer);
+        if (skin.empty()) skin = std::string(row->texture);
+    }
+    const mcpp::entity::Model* model = assets.models().find(layer_name);
     if (model == nullptr) {
-        std::cerr << std::format("no model {} in the data\n", model_name);
+        std::cerr << std::format("no model {} in the data\n", layer_name);
         return 1;
     }
+    int32_t held_item = -1;
+    mcpp::entity::EquipmentAssets equipment;
+    const bool has_equipment =
+        equipment.open(mcpp::entity::EquipmentAssets::default_path(kProtocol));
 
     mcpp::gpu::Device device;
     mcpp::gpu::Device::Options gpu_options;
@@ -113,9 +142,34 @@ int entityshot(int argc, char** argv) {
     mcpp::gpu::WorldRenderer world(device, kSide, kSide, atlas);
     mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
     renderer.load(assets);
-    const int32_t model_index = renderer.model(model_name);
+    std::optional<mcpp::gpu::HandRenderer> hand;
+    if (!held.empty()) {
+        hand.emplace(device, world.colour_format(), world.depth_format(),
+                     mcpp::gpu::HandRenderer::default_path(kProtocol));
+        if (!hand->has_items()) {
+            std::cerr << "no held item data; bake it with tools/bake_held.py\n";
+            return 1;
+        }
+        std::ifstream items(mcpp::entity::default_registries_path(kProtocol));
+        std::string line;
+        int32_t at = 0;
+        while (std::getline(items, line)) {
+            constexpr std::string_view kPrefix = "minecraft:item\t";
+            if (!line.starts_with(kPrefix)) continue;
+            if (line.substr(kPrefix.size()) == "minecraft:" + held) {
+                held_item = at;
+                break;
+            }
+            ++at;
+        }
+        if (held_item < 0) {
+            std::cerr << std::format("no item {}\n", held);
+            return 1;
+        }
+    }
+    const int32_t model_index = renderer.model(layer_name);
 
-    const bool player = model_name == "player" || model_name == "player_slim";
+    const bool player = layer_name == "player" || layer_name == "player_slim";
     uint32_t texture = 0;
     if (!property.empty()) {
         // The player list's textures property, fetched the way the client
@@ -159,7 +213,7 @@ int entityshot(int argc, char** argv) {
         texture = mcpp::gpu::EntityRenderer::kSkinBit | static_cast<uint32_t>(layer);
     } else {
         if (skin.empty()) {
-            skin = model_name == "player_slim" ? "player/slim/alex" : "player/wide/steve";
+            skin = layer_name == "player_slim" ? "player/slim/alex" : "player/wide/steve";
         }
         const int32_t baked = renderer.texture(skin);
         if (baked < 0) {
@@ -169,24 +223,127 @@ int entityshot(int argc, char** argv) {
         texture = static_cast<uint32_t>(baked);
     }
 
-    mcpp::entity::HumanoidState state;
+    mcpp::entity::MobState state;
     state.y_rot = head;
     state.x_rot = pitch;
     state.crouching = crouch;
     state.age_in_ticks = age;
+    state.baby = baby;
+    state.age_scale = baby ? 0.5f : 1.0f;
+    // Enough of a sheep, a wolf and a cat to show their wool and their collars.
+    state.collar_color = 14;
+    state.wool_color = 4;
+    state.saddled = gear;
+    state.powered = gear;
     if (walk >= 0.0f) {
         state.walk_speed = 1.0f;
         state.walk_position = walk * 2.0f * 3.14159265f / 0.6662f;
     }
     if (swing >= 0.0f) state.attack_time = swing;
+    if (!armour.empty()) state.right_arm_pose = mcpp::entity::ArmPose::Item;
     mcpp::entity::Pose pose(*model);
-    const auto parts = mcpp::entity::HumanoidParts::of(*model);
-    if (parts.complete()) {
-        if (player) mcpp::entity::animate_player(*model, parts, state, pose);
-        else mcpp::entity::animate_humanoid(*model, parts, state, pose);
+    auto animator = mcpp::entity::make_mob_model(layer_name, *model);
+    if (animator == nullptr) {
+        std::cerr << std::format("no model class animates {}\n", layer_name);
+        return 1;
+    }
+    animator->animate(state, pose);
+
+    // Every layer this shot draws over the body, in the order the game's own
+    // renderer adds them: the base, then each overlay, then the armour.
+    struct Over {
+        const mcpp::entity::Model* model = nullptr;
+        std::unique_ptr<mcpp::entity::MobModel> animator;
+        int32_t index = -1;
+        uint32_t texture = 0;
+        uint32_t colour = 0xFFFFFFFFu;
+        mcpp::gpu::EntityRenderer::Type type = mcpp::gpu::EntityRenderer::Type::CutoutNoCull;
+        bool eyes = false;
+    };
+    std::vector<Over> overs;
+    const auto add_over = [&](std::string_view name, std::string_view texture_name,
+                              uint32_t colour, mcpp::gpu::EntityRenderer::Type type, bool eyes) {
+        const mcpp::entity::Model* data = assets.models().find(name);
+        const int32_t index = renderer.model(name);
+        const int32_t baked = renderer.texture(texture_name);
+        if (data == nullptr || index < 0 || baked < 0) {
+            std::cerr << std::format("- skipped layer {} ({})\n", name, texture_name);
+            return;
+        }
+        Over over;
+        over.model = data;
+        over.animator = mcpp::entity::make_mob_model(name, *data);
+        over.index = index;
+        over.texture = static_cast<uint32_t>(baked);
+        over.colour = colour;
+        over.type = type;
+        over.eyes = eyes;
+        if (over.animator == nullptr) {
+            std::cerr << std::format("- no model class animates {}\n", name);
+            return;
+        }
+        overs.push_back(std::move(over));
+    };
+    if (row != nullptr) {
+        for (const mcpp::entity::MobOverlay& one : row->overlays) {
+            if (one.when != nullptr && !one.when(state)) continue;
+            std::string name(one.layer.empty() ? row->layer : one.layer);
+            if (baby) {
+                if (!one.baby_layer.empty()) name = std::string(one.baby_layer);
+                else if (one.layer.empty() && !row->baby_layer.empty()) {
+                    name = std::string(row->baby_layer);
+                }
+            }
+            const uint32_t colour = one.colour != nullptr ? one.colour(state) : 0xFFFFFFFFu;
+            if (colour == 0) continue;
+            add_over(name, one.texture, colour, one.render, one.kind == mcpp::entity::Overlay::Eyes);
+        }
+    }
+    {
+        const bool wears_armour = (row != nullptr && row->humanoid_armour) || player;
+        // `HumanoidArmorLayer`: one asset's worth of armour, in every slot that
+        // asset has a layer for, which is what a full set looks like.
+        if (wears_armour && !armour.empty() && has_equipment) {
+            struct Piece {
+                std::string_view suffix;
+                mcpp::entity::LayerType type;
+            };
+            const Piece pieces[] = {
+                {"#chestplate", mcpp::entity::LayerType::Humanoid},
+                {"#leggings", mcpp::entity::LayerType::HumanoidLeggings},
+                {"#boots", mcpp::entity::LayerType::Humanoid},
+                {"#helmet", mcpp::entity::LayerType::Humanoid},
+            };
+            for (const Piece& piece : pieces) {
+                const std::string name = layer_name + std::string(piece.suffix);
+                for (const auto& one : equipment.layers(armour, piece.type)) {
+                    const uint32_t colour = mcpp::entity::equipment_layer_colour(one, 0);
+                    if (colour == 0) continue;
+                    add_over(name, one.texture, colour,
+                             mcpp::gpu::EntityRenderer::Type::CutoutNoCull, false);
+                }
+            }
+        }
     }
 
-    const float height = 1.8f;
+    float height = 1.8f;
+    if (row != nullptr) {
+        std::ifstream sizes(mcpp::entity::default_registries_path(kProtocol).parent_path() /
+                            std::format("entity_dimensions-{}.txt", kProtocol));
+        std::string line;
+        while (std::getline(sizes, line)) {
+            if (!line.starts_with(model_name) || line.size() <= model_name.size() ||
+                line[model_name.size()] != ' ') {
+                continue;
+            }
+            std::istringstream row_in(line.substr(model_name.size()));
+            float width = 0.0f;
+            float tall = 0.0f;
+            if (row_in >> width >> tall) height = std::max(tall, width);
+            break;
+        }
+        if (baby) height *= 0.5f;
+    }
     const float middle = height * 0.5f;
     const float reach = height * 1.9f;
     std::vector<Shot> shots = {
@@ -226,21 +383,65 @@ int entityshot(int argc, char** argv) {
                                   -shot.eye[2]);
         root = multiply(root, rotation_y(180.0f * 3.14159265f / 180.0f));
         root = multiply(root, scaling(-1.0f, -1.0f, 1.0f));
-        if (player) root = multiply(root, scaling(0.9375f, 0.9375f, 0.9375f));
+        Placement place;
+        place.matrix = root;
+        place.shape = Placement::kAffine;
+        animator->scale(state, place);
+        root = place.matrix;
         root = multiply(root, translation(0.0f, -1.501f, 0.0f));
         pose_matrices(*model, pose, root, matrices);
         mcpp::gpu::EntityRenderer::Instance instance;
         instance.model = model_index;
         instance.texture = texture;
-        instance.type = player ? mcpp::gpu::EntityRenderer::Type::Translucent
-                               : mcpp::gpu::EntityRenderer::Type::CutoutNoCull;
+        instance.type = row != nullptr          ? row->render
+                        : player                ? mcpp::gpu::EntityRenderer::Type::Translucent
+                                                : mcpp::gpu::EntityRenderer::Type::CutoutNoCull;
+        instance.colour = animator->tint(state);
         renderer.add(instance, matrices);
+        for (const Over& over : overs) {
+            Pose layer_pose(*over.model);
+            over.animator->animate(state, layer_pose);
+            std::vector<Matrix> layer_matrices(over.model->parts.size());
+            pose_matrices(*over.model, layer_pose, root, layer_matrices);
+            mcpp::gpu::EntityRenderer::Instance one = instance;
+            one.model = over.index;
+            one.texture = over.texture;
+            one.type = over.type;
+            one.colour = over.colour;
+            if (over.eyes) {
+                one.sky_light = 15;
+                one.block_light = 15;
+            }
+            renderer.add(one, layer_matrices);
+        }
 
+        if (hand && held_item >= 0) {
+            hand->begin();
+            const auto chain = animator->hand_chain(false);
+            if (!chain.empty()) {
+                const int32_t last = chain.back();
+                const HandModel kind = layer_name == "player_slim" ? HandModel::SlimAvatar
+                                                                   : HandModel::Plain;
+                const float nudge = hand_arm_offset(kind, false);
+                pose[last].x += nudge;
+                pose_matrices(*model, pose, root, matrices);
+                pose[last].x -= nudge;
+                const Matrix arm = hand_after_chain(matrices[static_cast<size_t>(last)], kind,
+                                                    false, pose[last].x_rot);
+                const auto display = hand->item_display(held_item, false, true);
+                constexpr float kFull[3] = {1.0f, 1.0f, 1.0f};
+                hand->add_world_item(held_item, held_item_placement(arm, false, display), kFull);
+                pose_matrices(*model, pose, root, matrices);
+            }
+        }
         world.set_in_world([&](VkCommandBuffer command, const float* view_projection,
                                uint32_t width, uint32_t height_px, const float* fog,
                                const mcpp::gpu::Camera& cam) {
             const double eye[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
             renderer.record(command, view_projection, eye, width, height_px, fog, 0.0f, 0.0f);
+            if (hand && held_item >= 0) {
+                hand->record_world(command, view_projection, eye, width, height_px);
+            }
         });
         const auto pixels = world.render(camera);
         const std::string out = std::format("{}-{}.png", prefix, shot.name);
@@ -578,7 +779,205 @@ int entityreplay(int argc, char** argv) {
     return 0;
 }
 
-// A crowd of players walking in a grid, for what entities cost: the tick,
+// Every mob the table knows, summoned on the vanilla server and drawn: the
+// client is the one that has to recognise the type, read what the server says
+// about it, find its layers and queue them. Every entity it summons is killed
+// again before it returns, whether it passed or not.
+int entitymobs(int argc, char** argv) {
+    if (argc < 4) {
+        std::cerr << "usage: entitymobs <host[:port]> <name> [console.in] [out-dir]\n";
+        return 2;
+    }
+    const std::filesystem::path console =
+        argc > 4 ? argv[4] : std::filesystem::path(std::getenv("HOME")) / "plasma-testserver" /
+                                 "console.in";
+    const std::filesystem::path out_dir = argc > 5 ? argv[5] : "";
+    // Far from spawn and from every other agent's spot. The server picks the
+    // height: dropped into the air, its own flight check would throw us off.
+    constexpr double kX = 7413.0;
+    constexpr double kZ = -7413.0;
+    const std::string tag = "plasmaH";
+
+    const auto say = [&console](const std::string& line) {
+        std::ofstream(console, std::ios::app) << line << '\n';
+    };
+    // Everything this test made, gone again, however it ends.
+    struct Sweep {
+        std::function<void()> run;
+        ~Sweep() { run(); }
+    } sweep{[&] { say(std::format("kill @e[tag={}]", tag)); }};
+
+    mcpp::entity::Assets assets;
+    mcpp::world::Atlas atlas;
+    if (!assets.open(mcpp::entity::Assets::default_path(kProtocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(kProtocol))) {
+        std::cerr << "baked data missing\n";
+        return 1;
+    }
+    mcpp::entity::EquipmentAssets equipment;
+    equipment.open(mcpp::entity::EquipmentAssets::default_path(kProtocol));
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options gpu_options;
+    device.create(gpu_options);
+    constexpr uint32_t kSide = 512;
+    mcpp::gpu::WorldRenderer world(device, kSide, kSide, atlas);
+    mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
+    renderer.load(assets);
+
+    auto types = mcpp::entity::load_entity_types(mcpp::entity::default_registries_path(kProtocol));
+    mcpp::entity::Scene scene(types, nullptr);
+    scene.bind(renderer, &equipment);
+
+    auto options = options_for(argv[2], argv[3]);
+    bool placed = false;
+    double me_at[3] = {0.0, 0.0, 0.0};
+    std::vector<int32_t> alive;
+    int32_t summoning = -1;
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.player.on_position = [&](double x, double y, double z, float, float) {
+        me_at[0] = x;
+        me_at[1] = y;
+        me_at[2] = z;
+        placed = true;
+    };
+    events.entities.on_add = [&](const mcpp::Entity& entity) {
+        scene.add(entity);
+        if (entity.type == summoning) alive.push_back(entity.id);
+    };
+    events.entities.on_moved = [&](const mcpp::EntityMove& move) { scene.moved(move); };
+    events.entities.on_head = [&](int32_t id, float yaw) { scene.head(id, yaw); };
+    events.entities.on_remove = [&](int32_t id) {
+        scene.remove(id);
+        std::erase(alive, id);
+    };
+    events.entities.on_equipment = [&](int32_t id, const mcpp::Equipment& worn) {
+        scene.equipment(id, worn);
+    };
+    mcpp::Session session(options, events);
+    events.data.on_entity_data = [&](int32_t id) {
+        const auto& all = session.entities();
+        if (const auto found = all.find(id); found != all.end()) {
+            scene.metadata(id, found->second.metadata);
+        }
+    };
+    session.connect();
+    const auto joined = Clock::now();
+    while (!placed && Clock::now() - joined < std::chrono::seconds(20)) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (!placed) {
+        std::cerr << "never joined\n";
+        return 1;
+    }
+    const std::string me = argv[3];
+    // `spreadplayers` with no spread puts us on solid ground at that spot,
+    // which `tp` to a guessed height would not.
+    say(std::format("spreadplayers {} {} 0 1 false {}", kX, kZ, me));
+    for (int i = 0; i < 200 && std::abs(me_at[0] - kX) > 32.0; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    for (int i = 0; i < 60; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (std::abs(me_at[0] - kX) > 32.0) {
+        std::cerr << std::format("never reached the spot: at {:.1f} {:.1f} {:.1f}\n", me_at[0],
+                                 me_at[1], me_at[2]);
+        return 1;
+    }
+    const double at_x = me_at[0];
+    const double at_y = me_at[1];
+    const double at_z = me_at[2];
+    std::cout << std::format("- testing at {:.1f} {:.1f} {:.1f}\n", at_x, at_y, at_z);
+
+    mcpp::entity::View view;
+    view.eye[0] = at_x;
+    view.eye[1] = at_y + 1.6;
+    view.eye[2] = at_z + 4.0;
+    view.forward[0] = 0.0f;
+    view.forward[1] = -0.1f;
+    view.forward[2] = -1.0f;
+    view.partial = 0.5f;
+    const auto light = [](int32_t, int32_t, int32_t) -> std::array<uint8_t, 2> {
+        return {15, 0};
+    };
+
+    int passed = 0;
+    int failed = 0;
+    for (const mcpp::entity::MobType& row : mcpp::entity::mob_types()) {
+        const std::string name(row.type);
+        const std::string short_name = name.substr(name.find(':') + 1);
+        summoning = -1;
+        for (size_t at = 0; at < types.size(); ++at) {
+            if (types[at] == row.type) summoning = static_cast<int32_t>(at);
+        }
+        say(std::format("summon {} {} {} {} {{Tags:[\"{}\"],NoAI:1b,Silent:1b}}", name, at_x,
+                        at_y, at_z, tag));
+        // Let it arrive, let its metadata and its equipment follow.
+        const size_t before = alive.size();
+        for (int i = 0; i < 40 && alive.size() == before; ++i) {
+            drain(session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        for (int i = 0; i < 10; ++i) {
+            drain(session);
+            scene.tick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        renderer.begin();
+        scene.draw(renderer, view, light);
+        const auto& stats = scene.stats();
+        size_t mine = 0;
+        for (const int32_t id : alive) {
+            const mcpp::entity::MobState* state = scene.state(id);
+            if (state != nullptr && state->entity_id == id) ++mine;
+        }
+        const bool ok = mine >= 1 && stats.drawn >= 1 && stats.layers >= 1 && stats.parts >= 1;
+        if (ok) ++passed;
+        else ++failed;
+        std::cout << std::format("{} {:<28} summoned {} tracked {} drawn {} layers {}\n",
+                                 ok ? "ok  " : "FAIL", short_name, mine, stats.tracked,
+                                 stats.drawn, stats.layers);
+        if (!out_dir.empty()) {
+            world.set_in_world([&](VkCommandBuffer command, const float* view_projection,
+                                   uint32_t w, uint32_t h, const float* fog,
+                                   const mcpp::gpu::Camera& cam) {
+                const double at[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
+                renderer.record(command, view_projection, at, w, h, fog, 0.0f, 0.0f);
+            });
+            mcpp::gpu::Camera camera{};
+            for (int axis = 0; axis < 3; ++axis) {
+                camera.eye[axis] = static_cast<float>(view.eye[axis]);
+                camera.target[axis] = static_cast<float>(view.eye[axis]) + view.forward[axis] * 4.0f;
+            }
+            camera.fov_degrees = 70.0f;
+            camera.near_plane = 0.05f;
+            mcpp::write_png((out_dir / std::format("summoned-{}.png", short_name)).string(), kSide,
+                            kSide, world.render(camera));
+        }
+        // This one goes before the next arrives, so one summon is one entity.
+        say(std::format("kill @e[tag={}]", tag));
+        for (int i = 0; i < 20 && !alive.empty(); ++i) {
+            drain(session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        summoning = -1;
+    }
+    say(std::format("kill @e[tag={}]", tag));
+    for (int i = 0; i < 40; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    std::cout << std::format("- {} drawn, {} not, {} left behind\n", passed, failed,
+                             alive.size());
+    return failed == 0 && alive.empty() ? 0 : 1;
+}
+
+// A crowd walking in a grid, for what entities cost: the tick,
 // the posing and the gpu, each against the same frame with no one in it.
 int entitybench(int argc, char** argv) {
     const int count = argc > 2 ? std::stoi(argv[2]) : 200;
@@ -602,19 +1001,33 @@ int entitybench(int argc, char** argv) {
     }
     mcpp::entity::Scene scene(types, nullptr);
     scene.bind(renderer);
+    // Every type the table knows, in turn, with a player every tenth, so the
+    // cost is a crowd's rather than one model's drawn two hundred times.
+    const auto rows = mcpp::entity::mob_types();
+    std::vector<int32_t> mixed;
+    for (const mcpp::entity::MobType& row : rows) {
+        for (size_t at = 0; at < types.size(); ++at) {
+            if (types[at] == row.type) mixed.push_back(static_cast<int32_t>(at));
+        }
+    }
+    if (mixed.empty() && player >= 0) mixed.push_back(player);
     const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count))));
     for (int i = 0; i < count; ++i) {
         mcpp::Entity e;
         e.id = i + 1;
-        e.type = player;
+        e.type = i % 10 == 0 || mixed.empty()
+                     ? player
+                     : mixed[static_cast<size_t>(i) % mixed.size()];
         e.uuid[0] = 0x1234567800000000ull + static_cast<uint64_t>(i);
         e.uuid[1] = 0x9abcdef000000000ull + static_cast<uint64_t>(i) * 7919;
         e.x = (i % side) * 1.5;
         e.z = 6.0 + (i / side) * 1.5;
-        mcpp::PlayerInfo info;
-        info.uuid = mcpp::uuid_string(e.uuid);
-        info.name = std::format("Plasma{}", i);
-        scene.player_info(info);
+        if (e.type == player) {
+            mcpp::PlayerInfo info;
+            info.uuid = mcpp::uuid_string(e.uuid);
+            info.name = std::format("Plasma{}", i);
+            scene.player_info(info);
+        }
         scene.add(e);
     }
     mcpp::gpu::Camera camera{};
@@ -674,11 +1087,11 @@ int entitybench(int argc, char** argv) {
     }
     const double n = kFrames - 20;
     std::cout << std::format(
-        "- {} players, {} drawn, {} part matrices a frame\n"
+        "- {} entities of {} types, {} drawn, {} part matrices a frame\n"
         "- cpu: tick {:.3f} ms (packets and one tick), pose and queue {:.3f} ms a frame\n"
-        "- gpu: {:.3f} ms with them, {:.3f} ms without, {:.3f} ms for the players\n",
-        count, scene.stats().drawn, scene.stats().parts, tick_ms / n, pose_ms / n, gpu_with / n,
-        gpu_without / n, (gpu_with - gpu_without) / n);
+        "- gpu: {:.3f} ms with them, {:.3f} ms without, {:.3f} ms for the crowd\n",
+        count, mixed.size() + 1, scene.stats().drawn, scene.stats().parts, tick_ms / n,
+        pose_ms / n, gpu_with / n, gpu_without / n, (gpu_with - gpu_without) / n);
     if (argc > 3) {
         draw_entities = true;
         renderer.begin();
@@ -695,6 +1108,7 @@ int entity_command(int argc, char** argv) {
     const std::string command = argv[1];
     if (command == "entityshot") return entityshot(argc, argv);
     if (command == "entitybot") return entitybot(argc, argv);
+    if (command == "entitymobs") return entitymobs(argc, argv);
     if (command == "entityrecord") return entityrecord(argc, argv);
     if (command == "entityreplay") return entityreplay(argc, argv);
     if (command == "entitybench") return entitybench(argc, argv);

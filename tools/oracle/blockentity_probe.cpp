@@ -94,6 +94,8 @@ int main() {
         if (!piece.part.empty()) {
             wanted = path == "root" ? std::string(piece.part)
                                     : std::string(piece.part) + "/" + path;
+        } else if (path == "root") {
+            wanted = std::string(mcpp::entity::kRootPath);
         }
         const int32_t at = piece.model->find(wanted);
         if (at < 0) {

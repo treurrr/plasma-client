@@ -1,5 +1,7 @@
 #include "client/game.hpp"
 
+#include "client/hand_view.hpp"
+
 #include "mcpp/protocol_versions.hpp"
 
 #include <cmath>
@@ -26,8 +28,14 @@ void entities_bind(Game& game, mcpp::SessionEvents& events) {
     events.data.on_entity_data = [&game, &scene](int32_t id) {
         const auto& entities = game.session->entities();
         if (const auto found = entities.find(id); found != entities.end()) {
-            scene.set_crouching(id, found->second.metadata.pose() == mcpp::proto::Pose::Crouching);
+            scene.metadata(id, found->second.metadata);
         }
+    };
+    events.entities.on_equipment = [&scene](int32_t id, const mcpp::Equipment& worn) {
+        scene.equipment(id, worn);
+    };
+    events.entities.on_passengers = [&scene](const mcpp::Entity& vehicle) {
+        for (const int32_t rider : vehicle.passengers) scene.riding(rider, true);
     };
     events.entities.on_animate = [&scene](int32_t id, uint8_t action) { scene.animate(id, action); };
     events.entities.on_hurt = [&scene](int32_t id, float) { scene.hurt(id); };
@@ -89,13 +97,22 @@ void entities_start(Game& game) {
     auto& area = game.entities;
     auto& renderer = area.renderer.emplace(game.device, game.renderer->colour_format());
     renderer.load(area.assets);
-    area.scene->bind(renderer);
-    game.renderer->set_in_world([&renderer](VkCommandBuffer command, const float* view_projection,
-                                            uint32_t width, uint32_t height, const float* fog,
-                                            const mcpp::gpu::Camera& camera) {
+    if (!area.equipment.open(mcpp::entity::EquipmentAssets::default_path(
+            mcpp::protocol::kTargetProtocol))) {
+        std::cout << "- no equipment table; bake it with tools/bake_all.py. No armour will be "
+                     "drawn\n";
+    }
+    area.scene->bind(renderer, &area.equipment);
+    game.renderer->set_in_world([&game, &renderer](
+                                    VkCommandBuffer command, const float* view_projection,
+                                    uint32_t width, uint32_t height, const float* fog,
+                                    const mcpp::gpu::Camera& camera) {
         const double eye[3] = {camera.eye[0], camera.eye[1], camera.eye[2]};
         renderer.record(command, view_projection, eye, width, height, fog, camera.fog_start,
                         camera.fog_end);
+        if (mcpp::gpu::HandRenderer* hand = hand_renderer(game)) {
+            hand->record_world(command, view_projection, eye, width, height);
+        }
     });
 }
 

@@ -1,0 +1,430 @@
+# Pose cases for ModelOracle: one line per case, "<layer> <field>=<value> ...",
+# read by both ModelOracle.java and model_probe.cpp so the two stay in step.
+#
+# The fields are MobState's own names; the oracle sets the matching field of
+# the layer's vanilla render state. An animation state's value is the tick it
+# started on, and leaving it out leaves it stopped. Cases must stay grouped by
+# layer: both sides build one model per run of a layer and pose it case after
+# case, which is what lets a hidden part stay hidden the way the game does.
+#
+# Every case a mob's own state does is in here: a creeper swelling, a sheep
+# eating, a wolf shaking, a cat lying down, a horse rearing, a fox pouncing,
+# an armadillo rolling up, a breeze sliding, a copper golem with a full hand.
+
+# `AvatarModel`: at rest, mid-walk, head turned, attacking, crouching,
+# swimming through all three arcs of the stroke, riding and a spectator.
+player
+player walk_position=3.7 walk_speed=1 y_rot=-30 x_rot=20 age_in_ticks=37.5
+player walk_position=11.25 walk_speed=0.43 y_rot=47 x_rot=-61 age_in_ticks=1234.5 attack_time=0.3
+player walk_position=5 walk_speed=0.8 y_rot=10 x_rot=5 age_in_ticks=99.75 attack_time=0.75 crouching=1
+player walk_position=8 walk_speed=0.2 y_rot=-5 x_rot=-89 age_in_ticks=3.25 attack_time=0.5 attack_arm_left=1
+player walk_position=6.5 walk_speed=1 x_rot=40 age_in_ticks=20 swim_amount=0.6
+player walk_position=17.25 walk_speed=1 age_in_ticks=21 attack_time=0.2 swim_amount=1
+player walk_position=24.75 walk_speed=0.9 y_rot=15 x_rot=15 age_in_ticks=22 crouching=1 swim_amount=0.35 attack_arm_left=1
+player walk_position=2 walk_speed=0.5 age_in_ticks=5 passenger=1
+player walk_position=4 walk_speed=0.7 age_in_ticks=9 spectator=1 show_hat=0 show_jacket=0 show_left_sleeve=0 show_right_pants=0
+player walk_position=4 walk_speed=0.7 age_in_ticks=9 fall_flying=1 fall_flying_ticks=7
+# The stroke's own edges: an arm that is using an item keeps its pose, a spear
+# is left out of it, and the arm that is swinging is left out of it too.
+player walk_position=6.5 walk_speed=1 x_rot=40 age_in_ticks=20 swim_amount=0.6 using_item=1 right_arm_pose=1
+player walk_position=6.5 walk_speed=1 x_rot=40 age_in_ticks=20 swim_amount=0.6 right_arm_pose=10 attack_time=0.5
+player walk_position=25.75 walk_speed=1 x_rot=-40 age_in_ticks=20 swim_amount=1 left_arm_pose=10 attack_time=0.5 attack_arm_left=1
+player walk_position=13.75 walk_speed=1 x_rot=0 age_in_ticks=20 swim_amount=0.25
+player walk_position=21.75 walk_speed=1 x_rot=0 age_in_ticks=20 swim_amount=0.75
+player walk_position=3 walk_speed=0.6 y_rot=10 x_rot=-10 age_in_ticks=13.5 attack_time=0.5 age_scale=1.5
+player_slim
+player_slim walk_position=3.7 walk_speed=1 y_rot=-30 x_rot=20 age_in_ticks=37.5
+player_slim walk_position=11.25 walk_speed=0.43 y_rot=47 x_rot=-61 age_in_ticks=1234.5 attack_time=0.3
+player_slim walk_position=5 walk_speed=0.8 y_rot=10 x_rot=5 age_in_ticks=99.75 attack_time=0.75 crouching=1
+player_slim walk_position=8 walk_speed=0.2 y_rot=-5 x_rot=-89 age_in_ticks=3.25 attack_time=0.5 attack_arm_left=1
+player_slim walk_position=6.5 walk_speed=1 x_rot=40 age_in_ticks=20 swim_amount=0.6
+player_slim walk_position=17.25 walk_speed=1 age_in_ticks=21 attack_time=0.2 swim_amount=1
+player_slim walk_position=24.75 walk_speed=0.9 y_rot=15 x_rot=15 age_in_ticks=22 crouching=1 swim_amount=0.35 attack_arm_left=1
+player_slim walk_position=2 walk_speed=0.5 age_in_ticks=5 passenger=1
+
+# `HumanoidModel`: every arm pose, on the four armour sub-layers of a skeleton
+# and on a plain body, so the pose switch and the two-handed order are covered.
+skeleton#helmet
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=1
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=2 left_arm_pose=2
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=3
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 left_arm_pose=3 main_arm_right=0
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=4
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=5 ticks_using_item=11 max_crossbow_charge_duration=25
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=6
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=7
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 left_arm_pose=7
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=8
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=9
+# Past the clamps every arm pose puts on the head it follows.
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=80 x_rot=85 age_in_ticks=14.25 right_arm_pose=2 left_arm_pose=2
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=-80 x_rot=-85 age_in_ticks=14.25 right_arm_pose=2 left_arm_pose=2
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=45 x_rot=89 age_in_ticks=14.25 right_arm_pose=7 crouching=1
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=45 x_rot=-89 age_in_ticks=14.25 left_arm_pose=8
+skeleton#chestplate walk_position=6 walk_speed=0.8 y_rot=45 x_rot=89 age_in_ticks=14.25 right_arm_pose=10 fall_flying=1
+skeleton#leggings walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=10 using_item=1
+skeleton#leggings walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 right_arm_pose=10 swing_animation=2 attack_time=0.3
+skeleton#leggings walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 left_arm_pose=10 swing_animation=2 attack_time=0.6 attack_arm_left=1
+skeleton#boots walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 using_item=1 use_item_off_hand=1 left_arm_pose=5 ticks_using_item=40 max_crossbow_charge_duration=25
+skeleton#boots walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 swing_animation=0 attack_time=0.9
+skeleton#boots walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 speed_value=0.4 crouching=1
+# `ArmorModelSet.bake`: each slot wears the mob's own model class, so a
+# skeleton's armour makes the two-armed swing and a bogged's armour does not
+# look for the mushrooms only the body itself wears.
+skeleton#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 aggressive=1 attack_time=0.4
+stray#chestplate walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 aggressive=1
+wither_skeleton#leggings walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 aggressive=1 holding_bow=1
+bogged#boots walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 aggressive=1 attack_time=0.7
+bogged#helmet walk_position=6 walk_speed=0.8 y_rot=12 x_rot=-18 age_in_ticks=14.25 aggressive=1 attack_time=0.2 holding_bow=1
+
+# `ZombieModel`: the humanoid plus the arms thrown out in front.
+zombie
+zombie walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25
+zombie walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 aggressive=1
+zombie walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 aggressive=1 attack_time=0.45
+zombie walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 attack_time=0.7 attack_arm_left=1
+zombie walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 swing_animation=2 attack_time=0.2
+zombie walk_position=5.5 walk_speed=0.9 age_in_ticks=18.25 crouching=1 swim_amount=0.5
+zombie_baby walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 baby=1 age_scale=0.5
+zombie_baby#helmet walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 baby=1 age_scale=0.5 aggressive=1
+zombie#chestplate walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 aggressive=1 attack_time=0.6
+husk#leggings walk_position=5.5 walk_speed=0.9 y_rot=-21 x_rot=13 age_in_ticks=18.25 aggressive=1
+husk walk_position=2.25 walk_speed=0.3 y_rot=40 x_rot=-40 age_in_ticks=7.5 aggressive=1 attack_time=0.1
+
+# `DrownedModel`: the trident throw and the swim stroke on top of the zombie.
+drowned
+drowned walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5
+drowned walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 right_arm_pose=4
+drowned walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 left_arm_pose=4
+drowned walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 swim_amount=0.8
+drowned walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 swim_amount=1 right_arm_pose=4 aggressive=1
+drowned#outer walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 swim_amount=0.4
+drowned#chestplate walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 swim_amount=0.8 aggressive=1
+drowned_baby#boots walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 baby=1 age_scale=0.5 right_arm_pose=4
+drowned_baby walk_position=9.5 walk_speed=0.7 y_rot=8 x_rot=-25 age_in_ticks=31.5 baby=1 age_scale=0.5 attack_time=0.5
+
+# `ZombieVillagerModel`.
+zombie_villager
+zombie_villager walk_position=4.5 walk_speed=0.6 y_rot=-14 x_rot=22 age_in_ticks=12.5
+zombie_villager walk_position=4.5 walk_speed=0.6 y_rot=-14 x_rot=22 age_in_ticks=12.5 aggressive=1 attack_time=0.8
+zombie_villager_no_hat walk_position=4.5 walk_speed=0.6 y_rot=-14 x_rot=22 age_in_ticks=12.5 crouching=1
+zombie_villager#helmet walk_position=4.5 walk_speed=0.6 y_rot=-14 x_rot=22 age_in_ticks=12.5 aggressive=1 attack_time=0.25
+zombie_villager_baby#leggings walk_position=4.5 walk_speed=0.6 age_in_ticks=12.5 baby=1 age_scale=0.5 aggressive=1
+zombie_villager_baby walk_position=4.5 walk_speed=0.6 age_in_ticks=12.5 baby=1 age_scale=0.5 aggressive=1
+
+# `SkeletonModel`: the two-armed melee swing when it chases without a bow.
+skeleton
+skeleton walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5
+skeleton walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5 aggressive=1
+skeleton walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5 aggressive=1 attack_time=0.35
+skeleton walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5 aggressive=1 holding_bow=1 right_arm_pose=3
+stray walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5 aggressive=1 attack_time=0.9
+wither_skeleton walk_position=1.5 walk_speed=0.2 y_rot=-60 x_rot=60 age_in_ticks=4.5 aggressive=1
+
+# `BoggedModel`: the mushrooms it keeps until it is sheared.
+bogged
+bogged walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5
+bogged walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5 sheared=1
+bogged walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5 aggressive=1 attack_time=0.5
+bogged#outer walk_position=7.25 walk_speed=0.95 y_rot=19 x_rot=-33 age_in_ticks=26.5 aggressive=1
+
+# `VillagerModel`: the look, the sulk and the walk.
+villager
+villager walk_position=6.75 walk_speed=0.5 y_rot=23 x_rot=-11 age_in_ticks=15.5
+villager walk_position=6.75 walk_speed=0.5 y_rot=23 x_rot=-11 age_in_ticks=15.5 unhappy=1
+villager_no_hat walk_position=6.75 walk_speed=0.5 y_rot=23 x_rot=-11 age_in_ticks=44.25 unhappy=1
+villager_baby walk_position=6.75 walk_speed=0.5 y_rot=23 x_rot=-11 age_in_ticks=15.5 baby=1 age_scale=0.5
+
+# `WitchModel`: the nose, whose twitch rate the entity's own id picks.
+witch
+witch walk_position=3.25 walk_speed=0.4 y_rot=-35 x_rot=17 age_in_ticks=28.5 entity_id=7
+witch walk_position=3.25 walk_speed=0.4 y_rot=-35 x_rot=17 age_in_ticks=28.5 entity_id=7 holding_item=1
+witch walk_position=3.25 walk_speed=0.4 y_rot=-35 x_rot=17 age_in_ticks=103.25 entity_id=23
+
+# `QuadrupedModel`: the head follows the look, the legs the walk.
+pig
+pig walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5
+pig walk_position=24.5 walk_speed=0.1 y_rot=-80 x_rot=80 age_in_ticks=60.25
+pig#saddle walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5
+pig_baby walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5 baby=1 age_scale=0.5
+cold_pig walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5
+cow walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5
+cow_baby walk_position=3.5 walk_speed=0.45 y_rot=-27 x_rot=19 age_in_ticks=5.5 baby=1 age_scale=0.5
+mooshroom walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5
+warm_cow walk_position=13.75 walk_speed=0.6 y_rot=5 x_rot=-45 age_in_ticks=19.25
+
+# `SheepModel`, `SheepFurModel`: the head dips to the grass as it eats.
+sheep
+sheep walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5
+sheep walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5 head_eat_position_scale=0.4 head_eat_angle_scale=0.65
+sheep walk_position=0 walk_speed=0 y_rot=0 x_rot=0 age_in_ticks=11.5 head_eat_position_scale=1 head_eat_angle_scale=1.3
+sheep_baby walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5 baby=1 age_scale=0.5 head_eat_position_scale=0.7 head_eat_angle_scale=0.9
+sheep#wool
+sheep#wool walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5 head_eat_position_scale=0.4 head_eat_angle_scale=0.65
+sheep#wool_undercoat walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5 head_eat_position_scale=0.4 head_eat_angle_scale=0.65
+sheep_baby#wool walk_position=8.25 walk_speed=0.85 y_rot=27 x_rot=-19 age_in_ticks=11.5 baby=1 age_scale=0.5 head_eat_position_scale=0.4 head_eat_angle_scale=0.65
+
+# `ChickenModel`: the wings beat with the fall, the legs with the walk.
+chicken
+chicken walk_position=4.5 walk_speed=0.7 y_rot=-16 x_rot=24 age_in_ticks=9.5 flap=2.5 flap_speed=0.8
+chicken walk_position=4.5 walk_speed=0.7 y_rot=-16 x_rot=24 age_in_ticks=9.5 flap=17.25 flap_speed=0.3
+chicken_baby walk_position=4.5 walk_speed=0.7 y_rot=-16 x_rot=24 age_in_ticks=9.5 baby=1 age_scale=0.5 flap=2.5 flap_speed=0.8
+cold_chicken walk_position=4.5 walk_speed=0.7 y_rot=-16 x_rot=24 age_in_ticks=9.5 flap=2.5 flap_speed=0.8
+
+# `WolfModel`: the sit, the walk, the shake down the spine and the wag.
+wolf
+wolf walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 tail_angle=0.62831855
+wolf walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 angry=1 tail_angle=1.5707964
+wolf walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 sitting=1 tail_angle=0.62831855
+wolf walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 shake_anim=0.4 head_roll_angle=0.25 tail_angle=0.62831855
+wolf walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 shake_anim=1.2 tail_angle=0.62831855
+wolf walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 shake_anim=1.9 sitting=1 tail_angle=0.62831855
+wolf walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 shake_anim=-0.1 tail_angle=0.62831855
+wolf_baby walk_position=6.25 walk_speed=0.9 y_rot=31 x_rot=-23 age_in_ticks=13.5 baby=1 age_scale=0.5 sitting=1 shake_anim=0.7 tail_angle=0.62831855
+
+# `FelineModel`: the crouch, the sprint, the sit and the nap.
+ocelot
+ocelot walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5
+ocelot walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 crouching=1
+ocelot walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 sprinting=1
+ocelot walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 sitting=1
+ocelot walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 crouching=1 sprinting=1
+ocelot walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 sprinting=1 sitting=1
+ocelot_baby walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 baby=1 age_scale=0.5 crouching=1
+
+# `CatModel`: the same body, plus the roll onto its side as it lies down.
+cat
+cat walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5
+cat walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 lie_down_amount=0.6 lie_down_amount_tail=0.45
+cat walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 lie_down_amount=1 lie_down_amount_tail=1 relax_state_one_amount=0.8
+cat walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 sitting=1 lie_down_amount=0.3 lie_down_amount_tail=0.3
+cat#collar walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 lie_down_amount=0.6 lie_down_amount_tail=0.45
+cat_baby walk_position=5.75 walk_speed=0.65 y_rot=-29 x_rot=14 age_in_ticks=16.5 baby=1 age_scale=0.5 lie_down_amount=1 lie_down_amount_tail=0.5
+
+# `FoxModel`: the stalk, the nap, the sit and the scrabble of a planted fox.
+fox
+fox walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5
+fox walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 crouching=1 crouch_amount=0.7 head_roll_angle=0.2
+fox walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 sleeping=1
+fox walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 sitting=1
+fox walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 faceplanted=1
+fox walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 faceplanted=1
+fox walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 pouncing=1
+fox_baby walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 baby=1 age_scale=0.5 sleeping=1
+fox_baby walk_position=7.5 walk_speed=0.8 y_rot=22 x_rot=-27 age_in_ticks=10.5 baby=1 age_scale=0.5 sitting=1
+
+# `AbstractEquineModel`: the gait, the rear, the graze, the chew and the tail.
+horse
+horse walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5
+horse walk_position=9.75 walk_speed=0.15 y_rot=34 x_rot=-21 age_in_ticks=23.5
+horse walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 stand_animation=1
+horse walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 stand_animation=0.4 eat_animation=0.6
+horse walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 eat_animation=1 feeding_animation=0.5
+horse walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 animate_tail=1 in_water=1
+horse walk_position=9.75 walk_speed=0.9 y_rot=-55 x_rot=-21 age_in_ticks=23.5 stand_animation=0.5 eat_animation=0.5
+horse_baby walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 baby=1 age_scale=0.5 stand_animation=0.75
+skeleton_horse walk_position=2.75 walk_speed=0.55 y_rot=-34 x_rot=21 age_in_ticks=8.5 animate_tail=1
+zombie_horse walk_position=2.75 walk_speed=0.55 y_rot=-34 x_rot=21 age_in_ticks=8.5 eat_animation=0.25
+
+# `EquineSaddleModel`: the reins, held only by a rider.
+horse#saddle
+horse#saddle walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 ridden=1
+horse#saddle walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 stand_animation=1 ridden=1
+donkey#saddle walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5
+mule_baby#saddle walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 baby=1 age_scale=0.5 ridden=1
+
+# `DonkeyModel`: the pack chests on its flanks.
+donkey
+donkey walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5
+donkey walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 has_chest=1
+donkey walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 stand_animation=0.8
+mule walk_position=9.75 walk_speed=0.9 y_rot=34 x_rot=-21 age_in_ticks=23.5 has_chest=1
+
+# `CreeperModel`: the head follows the look, the legs the walk; the swell is
+# the renderer's, not the model's.
+creeper
+creeper walk_position=6.5 walk_speed=0.75 y_rot=-26 x_rot=18 age_in_ticks=12.5
+creeper walk_position=6.5 walk_speed=0.75 y_rot=-26 x_rot=18 age_in_ticks=12.5 swelling=0.45
+creeper walk_position=6.5 walk_speed=0.75 y_rot=-26 x_rot=18 age_in_ticks=12.5 swelling=1
+creeper#armor walk_position=6.5 walk_speed=0.75 y_rot=-26 x_rot=18 age_in_ticks=12.5 swelling=0.8
+
+# `SpiderModel`: eight legs on four phases of the walk, each pair mirrored.
+spider
+spider walk_position=5.25 walk_speed=0.85 y_rot=28 x_rot=-17 age_in_ticks=14.5
+spider walk_position=18.75 walk_speed=0.35 y_rot=-55 x_rot=44 age_in_ticks=51.25
+cave_spider walk_position=5.25 walk_speed=0.85 y_rot=28 x_rot=-17 age_in_ticks=14.5
+
+# `EndermanModel`: the halved walk, the carried block and the angry stare.
+enderman
+enderman walk_position=8.75 walk_speed=0.95 y_rot=-31 x_rot=25 age_in_ticks=17.5
+enderman walk_position=8.75 walk_speed=0.95 y_rot=-31 x_rot=25 age_in_ticks=17.5 carries_block=1
+enderman walk_position=8.75 walk_speed=0.95 y_rot=-31 x_rot=25 age_in_ticks=17.5 creepy=1
+enderman walk_position=8.75 walk_speed=0.95 y_rot=-31 x_rot=25 age_in_ticks=17.5 creepy=1 carries_block=1 attack_time=0.4
+
+# `SlimeModel`, `MagmaCubeModel`.
+slime
+slime walk_position=3 walk_speed=0.5 y_rot=10 x_rot=10 age_in_ticks=6.5 squish=0.3 slime_size=2
+slime#outer walk_position=3 walk_speed=0.5 y_rot=10 x_rot=10 age_in_ticks=6.5 squish=0.3 slime_size=2
+magma_cube
+magma_cube walk_position=3 walk_speed=0.5 age_in_ticks=6.5 squish=0.35 slime_size=4
+magma_cube walk_position=3 walk_speed=0.5 age_in_ticks=6.5 squish=-0.2 slime_size=1
+
+# `IronGolemModel`: the swing, the offered flower or the walk.
+iron_golem
+iron_golem walk_position=7.75 walk_speed=0.8 y_rot=14 x_rot=-9 age_in_ticks=20.5
+iron_golem walk_position=7.75 walk_speed=0.8 y_rot=14 x_rot=-9 age_in_ticks=20.5 attack_ticks_remaining=7
+iron_golem walk_position=7.75 walk_speed=0.8 y_rot=14 x_rot=-9 age_in_ticks=20.5 offer_flower_tick=45
+iron_golem walk_position=21.25 walk_speed=0.25 y_rot=-14 x_rot=9 age_in_ticks=70.5
+
+# `SnowGolemModel`: the arms swing round the upper body's own turn.
+snow_golem
+snow_golem walk_position=4.25 walk_speed=0.6 y_rot=-48 x_rot=30 age_in_ticks=25.5
+snow_golem walk_position=4.25 walk_speed=0.6 y_rot=72 x_rot=-30 age_in_ticks=25.5
+
+# `BeeModel`: the wing beat, the tucked legs, the idle hover and the roll.
+bee
+bee walk_position=2.5 walk_speed=0.4 y_rot=-12 x_rot=8 age_in_ticks=9.5
+bee walk_position=2.5 walk_speed=0.4 y_rot=-12 x_rot=8 age_in_ticks=9.5 on_ground=1
+bee walk_position=2.5 walk_speed=0.4 y_rot=-12 x_rot=8 age_in_ticks=9.5 angry=1
+bee walk_position=2.5 walk_speed=0.4 y_rot=-12 x_rot=8 age_in_ticks=9.5 has_stinger=0 roll_amount=0.65
+bee walk_position=2.5 walk_speed=0.4 y_rot=-12 x_rot=8 age_in_ticks=37.25 roll_amount=1
+bee_baby walk_position=2.5 walk_speed=0.4 y_rot=-12 x_rot=8 age_in_ticks=9.5 baby=1 age_scale=0.5
+bee_stinger
+
+# `AxolotlModel`: the four blends, then play dead, then the mirrored legs.
+axolotl
+axolotl walk_position=3.75 walk_speed=0.5 y_rot=18 x_rot=-13 age_in_ticks=22.5 moving_factor=1 in_water_factor=1
+axolotl walk_position=3.75 walk_speed=0.5 y_rot=18 x_rot=-13 age_in_ticks=22.5 moving_factor=0 in_water_factor=1
+axolotl walk_position=3.75 walk_speed=0.5 y_rot=18 x_rot=-13 age_in_ticks=22.5 moving_factor=1 in_water_factor=0 on_ground_factor=1
+axolotl walk_position=3.75 walk_speed=0.5 y_rot=18 x_rot=-13 age_in_ticks=22.5 moving_factor=0 in_water_factor=0 on_ground_factor=1
+axolotl walk_position=3.75 walk_speed=0.5 y_rot=18 x_rot=-13 age_in_ticks=22.5 moving_factor=0.5 in_water_factor=0.5 on_ground_factor=0.5 playing_dead_factor=0.75
+axolotl walk_position=3.75 walk_speed=0.5 y_rot=18 x_rot=-13 age_in_ticks=22.5 moving_factor=1 in_water_factor=0.00001 on_ground_factor=0.00001
+axolotl_baby walk_position=3.75 walk_speed=0.5 y_rot=18 x_rot=-13 age_in_ticks=22.5 baby=1 age_scale=0.5 moving_factor=1 in_water_factor=1
+
+# `AllayModel`: the dance, the spin, the wing beat and the arms around what
+# it carries.
+allay
+allay walk_position=1.5 walk_speed=0.2 y_rot=-20 x_rot=15 age_in_ticks=18.5
+allay walk_position=1.5 walk_speed=0.45 y_rot=-20 x_rot=15 age_in_ticks=18.5 holding_animation_progress=1
+allay walk_position=1.5 walk_speed=0.2 y_rot=-20 x_rot=15 age_in_ticks=18.5 dancing=1
+allay walk_position=1.5 walk_speed=0.2 y_rot=-20 x_rot=15 age_in_ticks=18.5 dancing=1 spinning=1 spinning_progress=0.4
+allay walk_position=1.5 walk_speed=0.2 y_rot=-20 x_rot=15 age_in_ticks=18.5 dancing=1 spinning=1 spinning_progress=1 holding_animation_progress=0.5
+
+# `ArmadilloModel`: the walk cycle, the shell it rolls into and the three
+# keyframe animations that carry it there and back.
+armadillo
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=12.5
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=40 x_rot=40 age_in_ticks=12.5
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=12.5 roll_up=10
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=12.5 hiding_in_shell=1 roll_up=10
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=12.5 hiding_in_shell=1 peek=11
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=12.5 roll_out=12
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=40.25 roll_out=2 roll_up=6 peek=9
+# The walk cycle's own fade (min(speed * 2.5, 1)), a one-shot run off its
+# own end, and an animation that has not begun yet.
+armadillo walk_position=5.5 walk_speed=0.2 y_rot=14 x_rot=-10 age_in_ticks=12.5
+armadillo walk_position=41.25 walk_speed=0.08 y_rot=14 x_rot=-10 age_in_ticks=12.5 roll_up=4
+armadillo walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=12.5 peek=20
+armadillo_baby walk_position=5.5 walk_speed=0.7 y_rot=14 x_rot=-10 age_in_ticks=12.5 baby=1 age_scale=0.5 hiding_in_shell=1 roll_up=10
+
+# `BreezeModel`: the six animations, on all three of its layers.
+breeze
+breeze age_in_ticks=12.5 breeze_idle=0
+breeze age_in_ticks=12.5 breeze_shoot=10
+breeze age_in_ticks=12.5 breeze_slide=11
+breeze age_in_ticks=12.5 breeze_slide_back=11
+breeze age_in_ticks=12.5 breeze_inhale=9
+breeze age_in_ticks=12.5 breeze_long_jump=12
+breeze age_in_ticks=40.25 breeze_idle=0 breeze_slide=38
+breeze age_in_ticks=12.5 breeze_slide=2 breeze_slide_back=3 breeze_inhale=0
+breeze age_in_ticks=12.5 breeze_shoot=20
+breeze#eyes age_in_ticks=12.5 breeze_idle=0 breeze_shoot=11
+breeze#wind age_in_ticks=12.5 breeze_idle=0 breeze_slide=11
+
+# `CopperGolemModel`: the head, the walk cycle with and without a full hand,
+# and the five animations over the top.
+copper_golem
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 right_hand_item_empty=0
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 left_hand_item_empty=0
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 golem_idle=0
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 golem_get_item=12
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 golem_get_no_item=12
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 right_hand_item_empty=0 golem_drop_item=13
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 right_hand_item_empty=0 golem_drop_no_item=13
+copper_golem walk_position=4.5 walk_speed=0.1 y_rot=17 x_rot=-12 age_in_ticks=14.5
+copper_golem walk_position=4.5 walk_speed=0.1 y_rot=17 x_rot=-12 age_in_ticks=14.5 left_hand_item_empty=0
+copper_golem walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=90.25 golem_idle=0 golem_get_item=3
+copper_golem#eyes walk_position=4.5 walk_speed=0.6 y_rot=17 x_rot=-12 age_in_ticks=14.5 golem_idle=0
+
+# `CopperGolemStatueModel`: the one way up, turned by the block's facing.
+copper_golem_running
+copper_golem_running facing=2
+copper_golem_running facing=3
+copper_golem_running facing=4
+copper_golem_running facing=5
+copper_golem_sitting facing=4
+copper_golem_star facing=5
+
+# Every remaining layer, posed once on a walk with the head turned: that a
+# model can be built for it at all, and that its own initial pose comes back
+# out of the reset the game does first.
+husk_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+drowned_baby#outer walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_villager_baby_no_hat walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+stray#outer walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+villager_baby_no_hat walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+zombie#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+zombie#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+zombie_baby#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_baby#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_baby#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+husk#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+husk#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+husk#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+husk_baby#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+husk_baby#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+husk_baby#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+husk_baby#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_villager#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+zombie_villager#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+zombie_villager#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+zombie_villager_baby#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_villager_baby#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_villager_baby#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+drowned#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+drowned#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+drowned#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+drowned_baby#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+drowned_baby#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+drowned_baby#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+stray#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+stray#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+stray#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+wither_skeleton#helmet walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+wither_skeleton#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+wither_skeleton#boots walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+bogged#chestplate walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+bogged#leggings walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+pig_baby#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+cold_pig_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+cold_cow walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+cold_cow_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+warm_cow_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+mooshroom_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+sheep_baby#wool_undercoat walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+cold_chicken_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+cat_baby#collar walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+skeleton_horse_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_horse_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+donkey_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+mule_baby walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+horse_baby#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+donkey_baby#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+mule#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+skeleton_horse#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+skeleton_horse_baby#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5
+zombie_horse#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5
+zombie_horse_baby#saddle walk_position=7.25 walk_speed=0.6 y_rot=-18 x_rot=23 age_in_ticks=19.5 baby=1 age_scale=0.5

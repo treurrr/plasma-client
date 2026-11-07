@@ -420,14 +420,27 @@ times the gui scale whenever that changes; the bake has to pick one, and picks
 being rendered at its own size. Rendering the icons into an atlas on the gpu,
 once per item state, is what closes it.
 
-**2. Nothing in the world is alive. (P3.17 through P3.27)**
-Other players and every mob are invisible. A multiplayer server with twenty
-people on it looks like an empty world with chat happening. There is no
-intermediate version of this that helps - a capsule or a box would look worse
-than nothing - so the fix is the real humanoid model, the real skin fetched from
-the player's profile, the second skin layer, and the nametag. That is one
-coherent chunk of work (about two weeks) and it changes the client more than
-anything else in this document.
+**2. Nothing in the world is alive. (P3.17 through P3.27) - done**
+Thirty-eight entity types are drawn, which is every mob a player meets on an
+ordinary server: the undead, the creeper and the spider, the farm animals, the
+horse family, the pets, the villager and the witch, the golems, the bee, the
+fox, the axolotl, the allay, and the three that move by keyframe animation -
+the armadillo, the breeze and the copper golem. Each one's `setupAnim` is
+translated, with the layers vanilla stacks on top: wool, collars, saddles,
+eyes, the slime's outer skin, the creeper's charge. `tools/oracle/ModelOracle.java`
+compares 153 layers, 27840 polygon corners and 336 poses against the game's own,
+to the bit.
+
+Armour is drawn from `set_equipment` and the baked equipment assets, inner and
+outer layer, with the leather dye. What a mob holds is drawn in the world with
+its `thirdperson_righthand` transform. What the server says about an entity
+reaches the pose: its own pose, its skin parts, its main arm, whether it is a
+baby, and the counters each mob's own tick keeps that no packet carries.
+
+What is left on a mob is the long tail of overlays that need something other
+than a model layer: the villager's profession, a block carried or worn on a
+head, the elytra, armour trims (baked, but nothing decodes the `minecraft:trim`
+component off the wire yet), and the texture a mob's variant picks.
 
 **3. You cannot see your own hands. (P4.1 through P4.4) - done**
 ItemInHandRenderer is translated whole into `src/client/hand.cpp`: where the

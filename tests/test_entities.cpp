@@ -204,7 +204,7 @@ void test_packets() {
 const char* kTwoBoxes = R"(
 [thing]
 texture 64 32
-part root
+part .
 part body pivot 0 12 0 rotate 0.5 0 0
   box -4 0 -2  8 12 4  uv 16 16
 part body/arm pivot 5 2 0
