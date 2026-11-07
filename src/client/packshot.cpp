@@ -225,6 +225,22 @@ std::vector<uint8_t> demo_pack() {
             png_bytes(16, 16, checker(16, 0x00FFFFFFu, 0x004040FFu, 2)));
     zip.add("assets/minecraft/textures/gui/sprites/hud/hotbar.png",
             png_bytes(182, 22, bar(182, 22, 0xFF0000FFu, 0x00FF00FFu)));
+    // What a world a server generates is actually made of, so the pack is
+    // visible on terrain nobody had to build.
+    zip.add("assets/minecraft/textures/block/dirt.png",
+            png_bytes(16, 16, checker(16, 0xFF0000FFu, 0x400000FFu, 4)));
+    zip.add("assets/minecraft/textures/block/grass_block_top.png",
+            png_bytes(16, 16, checker(16, 0xFFFFFFFFu, 0x303030FFu, 2)));
+    zip.add("assets/minecraft/textures/block/grass_block_side.png",
+            png_bytes(16, 16, stripes(16, 0xFFFF00FFu, 0x000000FFu, 2)));
+    zip.add("assets/minecraft/textures/block/sand.png",
+            png_bytes(16, 16, framed_cross(16, 0x00FF00FFu, 0x000000FFu)));
+    zip.add("assets/minecraft/textures/block/oak_log.png",
+            png_bytes(16, 16, stripes(16, 0xFF00FFFFu, 0x000000FFu, 1)));
+    zip.add("assets/minecraft/textures/block/oak_log_top.png",
+            png_bytes(16, 16, framed_cross(16, 0xFF00FFFFu, 0xFFFFFFFFu)));
+    zip.add("assets/minecraft/textures/block/water_still.png",
+            png_bytes(16, 16, checker(16, 0xFF8000FFu, 0x804000FFu, 4)));
     return zip.finish();
 }
 
@@ -272,7 +288,7 @@ size_t pixels_differing(const std::vector<uint8_t>& a, const std::vector<uint8_t
 // a texel can be looked at, and the sprite it replaces behind them.
 void draw_ui(mcpp::gpu::UiRenderer& quads, const mcpp::ui::ItemTable& items) {
     quads.begin();
-    quads.fill(0.0f, 0.0f, static_cast<float>(kWidth), static_cast<float>(kHeight), 0xFF202020u);
+    quads.fill(0.0f, 0.0f, static_cast<float>(kWidth), static_cast<float>(kHeight), 0x202020FFu);
     quads.sprite("hud/hotbar", 40.0f, 30.0f, 182.0f * 3.0f, 22.0f * 3.0f);
     const char* names[] = {"diamond_sword", "apple", "golden_apple", "stone", "oak_planks",
                            "diamond_block"};
@@ -483,7 +499,10 @@ int packserve(const std::vector<std::string>& args) {
     const auto address = parse_address(args[0]);
     std::string username = args[1];
     double aim[3] = {0.0, 0.0, 0.0};
-    {
+    // "auto" aims at wherever the server put us, which is what a command like
+    // spreadplayers leaves us at: on the ground, at a spot we chose.
+    const bool aim_at_player = args[2] == "auto";
+    if (!aim_at_player) {
         std::string rest = args[2];
         for (int axis = 0; axis < 3; ++axis) {
             const size_t comma = rest.find(',');
@@ -590,6 +609,11 @@ int packserve(const std::vector<std::string>& args) {
                                  one.from_cache ? "from the cache" : "downloaded");
     }
 
+    if (aim_at_player) {
+        for (int axis = 0; axis < 3; ++axis) aim[axis] = where[axis];
+        std::cout << std::format("- aiming at the player: {:.1f} {:.1f} {:.1f}\n", aim[0], aim[1],
+                                 aim[2]);
+    }
     const int32_t middle_x = static_cast<int32_t>(std::floor(aim[0])) >> 4;
     const int32_t middle_z = static_cast<int32_t>(std::floor(aim[2])) >> 4;
     std::erase_if(chunks, [&](const auto& entry) {
