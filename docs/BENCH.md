@@ -339,11 +339,14 @@ What the bench does not yet exercise
 -------------------------------------
 
 The entity scene is ticked and posed in every measured frame, but the four
-recordings carry no entities: the recorder was teleported across each square at
-y=200, which is above vanilla's entity tracking range, so the server never sent
-any. The path is in the frame and its cost is in the `prep` column; the content
-is not. Recording the same squares at ground level would fix it, and the
-`entities` line of the output says how many each world has.
+recordings carry no entities, and the output says so on its third line. Two
+reasons, both in the recording rather than the bench: the recorder was
+teleported across each square at y=200, which is above vanilla's entity
+tracking range, and it stops reading two seconds after the last chunk it asked
+for, which is sooner than a server finishes introducing what is around. The
+path is in the frame and its cost is in the `prep` column; the content is not.
+Recording the squares at ground level, and reading on for a few seconds after
+the chunks, would fix it.
 
 Would generating specialised code help?
 ---------------------------------------
