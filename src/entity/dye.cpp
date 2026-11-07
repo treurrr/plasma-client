@@ -13,7 +13,7 @@ constexpr std::array<uint32_t, 16> kDiffuse = {
     10329495, 1481884,  8991416,  3949738, 8606770,  6192150, 11546150, 1908001,
 };
 
-// `ColorLerper.Type`: how long one dye of the cycle lasts, in ticks, and the
+// `ColorLerper.Type.getColor`: how long one dye of the cycle lasts, in ticks, and the
 // factor `getModifiedColor` dims it by.
 struct Cycle {
     int32_t duration;
@@ -22,7 +22,7 @@ struct Cycle {
 };
 constexpr std::array<Cycle, 2> kCycles = {{{25, 0.75f, 16}, {30, 1.25f, 12}}};
 
-// `ColorLerper.MUSIC_NOTE_COLORS`: twelve of the sixteen dyes, in their own
+// `ColorLerper.getLerpedColor`: twelve of the sixteen dyes, in their own
 // order, by dye id.
 constexpr std::array<int8_t, 12> kMusicNote = {0, 8, 3, 11, 9, 13, 5, 4, 1, 6, 14, 15};
 

@@ -9,7 +9,7 @@ namespace mcpp::entity {
 // opaque. Out of range gives white's, as `DyeColor.byId` does.
 uint32_t dye_texture_colour(int8_t id);
 
-// `ColorLerper.Type`: the two cycles the game lerps a dye through.
+// `ColorLerper.Type.getColor`: the two cycles the game lerps a dye through.
 enum class ColourCycle : uint8_t { Sheep, MusicNote };
 
 // `ColorLerper.getLerpedColor`: where in the cycle this many ticks lands.

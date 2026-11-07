@@ -71,7 +71,7 @@ public:
     // The world's own pass, after the terrain and against its depth: the queue
     // above, with the world's view-projection and the game's two lights
     // pointing the way they do in the world. `eye` is where the camera stands,
-    // as `EntityRenderer::record` takes it, because the queue is relative to it.
+    // as `EntityRenderer`'s own world pass takes it, because the queue is relative to it.
     void record_world(VkCommandBuffer command, const float view_projection[16],
                       const double eye[3], uint32_t width, uint32_t height);
     size_t world_vertices() const { return world_.size(); }

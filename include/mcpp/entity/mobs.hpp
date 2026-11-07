@@ -12,7 +12,7 @@
 
 namespace mcpp::entity {
 
-// `HumanoidModel.ArmPose`: what an arm is doing with what it holds, and the
+// `HumanoidModel.ArmPose.isTwoHanded`: what an arm is doing with what it holds, and the
 // two answers the pose gives about itself, which decide which arm is posed
 // first and whether the other one is posed at all.
 enum class ArmPose : uint8_t {
@@ -43,7 +43,7 @@ struct AnimationState {
     void start_if_stopped(int64_t tick);
     void stop();
     bool running() const { return started; }
-    // `AnimationState.getAccumulatedTime`: milliseconds since it started.
+    // `AnimationState.getTimeInMillis`: milliseconds since it started.
     float elapsed(int64_t tick, float partial) const;
 };
 
@@ -91,7 +91,7 @@ struct MobState {
     // `HumanoidRenderState`.
     float swim_amount = 0.0f;
     float speed_value = 1.0f;
-    // `HumanoidRenderState.maxCrossbowChargeDuration`: zero until the renderer
+    // `HumanoidMobRenderer.extractHumanoidRenderState`: zero until the renderer
     // reads `CrossbowItem.getChargeDuration` off the item in hand, which is
     // what the crossbow arm pose divides by.
     float max_crossbow_charge_duration = 0.0f;
@@ -142,7 +142,7 @@ struct MobState {
     int8_t wool_color = 0;
     bool jeb_sheep = false;
 
-    // `CopperGolemRenderState`: `CopperGolemState` and `WeatheringCopper.WeatherState`.
+    // `CopperGolemRenderState`: `CopperGolemState` and `CopperGolemRenderer.getTextureLocation`.
     uint8_t copper_golem_state = 0;
     uint8_t weathering = 0;
 

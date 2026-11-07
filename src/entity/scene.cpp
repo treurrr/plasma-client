@@ -297,7 +297,7 @@ void Scene::equipment(int32_t id, const Equipment& worn) {
     Tracked* tracked = find(id);
     if (tracked == nullptr) return;
     tracked->worn = worn;
-    // `EquineRenderState.saddle`, `PigRenderState.saddle`: a saddle is a slot
+    // `AbstractHorseRenderer.extractRenderState`, `PigRenderer.extractRenderState`: a saddle is a slot
     // of its own, and the layer that draws it asks only whether it is filled.
     tracked->state.saddled = worn.slots[Equipment::Saddle].count > 0;
 }

@@ -9,7 +9,7 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 
 // A model's parts arrive turned and scaled, so the matrix they arrive in is
-// affine and no more, which is the route `PoseStack.Pose` takes through every
+// affine and no more, which is the route `PoseStack.Pose.pose` takes through every
 // operation below.
 Placement from_matrix(const Matrix& m) { return Placement{m, Placement::kAffine}; }
 
@@ -105,7 +105,7 @@ Matrix crossed_arms_item_placement(const Matrix& arms,
 }
 
 // `PlayerItemInHandLayer.renderItemHeldToEye`, `CustomHeadLayer.translateToHead`
-// with `Transforms.DEFAULT`: the item sits where a worn head would, out to the
+// with `CustomHeadLayer.translateToHead`: the item sits where a worn head would, out to the
 // side of the eye it is held to.
 Matrix head_item_placement(const Matrix& head, bool left_hand,
                            const gpu::HandRenderer::Display& display) {

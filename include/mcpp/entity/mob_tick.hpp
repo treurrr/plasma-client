@@ -16,14 +16,14 @@ struct BinaryAnimator {
     int32_t ticks_old = 0;
 
     void tick(bool on);
-    // The curve is `EasingType.IN_OUT_SINE`, the only one the mobs here ask for.
+    // The curve is `BinaryAnimator.getFactor`, the only one the mobs here ask for.
     float factor(float partial) const;
 };
 
 // The counters a mob's own tick keeps, which no packet carries: each with the
 // previous tick's value beside it, so a frame between two ticks can ease.
 struct MobTick {
-    // `Entity.tickCount`: what the keyframe animations date themselves from.
+    // `Entity.tick`: what the keyframe animations date themselves from.
     int32_t tick_count = 0;
 
     // Inputs vanilla's own tick reads off the entity that this client does not
@@ -42,21 +42,21 @@ struct MobTick {
     // wants two horses not to flick their tails in lockstep seeds it once.
     jmath::LegacyRandom random{0};
 
-    // `Creeper.swell`.
+    // `Creeper.tick`.
     int32_t swell = 0;
     int32_t old_swell = 0;
 
-    // `Sheep.eatAnimationTick`.
+    // `Sheep.aiStep`.
     int32_t eat_animation_tick = 0;
 
-    // `Chicken.flap`.
+    // `Chicken.aiStep`.
     float flap = 0.0f;
     float o_flap = 0.0f;
     float flap_speed = 0.0f;
     float o_flap_speed = 0.0f;
     float flapping = 1.0f;
 
-    // `Wolf.interestedAngle`, `Wolf.shakeAnim`, which the fox shares the first of.
+    // `Wolf.getHeadRollAngle`, `Wolf.getShakeAnim`, which the fox shares the first of.
     float interested_angle = 0.0f;
     float interested_angle_o = 0.0f;
     float shake_anim = 0.0f;
@@ -64,7 +64,7 @@ struct MobTick {
     bool is_wet = false;
     bool is_shaking = false;
 
-    // `Cat.lieDownAmount`, `Cat.relaxStateOneAmount`.
+    // `Cat.getLieDownAmount`, `Cat.getRelaxStateOneAmount`.
     float lie_down_amount = 0.0f;
     float lie_down_amount_o = 0.0f;
     float lie_down_amount_tail = 0.0f;
@@ -72,15 +72,15 @@ struct MobTick {
     float relax_state_one_amount = 0.0f;
     float relax_state_one_amount_o = 0.0f;
 
-    // `Fox.crouchAmount`.
+    // `Fox.getCrouchAmount`.
     float crouch_amount = 0.0f;
     float crouch_amount_o = 0.0f;
 
-    // `Bee.rollAmount`.
+    // `Bee.getRollAmount`.
     float roll_amount = 0.0f;
     float roll_amount_o = 0.0f;
 
-    // `AbstractHorse.eatAnim`, `.standAnim`, `.mouthAnim`, `.tailCounter`.
+    // `AbstractHorse.getEatAnim`, `.standAnim`, `.mouthAnim`, `.tailCounter`.
     float eat_anim = 0.0f;
     float eat_anim_o = 0.0f;
     float stand_anim = 0.0f;
@@ -89,17 +89,17 @@ struct MobTick {
     float mouth_anim_o = 0.0f;
     int32_t tail_counter = 0;
 
-    // `IronGolem.attackAnimationTick`, `.offerFlowerTick`.
+    // `IronGolem.tick`, `.offerFlowerTick`.
     int32_t attack_animation_tick = 0;
     int32_t offer_flower_tick = 0;
 
-    // `Slime.squish`.
+    // `Slime.tick`.
     float squish = 0.0f;
     float o_squish = 0.0f;
     float target_squish = 0.0f;
     bool was_on_ground = false;
 
-    // `Allay.holdingItemAnimationTicks`, `.dancingAnimationTicks`,
+    // `Allay.getHoldingItemAnimationProgress`, `.dancingAnimationTicks`,
     // `.spinningAnimationTicks`.
     float holding_item_animation_ticks = 0.0f;
     float holding_item_animation_ticks_0 = 0.0f;
@@ -113,7 +113,7 @@ struct MobTick {
     BinaryAnimator on_ground_animator;
     BinaryAnimator moving_animator;
 
-    // `Armadillo.inStateTicks` and its three animations; the state rests at -1,
+    // `Armadillo.tick` and its three animations; the state rests at -1,
     // "the server has not said yet", so its first word counts as the change
     // `onSyncedDataUpdated` sees.
     AnimationState roll_out, roll_up, peek;

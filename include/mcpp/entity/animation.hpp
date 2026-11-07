@@ -10,10 +10,10 @@
 
 namespace mcpp::entity {
 
-// `AnimationChannel.Targets`: which of a part's three triples a channel adds to.
+// `ModelPart.offsetPos`: which of a part's three triples a channel adds to.
 enum class AnimationTarget : uint8_t { Position, Rotation, Scale };
 
-// `AnimationChannel.Interpolations`: the two curves a keyframe is reached by.
+// `AnimationChannel.Interpolation.apply`: the two curves a keyframe is reached by.
 enum class Interpolation : uint8_t { Linear, CatmullRom };
 
 // `Keyframe`: a moment and the value the animation holds there, in the units

@@ -50,7 +50,7 @@ void AnimationState::stop() {
     accumulated = 0.0f;
 }
 
-// `AnimationState.getAccumulatedTime`: how long it has run, in milliseconds,
+// `AnimationState.getTimeInMillis`: how long it has run, in milliseconds,
 // which is the unit `KeyframeAnimation` measures its keyframes in.
 float AnimationState::elapsed(int64_t tick, float partial) const {
     if (!started) return 0.0f;

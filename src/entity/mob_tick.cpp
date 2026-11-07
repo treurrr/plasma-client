@@ -74,15 +74,15 @@ bool bit_field(const proto::Metadata& data, std::string_view type, std::string_v
     return (int_field(data, type, name, 0) & bit) != 0;
 }
 
-// `Mob.DATA_MOB_FLAGS_ID`, which the table names `flags_2`.
+// `Mob.isAggressive`, which the table names `flags_2`.
 constexpr int64_t kMobNoAi = 1;
 constexpr int64_t kMobAggressive = 4;
 
-// `TamableAnimal.DATA_FLAGS_ID`, which the table names `flags_3`.
+// `TamableAnimal.isInSittingPose`, which the table names `flags_3`.
 constexpr int64_t kTameSitting = 1;
 constexpr int64_t kTameTame = 4;
 
-// `Fox.DATA_FLAGS_ID`.
+// `Fox.getFlag`.
 constexpr int64_t kFoxSitting = 1;
 constexpr int64_t kFoxCrouching = 4;
 constexpr int64_t kFoxInterested = 8;
@@ -90,17 +90,17 @@ constexpr int64_t kFoxPouncing = 16;
 constexpr int64_t kFoxSleeping = 32;
 constexpr int64_t kFoxFaceplanted = 64;
 
-// `Bee.DATA_FLAGS_ID`.
+// `Bee.getFlag`.
 constexpr int64_t kBeeRoll = 2;
 constexpr int64_t kBeeHasStung = 4;
 constexpr int64_t kBeeHasNectar = 8;
 
-// `AbstractHorse.DATA_ID_FLAGS`.
+// `AbstractHorse.getFlag`.
 constexpr int64_t kHorseEating = 16;
 constexpr int64_t kHorseStanding = 32;
 constexpr int64_t kHorseOpenMouth = 64;
 
-// `Sheep.DATA_WOOL_ID`, `SnowGolem.DATA_PUMPKIN_ID`.
+// `Sheep.getColor`, `SnowGolem.hasPumpkin`.
 constexpr int64_t kSheepSheared = 16;
 constexpr int64_t kSheepColor = 15;
 constexpr int64_t kSnowGolemPumpkin = 16;
@@ -120,15 +120,15 @@ bool fully_frozen(const proto::Metadata& data) {
     return data.int_at(proto::Metadata::kFrozenTicks, 0) >= 140;
 }
 
-// `Creeper.maxSwell`: never synced, so a creeper carrying a `Fuse` of its own
+// `Creeper.getSwelling`: never synced, so a creeper carrying a `Fuse` of its own
 // still swells at this pace.
 constexpr int32_t kCreeperMaxSwell = 30;
 
-// `Wolf.TAME_HEALTH`: what `applyTamingSideEffects` puts on a tamed wolf's
+// `Wolf.applyTamingSideEffects`: what `applyTamingSideEffects` puts on a tamed wolf's
 // max health attribute, which no packet this client reads carries.
 constexpr float kWolfTameHealth = 40.0f;
 
-// `Armadillo.ArmadilloState`, in the order the serializer numbers them.
+// `Armadillo.getState`, in the order the serializer numbers them.
 constexpr int32_t kArmadilloRolling = 1;
 constexpr int32_t kArmadilloScared = 2;
 constexpr int32_t kArmadilloUnrolling = 3;
@@ -593,7 +593,7 @@ void BinaryAnimator::tick(bool on) {
     }
 }
 
-// `BinaryAnimator.getFactor`, through `EasingType.IN_OUT_SINE`.
+// `BinaryAnimator.getFactor`, through `BinaryAnimator.getFactor`.
 float BinaryAnimator::factor(float partial) const {
     const float t = lerp(partial, static_cast<float>(ticks_old), static_cast<float>(ticks)) /
                     static_cast<float>(length);
@@ -870,7 +870,7 @@ void mob_entity_event(std::string_view type, uint8_t status, MobTick& own) {
             }
             break;
 
-        // `Armadillo.handleEntityEvent`: `EntityEvent.ARMADILLO_PEEK`, which
+        // `Armadillo.handleEntityEvent`: `Armadillo.handleEntityEvent`, which
         // the next tick restarts the peek from.
         case Kind::Armadillo:
             if (status == 64) own.peek_received_client = true;

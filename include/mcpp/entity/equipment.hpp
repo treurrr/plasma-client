@@ -12,7 +12,7 @@
 
 namespace mcpp::entity {
 
-// `EquipmentClientInfo.LayerType`, in the enum's own order.
+// `EquipmentClientInfo.LayerType.getSerializedName`, in the enum's own order.
 enum class LayerType : uint8_t {
     Humanoid,
     HumanoidLeggings,
@@ -38,7 +38,7 @@ constexpr size_t kLayerTypes = 18;
 // The name the game serialises a layer type under ("humanoid_leggings").
 std::string_view layer_type_name(LayerType type);
 
-// `EquipmentClientInfo.Layer`.
+// `EquipmentClientInfo.Layer.getTextureLocation`.
 struct EquipmentLayer {
     std::string texture;              // under textures/entity/, no extension
     bool dyeable = false;

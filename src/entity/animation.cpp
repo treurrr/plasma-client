@@ -89,7 +89,7 @@ float catmullrom(float t, float a, float b, float c, float d) {
                    (3.0f * b - a - 3.0f * c + d) * t * t * t);
 }
 
-// `AnimationChannel.Interpolations.LINEAR`: the post-target of the keyframe
+// `AnimationChannel.Interpolation.apply`: the post-target of the keyframe
 // behind, lerped toward the pre-target of the one ahead, then scaled.
 std::array<float, 3> linear(float t, const std::vector<Keyframe>& keys, int32_t from, int32_t to,
                             float scale) {
@@ -100,7 +100,7 @@ std::array<float, 3> linear(float t, const std::vector<Keyframe>& keys, int32_t 
     return out;
 }
 
-// `AnimationChannel.Interpolations.CATMULLROM`: the four post-targets around
+// `Mth.catmullrom`: the four post-targets around
 // the pair, through the game's spline.
 std::array<float, 3> catmull_rom(float t, const std::vector<Keyframe>& keys, int32_t from,
                                  int32_t to, float scale) {

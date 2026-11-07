@@ -331,7 +331,7 @@ private:
     int32_t head_, body_;
     int32_t right_hind_leg_, left_hind_leg_, right_front_leg_, left_front_leg_;
     int32_t tail_;
-    // `FoxModel.legMotionPos`: the scrabble of a faceplanted fox, which vanilla
+    // `FoxModel.setupAnim`: the scrabble of a faceplanted fox, which vanilla
     // also keeps on the one model every fox is drawn with.
     mutable float leg_motion_pos_ = 0.0f;
 };

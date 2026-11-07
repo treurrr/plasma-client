@@ -779,7 +779,205 @@ int entityreplay(int argc, char** argv) {
     return 0;
 }
 
-// A crowd of players walking in a grid, for what entities cost: the tick,
+// Every mob the table knows, summoned on the vanilla server and drawn: the
+// client is the one that has to recognise the type, read what the server says
+// about it, find its layers and queue them. Every entity it summons is killed
+// again before it returns, whether it passed or not.
+int entitymobs(int argc, char** argv) {
+    if (argc < 4) {
+        std::cerr << "usage: entitymobs <host[:port]> <name> [console.in] [out-dir]\n";
+        return 2;
+    }
+    const std::filesystem::path console =
+        argc > 4 ? argv[4] : std::filesystem::path(std::getenv("HOME")) / "plasma-testserver" /
+                                 "console.in";
+    const std::filesystem::path out_dir = argc > 5 ? argv[5] : "";
+    // Far from spawn and from every other agent's spot. The server picks the
+    // height: dropped into the air, its own flight check would throw us off.
+    constexpr double kX = 7413.0;
+    constexpr double kZ = -7413.0;
+    const std::string tag = "plasmaH";
+
+    const auto say = [&console](const std::string& line) {
+        std::ofstream(console, std::ios::app) << line << '\n';
+    };
+    // Everything this test made, gone again, however it ends.
+    struct Sweep {
+        std::function<void()> run;
+        ~Sweep() { run(); }
+    } sweep{[&] { say(std::format("kill @e[tag={}]", tag)); }};
+
+    mcpp::entity::Assets assets;
+    mcpp::world::Atlas atlas;
+    if (!assets.open(mcpp::entity::Assets::default_path(kProtocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(kProtocol))) {
+        std::cerr << "baked data missing\n";
+        return 1;
+    }
+    mcpp::entity::EquipmentAssets equipment;
+    equipment.open(mcpp::entity::EquipmentAssets::default_path(kProtocol));
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options gpu_options;
+    device.create(gpu_options);
+    constexpr uint32_t kSide = 512;
+    mcpp::gpu::WorldRenderer world(device, kSide, kSide, atlas);
+    mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
+    renderer.load(assets);
+
+    auto types = mcpp::entity::load_entity_types(mcpp::entity::default_registries_path(kProtocol));
+    mcpp::entity::Scene scene(types, nullptr);
+    scene.bind(renderer, &equipment);
+
+    auto options = options_for(argv[2], argv[3]);
+    bool placed = false;
+    double me_at[3] = {0.0, 0.0, 0.0};
+    std::vector<int32_t> alive;
+    int32_t summoning = -1;
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.player.on_position = [&](double x, double y, double z, float, float) {
+        me_at[0] = x;
+        me_at[1] = y;
+        me_at[2] = z;
+        placed = true;
+    };
+    events.entities.on_add = [&](const mcpp::Entity& entity) {
+        scene.add(entity);
+        if (entity.type == summoning) alive.push_back(entity.id);
+    };
+    events.entities.on_moved = [&](const mcpp::EntityMove& move) { scene.moved(move); };
+    events.entities.on_head = [&](int32_t id, float yaw) { scene.head(id, yaw); };
+    events.entities.on_remove = [&](int32_t id) {
+        scene.remove(id);
+        std::erase(alive, id);
+    };
+    events.entities.on_equipment = [&](int32_t id, const mcpp::Equipment& worn) {
+        scene.equipment(id, worn);
+    };
+    mcpp::Session session(options, events);
+    events.data.on_entity_data = [&](int32_t id) {
+        const auto& all = session.entities();
+        if (const auto found = all.find(id); found != all.end()) {
+            scene.metadata(id, found->second.metadata);
+        }
+    };
+    session.connect();
+    const auto joined = Clock::now();
+    while (!placed && Clock::now() - joined < std::chrono::seconds(20)) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (!placed) {
+        std::cerr << "never joined\n";
+        return 1;
+    }
+    const std::string me = argv[3];
+    // `spreadplayers` with no spread puts us on solid ground at that spot,
+    // which `tp` to a guessed height would not.
+    say(std::format("spreadplayers {} {} 0 1 false {}", kX, kZ, me));
+    for (int i = 0; i < 200 && std::abs(me_at[0] - kX) > 32.0; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    for (int i = 0; i < 60; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (std::abs(me_at[0] - kX) > 32.0) {
+        std::cerr << std::format("never reached the spot: at {:.1f} {:.1f} {:.1f}\n", me_at[0],
+                                 me_at[1], me_at[2]);
+        return 1;
+    }
+    const double at_x = me_at[0];
+    const double at_y = me_at[1];
+    const double at_z = me_at[2];
+    std::cout << std::format("- testing at {:.1f} {:.1f} {:.1f}\n", at_x, at_y, at_z);
+
+    mcpp::entity::View view;
+    view.eye[0] = at_x;
+    view.eye[1] = at_y + 1.6;
+    view.eye[2] = at_z + 4.0;
+    view.forward[0] = 0.0f;
+    view.forward[1] = -0.1f;
+    view.forward[2] = -1.0f;
+    view.partial = 0.5f;
+    const auto light = [](int32_t, int32_t, int32_t) -> std::array<uint8_t, 2> {
+        return {15, 0};
+    };
+
+    int passed = 0;
+    int failed = 0;
+    for (const mcpp::entity::MobType& row : mcpp::entity::mob_types()) {
+        const std::string name(row.type);
+        const std::string short_name = name.substr(name.find(':') + 1);
+        summoning = -1;
+        for (size_t at = 0; at < types.size(); ++at) {
+            if (types[at] == row.type) summoning = static_cast<int32_t>(at);
+        }
+        say(std::format("summon {} {} {} {} {{Tags:[\"{}\"],NoAI:1b,Silent:1b}}", name, at_x,
+                        at_y, at_z, tag));
+        // Let it arrive, let its metadata and its equipment follow.
+        const size_t before = alive.size();
+        for (int i = 0; i < 40 && alive.size() == before; ++i) {
+            drain(session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        for (int i = 0; i < 10; ++i) {
+            drain(session);
+            scene.tick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        renderer.begin();
+        scene.draw(renderer, view, light);
+        const auto& stats = scene.stats();
+        size_t mine = 0;
+        for (const int32_t id : alive) {
+            const mcpp::entity::MobState* state = scene.state(id);
+            if (state != nullptr && state->entity_id == id) ++mine;
+        }
+        const bool ok = mine >= 1 && stats.drawn >= 1 && stats.layers >= 1 && stats.parts >= 1;
+        if (ok) ++passed;
+        else ++failed;
+        std::cout << std::format("{} {:<28} summoned {} tracked {} drawn {} layers {}\n",
+                                 ok ? "ok  " : "FAIL", short_name, mine, stats.tracked,
+                                 stats.drawn, stats.layers);
+        if (!out_dir.empty()) {
+            world.set_in_world([&](VkCommandBuffer command, const float* view_projection,
+                                   uint32_t w, uint32_t h, const float* fog,
+                                   const mcpp::gpu::Camera& cam) {
+                const double at[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
+                renderer.record(command, view_projection, at, w, h, fog, 0.0f, 0.0f);
+            });
+            mcpp::gpu::Camera camera{};
+            for (int axis = 0; axis < 3; ++axis) {
+                camera.eye[axis] = static_cast<float>(view.eye[axis]);
+                camera.target[axis] = static_cast<float>(view.eye[axis]) + view.forward[axis] * 4.0f;
+            }
+            camera.fov_degrees = 70.0f;
+            camera.near_plane = 0.05f;
+            mcpp::write_png((out_dir / std::format("summoned-{}.png", short_name)).string(), kSide,
+                            kSide, world.render(camera));
+        }
+        // This one goes before the next arrives, so one summon is one entity.
+        say(std::format("kill @e[tag={}]", tag));
+        for (int i = 0; i < 20 && !alive.empty(); ++i) {
+            drain(session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        summoning = -1;
+    }
+    say(std::format("kill @e[tag={}]", tag));
+    for (int i = 0; i < 40; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    std::cout << std::format("- {} drawn, {} not, {} left behind\n", passed, failed,
+                             alive.size());
+    return failed == 0 && alive.empty() ? 0 : 1;
+}
+
+// A crowd walking in a grid, for what entities cost: the tick,
 // the posing and the gpu, each against the same frame with no one in it.
 int entitybench(int argc, char** argv) {
     const int count = argc > 2 ? std::stoi(argv[2]) : 200;
@@ -803,19 +1001,33 @@ int entitybench(int argc, char** argv) {
     }
     mcpp::entity::Scene scene(types, nullptr);
     scene.bind(renderer);
+    // Every type the table knows, in turn, with a player every tenth, so the
+    // cost is a crowd's rather than one model's drawn two hundred times.
+    const auto rows = mcpp::entity::mob_types();
+    std::vector<int32_t> mixed;
+    for (const mcpp::entity::MobType& row : rows) {
+        for (size_t at = 0; at < types.size(); ++at) {
+            if (types[at] == row.type) mixed.push_back(static_cast<int32_t>(at));
+        }
+    }
+    if (mixed.empty() && player >= 0) mixed.push_back(player);
     const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count))));
     for (int i = 0; i < count; ++i) {
         mcpp::Entity e;
         e.id = i + 1;
-        e.type = player;
+        e.type = i % 10 == 0 || mixed.empty()
+                     ? player
+                     : mixed[static_cast<size_t>(i) % mixed.size()];
         e.uuid[0] = 0x1234567800000000ull + static_cast<uint64_t>(i);
         e.uuid[1] = 0x9abcdef000000000ull + static_cast<uint64_t>(i) * 7919;
         e.x = (i % side) * 1.5;
         e.z = 6.0 + (i / side) * 1.5;
-        mcpp::PlayerInfo info;
-        info.uuid = mcpp::uuid_string(e.uuid);
-        info.name = std::format("Plasma{}", i);
-        scene.player_info(info);
+        if (e.type == player) {
+            mcpp::PlayerInfo info;
+            info.uuid = mcpp::uuid_string(e.uuid);
+            info.name = std::format("Plasma{}", i);
+            scene.player_info(info);
+        }
         scene.add(e);
     }
     mcpp::gpu::Camera camera{};
@@ -875,11 +1087,11 @@ int entitybench(int argc, char** argv) {
     }
     const double n = kFrames - 20;
     std::cout << std::format(
-        "- {} players, {} drawn, {} part matrices a frame\n"
+        "- {} entities of {} types, {} drawn, {} part matrices a frame\n"
         "- cpu: tick {:.3f} ms (packets and one tick), pose and queue {:.3f} ms a frame\n"
-        "- gpu: {:.3f} ms with them, {:.3f} ms without, {:.3f} ms for the players\n",
-        count, scene.stats().drawn, scene.stats().parts, tick_ms / n, pose_ms / n, gpu_with / n,
-        gpu_without / n, (gpu_with - gpu_without) / n);
+        "- gpu: {:.3f} ms with them, {:.3f} ms without, {:.3f} ms for the crowd\n",
+        count, mixed.size() + 1, scene.stats().drawn, scene.stats().parts, tick_ms / n,
+        pose_ms / n, gpu_with / n, gpu_without / n, (gpu_with - gpu_without) / n);
     if (argc > 3) {
         draw_entities = true;
         renderer.begin();
@@ -896,6 +1108,7 @@ int entity_command(int argc, char** argv) {
     const std::string command = argv[1];
     if (command == "entityshot") return entityshot(argc, argv);
     if (command == "entitybot") return entitybot(argc, argv);
+    if (command == "entitymobs") return entitymobs(argc, argv);
     if (command == "entityrecord") return entityrecord(argc, argv);
     if (command == "entityreplay") return entityreplay(argc, argv);
     if (command == "entitybench") return entitybench(argc, argv);
