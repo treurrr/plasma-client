@@ -139,6 +139,7 @@ add_library(mcpp_net STATIC
     src/ui/screens/container_screen.cpp
     src/ui/screens/registry.cpp
     src/ui/screens/creative_screen.cpp
+    src/ui/screens/container_menus.cpp
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp
@@ -165,6 +166,7 @@ add_library(mcpp_net STATIC
     src/entity/mob_animal.cpp
     src/entity/mob_monster.cpp
     src/entity/mob_keyframe.cpp
+    src/entity/mob_armor_stand.cpp
     src/entity/mob_tick.cpp
     src/entity/animation.cpp
     src/entity/dye.cpp
@@ -172,6 +174,7 @@ add_library(mcpp_net STATIC
     src/entity/scene.cpp
     src/entity/block_entities.cpp
     src/entity/held_items.cpp
+    src/entity/objects.cpp
     src/skins.cpp
     src/gpu/entity_renderer.cpp
 )
@@ -238,6 +241,7 @@ mcpp_test(entities)
 mcpp_test(sound)
 mcpp_test(breaking)
 mcpp_test(particles)
+mcpp_test(objects)
 add_subdirectory(src/audio)
 
 # The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it

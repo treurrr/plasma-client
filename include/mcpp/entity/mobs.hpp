@@ -224,6 +224,16 @@ struct MobState {
     AnimationState golem_idle, golem_get_item, golem_get_no_item, golem_drop_item,
         golem_drop_no_item;
 
+    // `ArmorStandRenderState`.
+    bool marker = false;
+    bool show_arms = false;
+    bool show_base_plate = true;
+    // `ArmorStandRenderState.wiggle`: ticks since the stand was last hit.
+    float wiggle = 1000.0f;
+    // The six `Rotations` the server sends, in degrees, in `ArmorStand`'s own
+    // order: head, body, left arm, right arm, left leg, right leg.
+    std::array<std::array<float, 3>, 6> stand_poses{};
+
     // `CopperGolemStatueBlockRenderer`: the `Direction` a statue faces, 2..5,
     // the same numbering as `bed_orientation`.
     int8_t facing = 3;

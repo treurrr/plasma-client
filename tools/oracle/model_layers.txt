@@ -155,3 +155,52 @@ copper_golem#eyes               copper_golem
 copper_golem_running            copper_golem_statue
 copper_golem_sitting            copper_golem_statue
 copper_golem_star               copper_golem_statue
+
+# The armour stand, its small variant and the armour layers over both, which
+# `ArmorModelSet.bake` builds with the stand's own humanoid model class.
+armor_stand                     armor_stand
+armor_stand#helmet              armor_stand_armor
+armor_stand#chestplate          armor_stand_armor
+armor_stand#leggings            armor_stand_armor
+armor_stand#boots               armor_stand_armor
+armor_stand_small               armor_stand
+armor_stand_small#helmet        armor_stand_armor
+armor_stand_small#chestplate    armor_stand_armor
+armor_stand_small#leggings      armor_stand_armor
+armor_stand_small#boots         armor_stand_armor
+
+# The object entities' own layers. Their models animate no part - the boat's
+# paddles are the one exception, and they are posed by `objects.cpp` rather
+# than by a `MobModel` - so only their geometry is compared here.
+arrow                           geometry
+trident                         geometry
+wind_charge                     geometry
+leash_knot                      geometry
+minecart                        geometry
+chest_minecart                  geometry
+furnace_minecart                geometry
+hopper_minecart                 geometry
+tnt_minecart                    geometry
+spawner_minecart                geometry
+command_block_minecart          geometry
+boat/oak                        geometry
+boat/spruce                     geometry
+boat/birch                      geometry
+boat/jungle                     geometry
+boat/acacia                     geometry
+boat/cherry                     geometry
+boat/dark_oak                   geometry
+boat/pale_oak                   geometry
+boat/mangrove                   geometry
+boat/bamboo                     geometry
+boat#water_patch                geometry
+chest_boat/oak                  geometry
+chest_boat/spruce               geometry
+chest_boat/birch                geometry
+chest_boat/jungle               geometry
+chest_boat/acacia               geometry
+chest_boat/cherry               geometry
+chest_boat/dark_oak             geometry
+chest_boat/pale_oak             geometry
+chest_boat/mangrove             geometry
+chest_boat/bamboo               geometry

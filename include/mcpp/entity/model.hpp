@@ -130,6 +130,9 @@ std::array<float, 4> quaternion_x(float radians);
 std::array<float, 4> quaternion_y(float radians);
 std::array<float, 4> quaternion_z(float radians);
 std::array<float, 4> quaternion_xyz(float x, float y, float z);
+// `Quaternionf.rotationYXZ`: the camera's own turn, and the one a display
+// entity's billboard asks for.
+std::array<float, 4> quaternion_yxz(float y, float x, float z);
 // Degrees through a float, which is what `rotationDegrees` passes on.
 float to_radians(float degrees);
 

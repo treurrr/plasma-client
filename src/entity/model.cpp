@@ -413,6 +413,15 @@ std::array<float, 4> quaternion_xyz(float x, float y, float z) {
             cx * cycz - sx * sysz};
 }
 
+// `Quaternionf.rotationYXZ`: the camera's turn, and a display entity's.
+std::array<float, 4> quaternion_yxz(float y, float x, float z) {
+    const float hx = x * 0.5f, hy = y * 0.5f, hz = z * 0.5f;
+    const float sx = std::sin(hx), sy = std::sin(hy), sz = std::sin(hz);
+    const float cx = cos_from_sin(sx, hx), cy = cos_from_sin(sy, hy), cz = cos_from_sin(sz, hz);
+    const float qx = cy * sx, qy = sy * cx, qz = sy * sx, qw = cy * cx;
+    return {qx * cz + qy * sz, qy * cz - qx * sz, qw * sz - qz * cz, qw * cz + qz * sz};
+}
+
 // `Axis.rotationDegrees`: degrees through a float on their way to a turn.
 float to_radians(float degrees) { return degrees * static_cast<float>(M_PI / 180.0); }
 

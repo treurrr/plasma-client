@@ -6,6 +6,7 @@
 #include "mcpp/entity/mob_tick.hpp"
 #include "mcpp/entity/mobs.hpp"
 #include "mcpp/entity/motion.hpp"
+#include "mcpp/entity/objects.hpp"
 #include "mcpp/gpu/entity_renderer.hpp"
 #include "mcpp/session.hpp"
 #include "mcpp/skins.hpp"
@@ -61,6 +62,12 @@ public:
     // so it goes to the renderer that owns the item quads. Without one, a mob
     // is drawn with empty hands.
     void hold_items_with(gpu::HandRenderer* hand, const world::Atmosphere* atmosphere);
+    // The entities that are not bodies - dropped items, holograms, boats,
+    // minecarts, projectiles - need the item table to name an item and the
+    // block table to name the block a falling block or a display is made of.
+    // Without them nothing in `objects.hpp` with geometry of its own is drawn.
+    void draw_objects_with(const ui::ItemTable* items,
+                           std::function<std::string_view(int32_t)> block_name);
 
     void add(const Entity& entity);
     void moved(const EntityMove& move);
@@ -144,6 +151,10 @@ private:
         // `Entity.getCustomName`, and whether the server wants it shown.
         std::string custom_name;
         bool show_name = false;
+        // `ArmorStand.lastHit`: the tick entity event 32 last arrived on, for
+        // the wobble a hit knocks a stand into. The client has no game time of
+        // its own, so this counts the scene's own ticks.
+        int64_t last_hit = -1000;
     };
     struct PlayerLine {
         std::string name;
@@ -164,6 +175,12 @@ private:
     uint32_t dyed_colour(const ItemStack& stack) const;
     void draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
                   const LightAt& light);
+    // The non-living renderers: `objects.hpp` works out the pieces, this hands
+    // each one to whichever queue draws it.
+    bool draw_object(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
+                     const LightAt& light);
+    ObjectState object_state(const Tracked& tracked, const ObjectType& row,
+                             const View& view) const;
     void draw_player(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
                      const LightAt& light);
     // One model over an already-posed body: an overlay, or an armour piece.
@@ -211,6 +228,9 @@ private:
     // The pose an overlay or an armour piece is animated into: one layer at a
     // time, so one buffer serves them all.
     Pose scratch_;
+    // Where the object renderers get a model layer, an item and a block name.
+    ObjectAssets object_assets_;
+    std::vector<ObjectPiece> pieces_;
     SceneStats stats_;
     uint64_t ticks_ = 0;
     int32_t protocol_ = 774;

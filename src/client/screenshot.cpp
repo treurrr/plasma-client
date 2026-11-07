@@ -17,7 +17,9 @@
 #include "mcpp/ui/world.hpp"
 #include "mcpp/world/atlas.hpp"
 
+#include <array>
 #include <chrono>
+#include <functional>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -26,6 +28,45 @@
 #include <thread>
 
 namespace client {
+namespace {
+
+// F: `container_set_data` for the menus that read a property, so a shot of a
+// furnace has a flame half burnt and an arrow half across rather than an empty
+// window. Each menu numbers its own properties, so the table is per screen.
+std::function<int32_t(int)> shown_properties(std::string_view screen) {
+    if (screen == "furnace" || screen == "blastfurnace" || screen == "smoker") {
+        // `AbstractFurnaceMenu`: lit ticks, how long the fuel lasts, how far
+        // into the recipe, how long it takes.
+        return [](int index) { return std::array<int32_t, 4>{90, 200, 60, 200}[index & 3]; };
+    }
+    if (screen == "brewingstand") {
+        // `BrewingStandMenu`: ticks of brewing left, and the blaze powder.
+        return [](int index) { return index == 0 ? 220 : index == 1 ? 14 : 0; };
+    }
+    if (screen == "enchanting") {
+        // `EnchantmentMenu`: the three costs, the seed, the enchantment clues
+        // and the level clues.
+        return [](int index) {
+            constexpr std::array<int32_t, 10> table = {4, 12, 24, 987654, 7, 16, 33, 1, 2, 3};
+            return index >= 0 && index < 10 ? table[static_cast<size_t>(index)] : 0;
+        };
+    }
+    if (screen == "anvil") {
+        // `AnvilMenu`: the level cost.
+        return [](int index) { return index == 0 ? 17 : 0; };
+    }
+    if (screen == "beacon") {
+        // `BeaconMenu`: the tier the pyramid reached, then the two effects.
+        return [](int index) { return index == 0 ? 4 : 0; };
+    }
+    if (screen == "merchant") {
+        // `MerchantMenu`: the villager's experience towards its next level.
+        return [](int index) { return index == 0 ? 70 : 0; };
+    }
+    return nullptr;
+}
+
+} // namespace
 
 void draw_pause_over(mcpp::gpu::UiRenderer& quads, mcpp::gpu::WorldRenderer& renderer,
                      uint32_t width, uint32_t height) {
@@ -199,6 +240,7 @@ int screenshot(const std::vector<std::string>& args) {
     for (const auto& entry : todo) {
         for (const int scale : scales) {
             world.menu = entry.name == "crafting" ? &table_menu : &inventory_menu;
+            world.container_property = shown_properties(entry.name);
             mcpp::ui::ScreenManager manager;
             manager.lang = &lang;
             manager.font = &font;

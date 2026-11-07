@@ -16,7 +16,10 @@
 #include "mcpp/image_png.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/skins.hpp"
+#include "mcpp/ui/items.hpp"
 #include "mcpp/world/atlas.hpp"
+#include "mcpp/world/atmosphere.hpp"
+#include "mcpp/world/block_table.hpp"
 
 #include <algorithm>
 #include <array>
@@ -977,6 +980,245 @@ int entitymobs(int argc, char** argv) {
     return failed == 0 && alive.empty() ? 0 : 1;
 }
 
+// The NBT one of the object entities needs to be worth looking at: a dropped
+// item needs an item, a falling block a block, a hologram some text.
+std::string object_nbt(std::string_view type, std::string_view tag) {
+    const auto with = [&](std::string_view rest) {
+        return std::format("{{Tags:[\"{}\"],Silent:1b{}{}}}", tag, rest.empty() ? "" : ",", rest);
+    };
+    if (type == "minecraft:item") {
+        return with("Item:{id:\"minecraft:diamond\",count:17},Age:0s,PickupDelay:32767s");
+    }
+    if (type == "minecraft:falling_block") return with("BlockState:{Name:\"minecraft:sand\"}");
+    if (type == "minecraft:tnt") return with("fuse:60s,block_state:{Name:\"minecraft:tnt\"}");
+    if (type == "minecraft:experience_orb") return with("Value:42s,Age:0s");
+    if (type == "minecraft:text_display") {
+        return with("text:'{\"text\":\"Plasma lobby\"}',billboard:\"center\"");
+    }
+    if (type == "minecraft:item_display") {
+        return with("item:{id:\"minecraft:diamond_sword\",count:1},item_display:\"ground\"");
+    }
+    if (type == "minecraft:block_display") return with("block_state:{Name:\"minecraft:stone\"}");
+    if (type.ends_with("_minecart") || type == "minecraft:minecart") return with("");
+    if (type == "minecraft:snowball" || type == "minecraft:egg" ||
+        type == "minecraft:ender_pearl") {
+        return with("");
+    }
+    return with("");
+}
+
+// Every object entity the client draws, one at a time, on the server: summoned
+// at this agent's own spot, drawn, looked at from three sides and killed again.
+int entityobjects(int argc, char** argv) {
+    if (argc < 4) {
+        std::cerr << "usage: entityobjects <host[:port]> <name> [console.in] [out-dir]\n";
+        return 2;
+    }
+    const std::filesystem::path console =
+        argc > 4 ? argv[4] : std::filesystem::path(std::getenv("HOME")) / "plasma-testserver" /
+                                 "console.in";
+    const std::filesystem::path out_dir = argc > 5 ? argv[5] : "";
+    // This agent's own spot, far from spawn and from every other agent's.
+    constexpr double kX = -8329.0;
+    constexpr double kZ = 8329.0;
+    const std::string tag = "plasmaS6";
+
+    const auto say = [&console](const std::string& line) {
+        std::ofstream(console, std::ios::app) << line << '\n';
+    };
+    struct Sweep {
+        std::function<void()> run;
+        ~Sweep() { run(); }
+    } sweep{[&] { say(std::format("kill @e[tag={}]", tag)); }};
+
+    mcpp::entity::Assets assets;
+    mcpp::world::Atlas atlas;
+    if (!assets.open(mcpp::entity::Assets::default_path(kProtocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(kProtocol))) {
+        std::cerr << "baked data missing\n";
+        return 1;
+    }
+    mcpp::ui::ItemTable items;
+    items.load(mcpp::ui::ItemTable::default_path(kProtocol));
+    mcpp::world::BlockTable blocks;
+    const bool have_blocks = blocks.open(mcpp::world::BlockTable::default_path(kProtocol));
+    if (!have_blocks) std::cout << "- no block table; a falling block draws nothing\n";
+
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options gpu_options;
+    device.create(gpu_options);
+    constexpr uint32_t kSide = 512;
+    mcpp::gpu::WorldRenderer world(device, kSide, kSide, atlas);
+    mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
+    renderer.load(assets);
+    mcpp::gpu::HandRenderer hand(device, world.colour_format(), world.depth_format(),
+                                 mcpp::gpu::HandRenderer::default_path(kProtocol));
+    mcpp::world::Atmosphere atmosphere;
+
+    auto types = mcpp::entity::load_entity_types(mcpp::entity::default_registries_path(kProtocol));
+    mcpp::entity::Scene scene(types, nullptr);
+    scene.bind(renderer);
+    scene.hold_items_with(&hand, &atmosphere);
+    scene.draw_objects_with(&items, [&blocks, have_blocks](int32_t state) -> std::string_view {
+        return have_blocks ? blocks.block_name(state) : std::string_view{};
+    });
+
+    auto options = options_for(argv[2], argv[3]);
+    bool placed = false;
+    double me_at[3] = {0.0, 0.0, 0.0};
+    std::vector<int32_t> alive;
+    int32_t summoning = -1;
+    mcpp::SessionEvents events;
+    events.on_status = [](std::string_view line) { std::cout << "- " << line << '\n'; };
+    events.player.on_position = [&](double x, double y, double z, float, float) {
+        me_at[0] = x;
+        me_at[1] = y;
+        me_at[2] = z;
+        placed = true;
+    };
+    events.entities.on_add = [&](const mcpp::Entity& entity) {
+        scene.add(entity);
+        if (entity.type == summoning) alive.push_back(entity.id);
+    };
+    events.entities.on_moved = [&](const mcpp::EntityMove& move) { scene.moved(move); };
+    events.entities.on_remove = [&](int32_t id) {
+        scene.remove(id);
+        std::erase(alive, id);
+    };
+    mcpp::Session session(options, events);
+    events.data.on_entity_data = [&](int32_t id) {
+        const auto& all = session.entities();
+        if (const auto found = all.find(id); found != all.end()) {
+            scene.metadata(id, found->second.metadata);
+        }
+    };
+    session.connect();
+    const auto joined = Clock::now();
+    while (!placed && Clock::now() - joined < std::chrono::seconds(20)) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (!placed) {
+        std::cerr << "never joined\n";
+        return 1;
+    }
+    const std::string me = argv[3];
+    say(std::format("spreadplayers {} {} 0 1 false {}", kX, kZ, me));
+    for (int i = 0; i < 200 && std::abs(me_at[0] - kX) > 32.0; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    for (int i = 0; i < 60; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (std::abs(me_at[0] - kX) > 32.0) {
+        std::cerr << std::format("never reached the spot: at {:.1f} {:.1f} {:.1f}\n", me_at[0],
+                                 me_at[1], me_at[2]);
+        return 1;
+    }
+    const double at_x = me_at[0];
+    const double at_y = me_at[1];
+    const double at_z = me_at[2];
+    std::cout << std::format("- testing at {:.1f} {:.1f} {:.1f}\n", at_x, at_y, at_z);
+
+    const auto light = [](int32_t, int32_t, int32_t) -> std::array<uint8_t, 2> {
+        return {15, 0};
+    };
+    // The front, its own right and straight down: the three sides that show a
+    // placement's mistakes.
+    const std::array<std::array<float, 6>, 3> sides = {{
+        {0.0f, 1.0f, 3.0f, 0.0f, -0.2f, -1.0f},
+        {3.0f, 1.0f, 0.0f, -1.0f, -0.2f, 0.0f},
+        {0.0f, 3.0f, 0.01f, 0.0f, -1.0f, 0.0f},
+    }};
+
+    int passed = 0;
+    int failed = 0;
+    for (const mcpp::entity::ObjectType& row : mcpp::entity::object_types()) {
+        if (row.type.empty()) continue;
+        const std::string name(row.type);
+        const std::string short_name = name.substr(name.find(':') + 1);
+        summoning = -1;
+        for (size_t at = 0; at < types.size(); ++at) {
+            if (types[at] == row.type) summoning = static_cast<int32_t>(at);
+        }
+        if (summoning < 0) {
+            std::cout << std::format("skip {:<28} the server has no such type\n", short_name);
+            continue;
+        }
+        say(std::format("summon {} {} {} {} {}", name, at_x, at_y + 1.0, at_z,
+                        object_nbt(row.type, tag)));
+        const size_t before = alive.size();
+        for (int i = 0; i < 40 && alive.size() == before; ++i) {
+            drain(session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        for (int i = 0; i < 10; ++i) {
+            drain(session);
+            scene.tick();
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        size_t drawn = 0;
+        size_t items_queued = 0;
+        for (size_t side = 0; side < sides.size(); ++side) {
+            mcpp::entity::View view;
+            view.eye[0] = at_x + sides[side][0];
+            view.eye[1] = at_y + sides[side][1];
+            view.eye[2] = at_z + sides[side][2];
+            for (int axis = 0; axis < 3; ++axis) {
+                view.forward[axis] = sides[side][3 + static_cast<size_t>(axis)];
+            }
+            view.partial = 0.5f;
+            renderer.begin();
+            hand.begin();
+            scene.draw(renderer, view, light);
+            drawn = std::max(drawn, scene.stats().drawn);
+            items_queued = std::max(items_queued, hand.world_vertices());
+            if (out_dir.empty()) continue;
+            world.set_in_world([&](VkCommandBuffer command, const float* view_projection,
+                                   uint32_t w, uint32_t h, const float* fog,
+                                   const mcpp::gpu::Camera& cam) {
+                const double at[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
+                renderer.record(command, view_projection, at, w, h, fog, 0.0f, 0.0f);
+                hand.record_world(command, view_projection, at, w, h);
+            });
+            mcpp::gpu::Camera camera{};
+            for (int axis = 0; axis < 3; ++axis) {
+                camera.eye[axis] = static_cast<float>(view.eye[axis]);
+                camera.target[axis] =
+                    static_cast<float>(view.eye[axis]) + view.forward[axis] * 4.0f;
+            }
+            camera.fov_degrees = 70.0f;
+            camera.near_plane = 0.05f;
+            static constexpr std::array<std::string_view, 3> kSideNames = {"front", "side",
+                                                                          "above"};
+            mcpp::write_png(
+                (out_dir / std::format("object-{}-{}.png", short_name, kSideNames[side])).string(),
+                kSide, kSide, world.render(camera));
+        }
+        const bool ok = drawn >= 1 || items_queued > 0;
+        if (ok) ++passed;
+        else ++failed;
+        std::cout << std::format("{} {:<28} drawn {} item vertices {}\n", ok ? "ok  " : "FAIL",
+                                 short_name, drawn, items_queued);
+        say(std::format("kill @e[tag={}]", tag));
+        for (int i = 0; i < 20 && !alive.empty(); ++i) {
+            drain(session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        summoning = -1;
+    }
+    say(std::format("kill @e[tag={}]", tag));
+    for (int i = 0; i < 40; ++i) {
+        drain(session);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    std::cout << std::format("- {} drawn, {} not, {} left behind\n", passed, failed,
+                             alive.size());
+    return failed == 0 && alive.empty() ? 0 : 1;
+}
+
 // A crowd walking in a grid, for what entities cost: the tick,
 // the posing and the gpu, each against the same frame with no one in it.
 int entitybench(int argc, char** argv) {
@@ -1101,14 +1343,155 @@ int entitybench(int argc, char** argv) {
     return 0;
 }
 
+// What a lobby costs: a crowd of dropped items and a wall of holograms, which
+// is what a hub is actually full of. No server; the metadata is written by
+// hand the way the server writes it.
+int entitylobby(int argc, char** argv) {
+    const int items_count = argc > 2 ? std::stoi(argv[2]) : 200;
+    const int holograms = argc > 3 ? std::stoi(argv[3]) : 50;
+    mcpp::entity::Assets assets;
+    mcpp::world::Atlas atlas;
+    if (!assets.open(mcpp::entity::Assets::default_path(kProtocol)) ||
+        !atlas.open(mcpp::world::Atlas::default_path(kProtocol))) {
+        std::cerr << "baked data missing\n";
+        return 1;
+    }
+    mcpp::ui::ItemTable items;
+    items.load(mcpp::ui::ItemTable::default_path(kProtocol));
+    mcpp::gpu::Device device;
+    mcpp::gpu::Device::Options gpu_options;
+    device.create(gpu_options);
+    mcpp::gpu::WorldRenderer world(device, 1280, 720, atlas);
+    mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
+    renderer.load(assets);
+    mcpp::gpu::HandRenderer hand(device, world.colour_format(), world.depth_format(),
+                                 mcpp::gpu::HandRenderer::default_path(kProtocol));
+    mcpp::world::Atmosphere atmosphere;
+
+    auto types = mcpp::entity::load_entity_types(mcpp::entity::default_registries_path(kProtocol));
+    int32_t item_type = -1;
+    int32_t text_type = -1;
+    for (size_t i = 0; i < types.size(); ++i) {
+        if (types[i] == "minecraft:item") item_type = static_cast<int32_t>(i);
+        if (types[i] == "minecraft:text_display") text_type = static_cast<int32_t>(i);
+    }
+    if (item_type < 0 || text_type < 0) {
+        std::cerr << "the registries have no item or text_display type\n";
+        return 1;
+    }
+    mcpp::entity::Scene scene(types, nullptr);
+    scene.bind(renderer);
+    scene.hold_items_with(&hand, &atmosphere);
+    scene.draw_objects_with(&items, nullptr);
+
+    const int32_t diamond = items.find("minecraft:diamond");
+    const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(items_count))));
+    int32_t next_id = 1;
+    for (int i = 0; i < items_count; ++i) {
+        mcpp::Entity e;
+        e.id = next_id++;
+        e.type = item_type;
+        e.x = (i % side) * 1.2;
+        e.y = 0.0;
+        e.z = 6.0 + (i / side) * 1.2;
+        scene.add(e);
+        mcpp::proto::Metadata data;
+        mcpp::ItemStack stack;
+        stack.id = diamond >= 0 ? diamond : 1;
+        stack.count = 1 + i % 64;
+        data.set(8, mcpp::proto::MetaType::ItemStack,
+                 mcpp::proto::Value(std::make_shared<const mcpp::ItemStack>(stack)));
+        scene.metadata(e.id, data);
+    }
+    for (int i = 0; i < holograms; ++i) {
+        mcpp::Entity e;
+        e.id = next_id++;
+        e.type = text_type;
+        e.x = (i % 10) * 2.0;
+        e.y = 2.5;
+        e.z = 6.0 + (i / 10) * 2.0;
+        scene.add(e);
+        mcpp::proto::Metadata data;
+        const mcpp::nbt::Value text(std::format("Plasma lobby {}", i));
+        data.set(23, mcpp::proto::MetaType::Component, mcpp::proto::Value(text));
+        data.set(15, mcpp::proto::MetaType::Byte, mcpp::proto::Value(int64_t{3}));
+        scene.metadata(e.id, data);
+    }
+
+    mcpp::gpu::Camera camera{};
+    camera.eye[0] = static_cast<float>(side) * 0.6f;
+    camera.eye[1] = 4.0f;
+    camera.eye[2] = 0.0f;
+    camera.target[0] = camera.eye[0];
+    camera.target[1] = 0.5f;
+    camera.target[2] = 6.0f + static_cast<float>(side) * 0.6f;
+    mcpp::entity::View view;
+    for (int axis = 0; axis < 3; ++axis) {
+        view.eye[axis] = camera.eye[axis];
+        view.forward[axis] = camera.target[axis] - camera.eye[axis];
+    }
+    const auto light = [](int32_t, int32_t, int32_t) -> std::array<uint8_t, 2> { return {15, 0}; };
+    bool draw_entities = true;
+    world.set_in_world([&](VkCommandBuffer command, const float* view_projection, uint32_t w,
+                           uint32_t h, const float* fog, const mcpp::gpu::Camera& cam) {
+        if (!draw_entities) return;
+        const double at[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
+        renderer.record(command, view_projection, at, w, h, fog, 0.0f, 0.0f);
+        hand.record_world(command, view_projection, at, w, h);
+    });
+    double pose_ms = 0.0;
+    double gpu_with = 0.0;
+    double gpu_without = 0.0;
+    size_t item_vertices = 0;
+    constexpr int kFrames = 120;
+    for (int frame = 0; frame < kFrames; ++frame) {
+        scene.tick();
+        view.partial = 0.5f;
+        const auto t0 = Clock::now();
+        renderer.begin();
+        hand.begin();
+        scene.draw(renderer, view, light);
+        const auto t1 = Clock::now();
+        item_vertices = hand.world_vertices();
+        draw_entities = true;
+        world.render(camera);
+        const double with = world.last_gpu_ms();
+        draw_entities = false;
+        world.render(camera);
+        const double without = world.last_gpu_ms();
+        if (frame >= 20) {
+            pose_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
+            gpu_with += with;
+            gpu_without += without;
+        }
+    }
+    const double n = kFrames - 20;
+    std::cout << std::format(
+        "- {} dropped items and {} holograms, {} drawn, {} item vertices a frame\n"
+        "- cpu: build and queue {:.3f} ms a frame\n"
+        "- gpu: {:.3f} ms with them, {:.3f} ms without, {:.3f} ms for the lobby\n",
+        items_count, holograms, scene.stats().drawn, item_vertices, pose_ms / n, gpu_with / n,
+        gpu_without / n, (gpu_with - gpu_without) / n);
+    if (argc > 4) {
+        draw_entities = true;
+        renderer.begin();
+        hand.begin();
+        scene.draw(renderer, view, light);
+        mcpp::write_png(argv[4], 1280, 720, world.render(camera));
+    }
+    return 0;
+}
+
 } // namespace
 
 int entity_command(int argc, char** argv) {
     if (argc < 2) return -1;
     const std::string command = argv[1];
+    if (command == "entitylobby") return entitylobby(argc, argv);
     if (command == "entityshot") return entityshot(argc, argv);
     if (command == "entitybot") return entitybot(argc, argv);
     if (command == "entitymobs") return entitymobs(argc, argv);
+    if (command == "entityobjects") return entityobjects(argc, argv);
     if (command == "entityrecord") return entityrecord(argc, argv);
     if (command == "entityreplay") return entityreplay(argc, argv);
     if (command == "entitybench") return entitybench(argc, argv);
