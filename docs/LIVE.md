@@ -49,8 +49,12 @@ Two things about the harness are worth knowing before trusting a frame.
   client was inconsistent with itself. `poll` now reads every gameplay field
   through `Keybinds`, falling back to the key the game ships that binding on
   when no registry is set. `tests/test_window.cpp` rebinds forward, attack,
-  drop, jump and a hotbar slot and checks each one follows; it fails eight
-  checks against the old `poll`.
+  drop, jump and a hotbar slot and checks each one follows. Measured, by making
+  `bound_down` ignore the registry again and running it: eight checks fail, and
+  they are the eight that matter - the old forward key still walks and the new
+  one does not, the left button still attacks after attack is moved to a key
+  and the key does not, a binding on nothing is still held, the drop binding
+  does nothing with or without control, and a rebound hotbar key picks no slot.
 - **Drop, swap-to-offhand and pick-block were never even reported.**
   `FrameInput` has `drop`, `drop_stack`, `swap_offhand`, `pick_item_clicks`,
   `attack_clicks` and `use_clicks`; `poll` set only `drop`. It now fills all
