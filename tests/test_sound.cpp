@@ -8,6 +8,7 @@
 #include "audio/mixer.hpp"
 #include "mcpp/jmath.hpp"
 #include "audio/sounds.hpp"
+#include "audio/voices.hpp"
 
 #include "mcpp/assets/object_store.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -324,6 +325,69 @@ void test_footsteps() {
     check(!big.empty() && big[0].event == "entity.player.big_fall", "a fall of 9 is a big one");
     check(land(9.0, "minecraft:hay_block").size() == 2 && land(5.0, "minecraft:hay_block").empty(),
           "hay takes four fifths of the fall away");
+}
+
+// The player's own hurt and death sound: the damage type comes out of the
+// registry the server sent, in the shape the server sends it.
+void test_voices() {
+    mcpp::Registries registries;
+    const auto damage_type = [](std::string_view name, std::optional<std::string> effects) {
+        mcpp::RegistryEntry entry;
+        entry.name = std::string(name);
+        mcpp::nbt::Compound body;
+        body.emplace("message_id", mcpp::nbt::Value(std::string("generic")));
+        body.emplace("exhaustion", mcpp::nbt::Value(0.0f));
+        if (effects) body.emplace("effects", mcpp::nbt::Value(*effects));
+        entry.data = mcpp::nbt::Value(std::move(body));
+        return entry;
+    };
+    registries.set("minecraft:damage_type",
+                   {damage_type("minecraft:generic", std::nullopt),
+                    damage_type("minecraft:drown", "drowning"),
+                    damage_type("minecraft:on_fire", "burning"),
+                    damage_type("minecraft:sweet_berry_bush", "poking"),
+                    damage_type("minecraft:freeze", "freezing"),
+                    damage_type("minecraft:thorns", "thorns")});
+
+    check(damage_type_effects(registries, "minecraft:drown") == "drowning",
+          "the drown type says drowning");
+    check(damage_type_effects(registries, "minecraft:generic").empty(),
+          "a type with no effects field says nothing");
+    check(damage_type_effects(registries, "minecraft:nothing").empty(),
+          "a type the server never sent says nothing");
+
+    const std::pair<std::string_view, std::string_view> expected[] = {
+        {"minecraft:generic", "entity.player.hurt"},
+        {"minecraft:thorns", "entity.player.hurt"},
+        {"minecraft:drown", "entity.player.hurt_drown"},
+        {"minecraft:on_fire", "entity.player.hurt_on_fire"},
+        {"minecraft:sweet_berry_bush", "entity.player.hurt_sweet_berry_bush"},
+        {"minecraft:freeze", "entity.player.hurt_freeze"},
+        {"minecraft:nothing", "entity.player.hurt"},
+    };
+    jmath::LegacyRandom random(1);
+    for (const auto& [type, event] : expected) {
+        const auto voice = player_hurt_voice(registries, type, random);
+        check(voice.event == event, std::format("{} hurts as {}, got {}", type, event, voice.event));
+        check(voice.volume == 1.0f, "a player is heard at volume one");
+        check(voice.pitch > 0.8f && voice.pitch < 1.2f,
+              std::format("the voice pitch sits around one, got {}", voice.pitch));
+    }
+    check(player_death_voice(random).event == "entity.player.death", "the death sound");
+
+    // The two draws are made in order and both are always made, so the pitch
+    // is the first minus the second, never the other way round.
+    jmath::LegacyRandom a(12345);
+    const float first = a.next_float();
+    const float second = a.next_float();
+    jmath::LegacyRandom b(12345);
+    check(near(static_cast<double>(voice_pitch(false, b)),
+               static_cast<double>((first - second) * 0.2f + 1.0f), 1e-9),
+          "the voice pitch is the first draw minus the second");
+    jmath::LegacyRandom c(12345);
+    check(near(static_cast<double>(voice_pitch(true, c)),
+               static_cast<double>((first - second) * 0.2f + 1.5f), 1e-9),
+          "a baby's voice sits half a step higher");
 }
 
 void test_level_events() {
@@ -683,6 +747,7 @@ int main() {
     test_sounds_json();
     test_attenuation();
     test_categories();
+    test_voices();
     if (BlockSounds::installed().empty()) {
         std::cout << "skipped: no block sounds at " << BlockSounds::default_path(mcpp::protocol::kProtocol_1_21_11).string()
                   << "; bake them with tools/bake_all.py\n";

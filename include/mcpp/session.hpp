@@ -364,6 +364,10 @@ struct SessionEvents {
         std::function<void(int32_t, float)> on_head;
         // damage_event: the walk cycle kicks and the entity flashes red.
         std::function<void(int32_t)> on_damage;
+        // The same packet's damage type, named as the minecraft:damage_type
+        // registry names it, empty when the server sent one we never saw. It
+        // is what picks the player's own hurt sound.
+        std::function<void(int32_t, std::string_view)> on_damage_type;
     } entities;
 
     struct Player {

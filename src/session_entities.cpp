@@ -307,10 +307,12 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
         return true;
     }
     if (packet.id == cb.damage_event) {
-        // The type, the entity behind it and the one that touched, each id
-        // shifted up by one so zero can mean none, and where it came from.
+        // The type as its plain id in the damage_type registry, since the
+        // packet's holder codec never allows one inline; then the entity
+        // behind it and the one that touched, those two shifted up by one so
+        // zero can mean none, and where it came from.
         const int32_t id = in.read_varint();
-        in.read_varint();
+        const int32_t type = in.read_varint();
         in.read_varint();
         in.read_varint();
         if (in.read_bool()) {
@@ -319,6 +321,12 @@ bool Session::handle_entities(PacketConnection::Packet& packet) {
             in.read_f64();
         }
         if (events_.entities.on_damage) events_.entities.on_damage(id);
+        if (events_.entities.on_damage_type) {
+            const auto* entry = type < 0 ? nullptr
+                                         : data_.registries.at("minecraft:damage_type",
+                                                               static_cast<size_t>(type));
+            events_.entities.on_damage_type(id, entry != nullptr ? entry->name : std::string_view());
+        }
         return true;
     }
     if (packet.id == cb.set_passengers) {

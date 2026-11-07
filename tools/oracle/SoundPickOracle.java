@@ -21,6 +21,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.damagesource.DamageEffects;
 
 // Loads the player's own sounds.json through the game's registration code, then
 // asks the game's WeighedSoundEvents which variant each (event, seed) picks and
@@ -114,6 +115,23 @@ public class SoundPickOracle {
                     float gain = Math.min(Math.max(instanceVolume, 0.0F), 1.0F) * (1.0F - clamped / range);
                     System.out.println("gain " + key + " " + d + " " + bits(gain));
                 }
+            }
+        }
+
+        // Every DamageEffects by its serialized name and the sound it carries,
+        // which is the whole of Player.getHurtSound once the damage type is
+        // read. The name is what the damage_type registry writes.
+        for (DamageEffects effects : DamageEffects.values()) {
+            System.out.println("effect " + effects.getSerializedName() + " "
+                + effects.sound().location().getPath());
+        }
+        // LivingEntity.getVoicePitch, both arms of it, against the game's own
+        // random so the two draws and the float arithmetic are the same.
+        for (long seed : SEEDS) {
+            for (boolean baby : new boolean[] {false, true}) {
+                RandomSource random = RandomSource.create(seed);
+                float pitch = (random.nextFloat() - random.nextFloat()) * 0.2F + (baby ? 1.5F : 1.0F);
+                System.out.println("voicepitch " + seed + " " + baby + " " + bits(pitch));
             }
         }
     }

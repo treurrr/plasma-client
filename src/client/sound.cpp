@@ -6,6 +6,7 @@
 #include "audio/engine.hpp"
 #include "audio/footsteps.hpp"
 #include "audio/level_events.hpp"
+#include "audio/voices.hpp"
 #include "client/breaking.hpp"
 
 #include "mcpp/assets/object_store.hpp"
@@ -159,6 +160,33 @@ void sound_bind(Game& game, mcpp::SessionEvents& events) {
         event.camera[2] = listener.z;
         mcpp::audio::play_level_event(sound->engine, sound->jukeboxes, event, global,
                                       game.session->registries(), sound->level_random);
+    };
+    // `LivingEntity.handleDamageEvent`: the hurt sound, at the voice pitch.
+    // Only for the player at the keyboard: `Player.playSound` hands itself to
+    // `ClientLevel.playSeededSound`, which is the one case that plays, and the
+    // server's broadcast leaves that player out. Every other entity's hurt
+    // sound arrives as a `sound` packet instead.
+    events.entities.on_damage_type = [&game](int32_t id, std::string_view damage_type) {
+        auto* sound = runtime(game);
+        if (sound == nullptr || !game.session || id != game.session->entity_id()) return;
+        const auto voice = mcpp::audio::player_hurt_voice(game.session->registries(), damage_type,
+                                                          sound->level_random);
+        const auto& body = game.player.body;
+        play_at(game, std::string(voice.event), mcpp::audio::Category::Player, body.x, body.y, body.z,
+                voice.volume, voice.pitch);
+    };
+    // `LivingEntity.handleEntityEvent`: status 3 is the death sound, played
+    // client-side for the same reason the hurt sound is.
+    auto entity_event = events.entities.on_event;
+    events.entities.on_event = [&game, entity_event](int32_t id, uint8_t status) {
+        if (entity_event) entity_event(id, status);
+        auto* sound = runtime(game);
+        if (sound == nullptr || status != 3) return;
+        if (!game.session || id != game.session->entity_id()) return;
+        const auto voice = mcpp::audio::player_death_voice(sound->level_random);
+        const auto& body = game.player.body;
+        play_at(game, std::string(voice.event), mcpp::audio::Category::Player, body.x, body.y, body.z,
+                voice.volume, voice.pitch);
     };
 }
 
