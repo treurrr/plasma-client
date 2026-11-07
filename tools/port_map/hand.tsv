@@ -1,6 +1,6 @@
 # D: the first person hand and the item in it.
 ItemInHandRenderer.ItemInHandRenderer	skip		nothing to construct: the poses are free functions over a pose stack
-ItemInHandRenderer.renderItem	inline	src/client/hand_view.cpp::queue_hand	the display transform and then the model, handed to the gpu
+ItemInHandRenderer.renderItem	inline	src/client/hand_queue.cpp::queue_hand	the display transform and then the model, handed to the gpu
 ItemInHandRenderer.calculateMapTilt	absent		a map in the hand is not drawn yet
 ItemInHandRenderer.renderMapHand	absent		a map in the hand is not drawn yet
 ItemInHandRenderer.renderOneHandedMap	absent		a map in the hand is not drawn yet
