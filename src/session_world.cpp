@@ -313,6 +313,19 @@ bool Session::handle_world(PacketConnection::Packet& packet) {
         if (events_.world.on_block_entity) events_.world.on_block_entity(x, y, z, type, data);
         return true;
     }
+    if (packet.id == cb.block_event) {
+        int32_t x = 0;
+        int32_t y = 0;
+        int32_t z = 0;
+        unpack_position(in.read_i64(), x, y, z);
+        const uint8_t action = in.read_u8();
+        const uint8_t parameter = in.read_u8();
+        in.read_varint();   // the block the server thinks is there
+        if (events_.world.on_block_event) {
+            events_.world.on_block_event(x, y, z, action, parameter);
+        }
+        return true;
+    }
     if (packet.id == cb.initialize_border || packet.id == cb.set_border_center ||
         packet.id == cb.set_border_lerp_size || packet.id == cb.set_border_size ||
         packet.id == cb.set_border_warning_delay || packet.id == cb.set_border_warning_distance) {

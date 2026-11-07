@@ -37,6 +37,50 @@ void entities_bind(Game& game, mcpp::SessionEvents& events) {
         scene.player_info(info);
     };
     events.entities.on_player_remove = [&scene](std::string_view uuid) { scene.player_gone(uuid); };
+
+    // The blocks with a renderer of their own. The world area has already
+    // taken these four, so each one is wrapped rather than replaced.
+    auto& blocks = area.block_entities;
+    if (!area.block_entity_table.open(
+            mcpp::entity::BlockEntityTable::default_path(mcpp::protocol::kTargetProtocol))) {
+        std::cout << "- no block entity table; bake it with tools/bake_all.py. No chest, "
+                     "sign or banner will be drawn\n";
+    }
+    blocks.load(area.assets, area.block_entity_table, &*area.skins);
+    events.world.on_block_entity = [&blocks, next = events.world.on_block_entity](
+                                       int32_t x, int32_t y, int32_t z, int32_t type,
+                                       const mcpp::nbt::Value& data) {
+        if (next) next(x, y, z, type, data);
+        blocks.put(x, y, z, data);
+    };
+    events.world.on_chunk = [&blocks, next = events.world.on_chunk](
+                                const mcpp::world::Chunk& chunk) {
+        if (next) next(chunk);
+        for (const mcpp::world::BlockEntity& one : chunk.block_entities) {
+            blocks.put(one.x, one.y, one.z, one.data);
+        }
+    };
+    events.world.on_chunk_forget = [&blocks, next = events.world.on_chunk_forget](
+                                       int32_t chunk_x, int32_t chunk_z) {
+        if (next) next(chunk_x, chunk_z);
+        blocks.forget_chunk(chunk_x, chunk_z);
+    };
+    events.world.on_block_change = [&game, &blocks, next = events.world.on_block_change](
+                                       int32_t x, int32_t y, int32_t z, int32_t state) {
+        if (next) next(x, y, z, state);
+        // A block entity whose block is gone goes with it; one that stays
+        // keeps what the server last said about it.
+        if (game.entities.block_entity_table.find(state) == nullptr) blocks.removed(x, y, z);
+    };
+    events.world.on_respawn = [&blocks, next = events.world.on_respawn](
+                                  const mcpp::Dimension& dimension) {
+        if (next) next(dimension);
+        blocks.clear();
+    };
+    events.world.on_block_event = [&blocks](int32_t x, int32_t y, int32_t z, uint8_t action,
+                                            uint8_t parameter) {
+        blocks.event(x, y, z, action, parameter);
+    };
 }
 
 void entities_start(Game& game) {
@@ -58,7 +102,10 @@ void entities_input(Game&) {}
 void entities_tick(Game& game) {
     auto& area = game.entities;
     const int ticks = area.clock.advance(game.dt);
-    for (int i = 0; i < ticks; ++i) area.scene->tick();
+    for (int i = 0; i < ticks; ++i) {
+        area.scene->tick();
+        area.block_entities.tick();
+    }
 }
 
 void entities_draw(Game& game) {
@@ -82,6 +129,15 @@ void entities_draw(Game& game) {
                 found->second.block_light_at(x & 15, index, z & 15)};
     };
     area.scene->draw(renderer, view, light);
+
+    const auto state = [&game](int32_t x, int32_t y, int32_t z) -> int32_t {
+        auto& world = game.world;
+        std::lock_guard lock(world.world_guard);
+        const auto found = world.world.find({x >> 4, z >> 4});
+        if (found == world.world.end()) return 0;
+        return found->second.block_state(x & 15, found->second.index_of(y), z & 15);
+    };
+    area.block_entities.draw(renderer, view, state, light, game.world.game_time);
 }
 
 void entities_stop(Game& game) {

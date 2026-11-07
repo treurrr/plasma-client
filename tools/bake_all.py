@@ -85,6 +85,14 @@ def main(args):
         run("bake_entities.py", jar, models, out / f"entities-{protocol}.plen")
     else:
         print("-- bake_entities.py skipped: it needs the model layers")
+    # Which blocks carry which block entity is the game's own answer, so the
+    # table of states with a renderer of their own waits on the exporter.
+    blocks_with_entities = out / f"block_entity_blocks-{protocol}.txt"
+    if ask_the_game("export/export_block_entities.py", blocks_with_entities):
+        run("bake_block_entities.py", report, blocks_with_entities,
+            out / f"block_entities-{protocol}.txt")
+    else:
+        print("-- bake_block_entities.py skipped: it needs the block entity types")
     # The registries the client has built in, in id order: what an attribute,
     # an effect or an entity type number means.
     registries = json.loads((Path(report).parent / "registries.json").read_text())
