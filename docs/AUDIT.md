@@ -37,8 +37,10 @@ the plumbing around it). Not in the work list:
 
 ## The work list
 
-Ordered by what a player feels first. `fixed` entries are this pass;
-`open` entries are what is left, in the same order.
+Ordered by what a player feels first. `fixed` entries are this pass; `open`
+entries are what is left, in the same order. What is still open, shortest
+first: the entity hurt sound (5), biome blend (9), the session's packet reads
+(10), `environment.cpp` (11), the shape of the light engine (8), elytra (12).
 
 ### 1. One tick clock, not three - `fixed`
 
@@ -72,13 +74,13 @@ Ordered by what a player feels first. `fixed` entries are this pass;
 | vanilla | `AttributeInstance.calculateValue`, `RangedAttribute.sanitizeValue` |
 | wrong | both stopped before `sanitizeValue`, so nothing clamped the result to the attribute's own range and NaN came through. `movement_efficiency`, `sneaking_speed` and `water_movement_efficiency` are `[0,1]`, `gravity` is `[-1,1]`, `step_height` is `[0,10]`; a server that stacks modifiers past those got a speed, a step or a gravity the server itself does not use, which is a correction a tick later. |
 
-### 5. `LivingEntity.handleDamageEvent` - `fixed` in part
+### 5. `LivingEntity.handleDamageEvent` - `open`, and smaller than it looked
 
 | | |
 |---|---|
 | ours | `Living::damaged`, `src/entity/motion.cpp` |
 | vanilla | `LivingEntity.handleDamageEvent` |
-| wrong | ported the walk kick and the hurt time; left out `hurtDuration` (vanilla sets it beside `hurtTime`; `GameRenderer.bobHurt` divides by it) and `invulnerableTime = 20`. Fixed. The hurt sound is still missing: it needs `getHurtSound` per entity type, which no table of ours holds - see *open 5* below. |
+| wrong | read against the Java: the walk kick and `hurtTime` are both there and right. The two fields it leaves out, `hurtDuration` and `invulnerableTime`, have no reader on our side - vanilla's only assignment to `hurtDuration` is the same 10 the hand's `bob_hurt` already uses, and `invulnerableTime` is only read where damage is applied, which a client does not do. Adding them would be dead state, so they stay out and this says why. **What is really missing is the hurt sound**: vanilla plays `getHurtSound(source)` at `getSoundVolume()` with pitch `(random.nextFloat() - random.nextFloat()) * 0.2F + 1.0F`. Nothing of ours plays it, so no mob and no player makes a sound when it is hit - in a fight that is the one cue a player listens for. It needs two things we do not have: a hurt sound per entity type, and the damage type, whose registry id `session_entities.cpp` reads out of `damage_event` and throws away (`Player.getHurtSound` picks drown, on-fire, berry or freeze by it). Rows in `tools/port_map/audit.tsv`. |
 
 ### 6. `Utf8String.read` - `fixed`
 
@@ -88,21 +90,21 @@ Ordered by what a player feels first. `fixed` entries are this pass;
 | vanilla | `Utf8String.read` |
 | wrong | uncited, and it stopped after the byte-length check. Vanilla also refuses a string whose decoded length in UTF-16 units is over the maximum, which is the check that keeps a 32767-character limit a character limit and not a 131068-byte one. |
 
-### 7. The block outline and the translucent pass - `open`
+### 7. The block outline and the translucent pass - `fixed`
 
 | | |
 |---|---|
-| ours | `WorldRenderer::record` / `draw_geometry`, `src/gpu/world_renderer.cpp` |
-| vanilla | `LevelRenderer.renderBlockOutline`, `LevelRenderer.extractBlockOutline` |
-| wrong | confirmed against the Java. Vanilla draws the outline twice over, once before the translucent group and once after, and `renderBlockOutline` keeps only the pass whose `isTranslucent` matches the aimed block's chunk render type (`ItemBlockRenderTypes.getChunkRenderType(state).sortOnUpload()`). Ours always draws after everything, so the lines show through water, ice and stained glass standing in front of the aimed block. The render table already carries the layer per state, so the fix is to record the outline inside `draw_geometry` before the translucent draw when that layer is not translucent. Wave 2 agent C's lead, confirmed. |
+| ours | `WorldRenderer::record` / `draw_geometry` / `draw_outline`, `src/gpu/world_renderer.cpp` |
+| vanilla | `LevelRenderer.renderBlockOutline`, `LevelRenderer.extractBlockOutline`, `ChunkSectionLayer.sortOnUpload` |
+| wrong | vanilla offers the outline twice, once before the translucent group and once after it, and `renderBlockOutline` keeps the pass whose `isTranslucent` matches the aimed block's chunk render type. Ours always drew it last, after the translucent pass had written its depth, so an ordinary block seen through glass, ice or water had **no outline at all** - not lines drawn over the glass, as the lead read it, but lines thrown away by the depth test. Fixed by recording it inside `draw_geometry` before the translucent draw for the layers that do not sort on upload. Wave 2 agent C's lead, confirmed with the direction corrected. |
 
-### 8. The light engine - `open`
+### 8. The light engine - `fixed` in its two values, the engine itself still ours
 
 | | |
 |---|---|
 | ours | `LightEngine::opacity`, `LightEngine::relight`, `src/world/light.cpp` |
-| vanilla | `BlockBehaviour.BlockStateBase.getLightBlock`, `LevelLightEngine.checkBlock`, `BlockLightEngine`, `SkyLightEngine` |
-| wrong | the whole file is ours by hand. Two things are provably off. `opacity` decides a block's light block from its registry name (`_leaves`, `cobweb`) and from whether it occludes, while vanilla reads a per-state value - and `RenderInfo::light_block` already holds that baked value, so the hand rule is both wrong and unnecessary (ice and the half-transparent blocks come out 0 instead of 1, so sky light does not fade under them). `relight` never seeds the placed block's own `getLightEmission`: it zeroes the cell and spreads from the neighbours, so a torch placed in a dark room lights nothing but its own cell until the server's `light_update` arrives. |
+| vanilla | `BlockBehaviour.BlockStateBase.getLightBlock`, `LightEngine.getOpacity`, `BlockLightEngine.checkNode`, `SkyLightEngine`, `ChunkSkyLightSources` |
+| wrong | two things were provably off and are fixed. `opacity` decided a block's light block from its registry name (`_leaves`, `cobweb`) and from whether it occludes, while vanilla reads a per-state value that `RenderInfo::light_block` already holds: ice came out 0 where the game says 1, so sky light did not fade under ice or the half-transparent blocks. And `relight` never put the block's own `getLightEmission` back after taking the old light away, so a torch placed in a dark room lit nothing but its own cell until the server's `light_update` arrived. What is left open is the shape of the engine: two flood fills of ours against vanilla's `DynamicGraphMinFixedPoint` queue and its per-column `ChunkSkyLightSources`. With the two values right they agree on everything tried so far, and the "sky light at 15 falls straight down while opacity is 0" rule is `ChunkSkyLightSources`' rule in another form, but it has not been proved equal in general. |
 
 ### 9. Biome blend - `open`
 
@@ -134,14 +136,26 @@ Ordered by what a player feels first. `fixed` entries are this pass;
 |---|---|
 | ours | `mcpp::world::Body` has no fall-flying state at all |
 | vanilla | `Player.isFallFlying`, `LivingEntity.travelFallFlying`, `FireworkRocketItem` boosting |
-| wrong | not ported. It is a gap, not a bad port: noted here because *3* above names fall-flying in the condition it fixes, and that half of the condition can never be true until this exists. Belongs in `tools/port_map` as `absent`. |
+| wrong | not ported. It is a gap, not a bad port: noted here because *3* above names fall-flying in the condition it fixes, and that half of the condition can never be true until this exists. Rows in `tools/port_map/audit.tsv`. |
 
 ## What is proved, and how
 
-- `tests/test_player.cpp` - `block_speed_factor` and `on_climbable` while
-  flying, the attribute clamp, and the tick clock's residual, all with values
-  derived from the Java by hand, not from our code.
-- `tests/test_world.cpp` - `read_string`'s two limits.
-- `ctest` over the whole tree at every commit.
-- The outline order is a pixel question and is listed open with the render it
-  needs (`~/plasma-work/audit/`).
+Every test below was run once against the broken code first, to see it fail,
+and then against the fix.
+
+| what | proof |
+|---|---|
+| `Player.onClimbable` while flying | `test_player.cpp` `test_flying_climbable`: flown through a line of vines, the body keeps flying speed and its height. `handleOnClimbable` cuts horizontal speed to 0.15 a tick, flight settles far above that. Fails without the fix. |
+| `Player.getBlockSpeedFactor` while flying | `test_player.cpp` `test_flying_speed_factor`: the same flight over soul sand and over stone covers the same ground to 1e-12, while on foot soul sand is still the slower of the two. Fails without the fix. |
+| `RangedAttribute.sanitizeValue` | `test_entities.cpp` `test_attribute_range`: the registered ranges of seven attributes, NaN, an unknown attribute, and the three operations before the range. |
+| `DeltaTracker.Timer.advanceGameTime` | `test_entities.cpp` `test_clock`: a thousand 7 ms frames are exactly 140 ticks (a clock that drops its remainder reaches 125), a 260 ms frame is five ticks and a fifth, a two-second stall is ten. |
+| `Utf8String.read` | `test_data.cpp` `test_utf8_limits`: a field of three characters takes three two-byte letters or one emoji and one letter, but not two emoji. |
+| `getLightBlock`, `BlockLightEngine.checkNode` | `test_world.cpp` `test_relight`: a torch lights its own cell to 14 and fades a level a block, ice takes one level out of the sky light falling down a shaft. All six checks fail with the old rule. |
+| the outline's pass | pixels. `plasma-client outlineshot <dir> --through=minecraft:blue_stained_glass minecraft:oak_slab minecraft:blue_stained_glass`, rendered once with the old order and once with the new. Aiming at the glass itself: byte-identical, it still draws after the translucent pass. Aiming at the slab behind the glass: 2376 pixels changed, each one a line pixel that the glass's depth used to throw away and that now shows through the glass. `~/plasma-work/audit/outline-old`, `outline-fixed`, `outline-plain`. |
+
+`ctest` (14 suites) passes at every commit, and
+`port_ledger.py stale` is clean.
+
+The server is no referee for any of these: creative flight is not simulated
+server side, so it cannot tell the two movement fixes apart from what we did
+before, and light and the outline never leave the client.
