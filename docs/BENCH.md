@@ -414,6 +414,15 @@ chunk at a time, the way a streaming client does, and a chunk the room will
 not take is a chunk that row never drew. The `chunks` column therefore now
 says what the client held, not what the recording had.
 
+The vertex stayed 20 bytes. Three 16-bit coordinates, an array layer and two
+16-bit texture coordinates are 12 of them, and the corner's brightness, the
+tint kind and the two light channels pack into one more word: 16. What does
+not fit is the blended biome colour, which is three bytes of its own because
+the average of a square of biomes is not any one biome's colour. A 16-byte
+vertex therefore means quantising either that colour or the texture
+coordinates, and both change pixels. Asking the device for the room instead
+changes none, and the device has it.
+
 At render distance 32 the reservation is 1958 MB of vertices and 724 MB of
 indices, and the four scenes measure 403, 588, 509 and 533 kB a chunk, so that
 room holds 6646, 4560, 5273 and 5028 chunks. A vanilla render distance 32
