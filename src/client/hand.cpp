@@ -13,7 +13,8 @@ constexpr float kDegToRad = static_cast<float>(3.14159265358979323846 / 180.0);
 
 float lerp(float t, float from, float to) { return from + t * (to - from); }
 
-// `Math.cosFromSin`: the cosine beside a sine, by Pythagoras and the quadrant.
+// JOML's Math.cosFromSin: the cosine beside a sine, by Pythagoras and the
+// quadrant it falls in.
 float cos_from_sin(float sine, float angle) {
     const float cosine = static_cast<float>(std::sqrt(1.0f - sine * sine));
     const float shifted = angle + static_cast<float>(3.14159265358979323846 * 0.5);
@@ -24,7 +25,7 @@ float cos_from_sin(float sine, float angle) {
     return cosine;
 }
 
-// `Matrix4f.rotate(Quaternionfc)`: the nine products a unit quaternion makes.
+// JOML's Matrix4f.rotate: the nine products a unit quaternion makes.
 Matrix from_quaternion(float x, float y, float z, float w) {
     const float w2 = w * w;
     const float x2 = x * x;
@@ -56,28 +57,30 @@ bool has_custom_arm_transform(UseAnimation animation) {
            || animation == UseAnimation::Spear;
 }
 
-// `Quaternionf.rotationX`: a turn about x as a quaternion, then as a matrix.
+// `Axis.rotationDegrees`, through JOML's Quaternionf.rotationX: a turn about
+// x as a quaternion, then as a matrix.
 Matrix rotation_degrees_x(float degrees) {
     const float half = degrees * kDegToRad * 0.5f;
     const float sine = static_cast<float>(std::sin(static_cast<double>(half)));
     return from_quaternion(sine, 0.0f, 0.0f, cos_from_sin(sine, half));
 }
 
-// `Quaternionf.rotationY`.
+// `Axis.rotationDegrees`, through JOML's Quaternionf.rotationY.
 Matrix rotation_degrees_y(float degrees) {
     const float half = degrees * kDegToRad * 0.5f;
     const float sine = static_cast<float>(std::sin(static_cast<double>(half)));
     return from_quaternion(0.0f, sine, 0.0f, cos_from_sin(sine, half));
 }
 
-// `Quaternionf.rotationZ`.
+// `Axis.rotationDegrees`, through JOML's Quaternionf.rotationZ.
 Matrix rotation_degrees_z(float degrees) {
     const float half = degrees * kDegToRad * 0.5f;
     const float sine = static_cast<float>(std::sin(static_cast<double>(half)));
     return from_quaternion(0.0f, 0.0f, sine, cos_from_sin(sine, half));
 }
 
-// `Quaternionf.rotationXYZ`: one quaternion for a turn about all three axes.
+// JOML's Quaternionf.rotationXYZ: one quaternion for a turn about all three
+// axes, which is the turn a display transform names.
 Matrix rotation_xyz_degrees(float x, float y, float z) {
     const float hx = x * kDegToRad * 0.5f;
     const float hy = y * kDegToRad * 0.5f;
@@ -96,12 +99,13 @@ Matrix rotation_xyz_degrees(float x, float y, float z) {
                            cx * cysz + sx * sycz, cx * cycz - sx * sysz);
 }
 
-// `Math.fma`: JOML's, which multiplies and adds separately unless the
-// property that turns on the fused instruction is set, and it is off.
+// JOML's Math.fma, which multiplies and adds separately unless the property
+// that turns on the fused instruction is set, and it is off by default.
 float mul_add(float a, float b, float c) { return a * b + c; }
 
-// `Matrix4f.translate`, `Matrix4f.translation`: the first move on a fresh
-// matrix is written in; a later one folds three products in from the right.
+// JOML's Matrix4f.translate and Matrix4f.translation: the first move on a
+// fresh matrix is written in; a later one folds three products in from the
+// right.
 void translate(Pose& pose, float x, float y, float z) {
     Matrix& m = pose.matrix;
     if (pose.identity) {
@@ -118,8 +122,8 @@ void translate(Pose& pose, float x, float y, float z) {
     }
 }
 
-// `Matrix4f.rotate`, `Matrix4f.rotation`: the same, with the nine products of
-// the quaternion already in `rotation`.
+// JOML's Matrix4f.rotate and Matrix4f.rotation: the same, with the nine
+// products of the quaternion already worked out.
 void rotate(Pose& pose, const Matrix& rotation) {
     Matrix& m = pose.matrix;
     if (pose.identity) {
@@ -142,14 +146,14 @@ void rotate(Pose& pose, const Matrix& rotation) {
             out[column * 4 + row] =
                 mul_add(m[row], r0, mul_add(m[4 + row], r1, m[8 + row] * r2));
         }
-        // `Matrix4f.rotateAffine` writes the bottom row rather than working
-        // it out, so a signed zero never reaches it.
+        // JOML's Matrix4f.rotateAffine writes the bottom row rather than
+        // working it out, so a signed zero never reaches it.
         out[column * 4 + 3] = 0.0f;
     }
     m = out;
 }
 
-// `Matrix4f.scale`, `Matrix4f.scaling`.
+// JOML's Matrix4f.scale and Matrix4f.scaling.
 void scale(Pose& pose, float x, float y, float z) {
     Matrix& m = pose.matrix;
     if (pose.identity) {

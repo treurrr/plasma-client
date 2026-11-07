@@ -26,14 +26,14 @@ bool has_custom_arm_transform(UseAnimation animation);
 // `ItemStack.getSwingAnimation`: whack is every ordinary item, stab is a spear.
 enum class SwingKind : uint8_t { None, Whack, Stab };
 
-// `Axis.XP.rotationDegrees` and its five siblings, built the way the game
-// builds them: a quaternion from the half angle, then JOML's matrix from it.
+// `Axis.rotationDegrees` for each of the six axes, built the way the game
+// builds it: a quaternion from the half angle, then JOML's matrix from it.
 Matrix rotation_degrees_x(float degrees);
 Matrix rotation_degrees_y(float degrees);
 Matrix rotation_degrees_z(float degrees);
 
-// `PoseStack.Pose`: a matrix built up by multiplying on the right. The flag
-// is JOML's own: its first operation on an untouched matrix writes the result
+// `PoseStack.Pose.scale`, `PoseStack.Pose.rotate`: a matrix built up by
+// multiplying on the right. The flag is JOML's own: its first operation on an untouched matrix writes the result
 // straight in rather than multiplying, which keeps a signed zero that a
 // multiply would lose, and every later one fuses its multiply and add.
 struct Pose {
@@ -47,7 +47,8 @@ void translate(Pose& pose, float x, float y, float z);
 void rotate(Pose& pose, const Matrix& rotation);
 void scale(Pose& pose, float x, float y, float z);
 
-// `Quaternionf.rotationXYZ`: the turn a display transform names, as a matrix.
+// The turn a display transform names, as a matrix: JOML's
+// Quaternionf.rotationXYZ.
 Matrix rotation_xyz_degrees(float x, float y, float z);
 
 // `ItemTransform`: where one display context puts a model. The translation is
@@ -146,7 +147,7 @@ struct HandDraw {
     float pull = 0.0f;
 };
 
-// `ItemInHandRenderer.HandRenderSelection`.
+// Which of the two hands are drawn at all.
 struct HandSelection {
     bool main = true;
     bool off = true;

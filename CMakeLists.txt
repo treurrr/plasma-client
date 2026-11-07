@@ -284,3 +284,6 @@ target_sources(plasma-client PRIVATE src/client/hand.cpp src/client/handshot.cpp
 if(glfw3_FOUND)
     target_sources(plasma-client PRIVATE src/client/hand_view.cpp)
 endif()
+mcpp_test(hand)
+target_sources(test_hand PRIVATE src/client/hand.cpp)
+target_include_directories(test_hand PRIVATE src)

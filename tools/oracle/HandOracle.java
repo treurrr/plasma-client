@@ -113,6 +113,20 @@ public class HandOracle {
             }
         }
 
+        float[][] held = {
+            {0, -90, 25, 1.13F, 3.2F, 1.13F, 0.68F},
+            {0, 45, 0, 0, 0, 0, 0.40F},
+        };
+        for (HumanoidArm arm : new HumanoidArm[] {HumanoidArm.RIGHT, HumanoidArm.LEFT}) {
+            for (float[] t : held) {
+                for (int i = 0; i <= 10; i++) {
+                    for (int e = 0; e <= 2; e++) {
+                        held(arm, i / 10.0F, e / 2.0F, t);
+                    }
+                }
+            }
+        }
+
         // The display transforms models give an item: first person in either
         // hand for item/generated, item/handheld and block/block, and the slot.
         float[][] transforms = {
@@ -136,6 +150,31 @@ public class HandOracle {
                       pose);
             }
         }
+    }
+
+    // The whole of one hand, composed the way renderHandsWithItems composes
+    // it for an ordinary item: the head's drift, where the arm rests, the
+    // swing, and then the model's own display transform.
+    static void held(HumanoidArm arm, float swing, float equipped, float[] t) throws Exception {
+        PoseStack pose = new PoseStack();
+        pose.mulPose(com.mojang.math.Axis.XP.rotationDegrees(0.0F));
+        pose.mulPose(com.mojang.math.Axis.YP.rotationDegrees(0.0F));
+        call("applyItemArmTransform", pose, arm, equipped);
+        Method m = ItemInHandRenderer.class.getDeclaredMethod(
+            "swingArm", float.class, PoseStack.class, int.class, HumanoidArm.class);
+        m.setAccessible(true);
+        m.invoke(HAND, swing, pose, arm == HumanoidArm.RIGHT ? 1 : -1, arm);
+        print("heldarm " + (arm == HumanoidArm.RIGHT ? "right" : "left") + " " + swing + " "
+                  + equipped, pose);
+        ItemTransform transform = new ItemTransform(
+            new Vector3f(t[0], t[1], t[2]),
+            new Vector3f(t[3] * 0.0625F, t[4] * 0.0625F, t[5] * 0.0625F),
+            new Vector3f(t[6], t[6], t[6]));
+        transform.apply(arm == HumanoidArm.LEFT, pose.last());
+        print("held " + (arm == HumanoidArm.RIGHT ? "right" : "left") + " " + swing + " "
+                  + equipped + " " + t[0] + " " + t[1] + " " + t[2] + " " + t[3] + " " + t[4]
+                  + " " + t[5] + " " + t[6],
+              pose);
     }
 
     static void call(String name, PoseStack pose, HumanoidArm arm, float value) throws Exception {
