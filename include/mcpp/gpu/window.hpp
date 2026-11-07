@@ -6,11 +6,17 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct GLFWwindow;
+
+namespace mcpp {
+class Keybinds;
+}
 
 namespace mcpp::gpu {
 
@@ -133,7 +139,39 @@ public:
     // held rather than pressed (the player list).
     bool key_down(int glfw_key) const;
 
+    // M: a window with no window. No glfw, no surface and no swapchain: the
+    // same object, so every area of the client runs its own code against it,
+    // but the keys, the clicks, the pointer and the clock come from a script
+    // and `present` draws into the renderer's own image instead of a screen.
+    struct Headless {};
+    Window(Device& device, uint32_t width, uint32_t height, Headless);
+    bool headless() const { return headless_; }
+    // One raw event, pushed exactly as the glfw callback would have.
+    void send_key(int key, int action, int mods = 0);
+    void send_char(uint32_t code);
+    void send_button(int button, int action, int mods = 0);
+    void send_scroll(double y);
+    void send_cursor(double x, double y);
+    void send_close();
+    // What `glfwGetTime` would say: the double-tap sprint and the double jump
+    // read it, so a script has to be able to move it.
+    void advance_clock(double seconds);
+    // Reads the next frame back instead of only drawing it.
+    void capture_next(bool on) { capture_ = on; }
+    const std::vector<uint8_t>& pixels() const { return pixels_; }
+
+    // M: which key each field of FrameInput means. Without this every field is
+    // read off the key the game ships the binding on, so rebinding anything in
+    // Options -> Controls changes nothing. The registry outlives the window.
+    void set_keybinds(const Keybinds* binds) { keybinds_ = binds; }
+
 private:
+    // The key or button a binding is on, or the fallback when no registry is
+    // set, which is the key the game ships that binding on.
+    bool bound_down(std::string_view binding, int fallback_key, bool fallback_is_mouse) const;
+    bool key_held(int key) const;
+    bool button_held(int button) const;
+
     struct Frame {
         VkCommandBuffer command = VK_NULL_HANDLE;
         VkSemaphore acquired = VK_NULL_HANDLE;
@@ -173,6 +211,10 @@ private:
     bool fly_key_down_ = false;
     bool inventory_key_down_ = false;
     bool drop_key_down_ = false;
+    bool swap_key_down_ = false;
+    bool pick_key_down_ = false;
+    bool attack_key_down_ = false;
+    bool use_key_down_ = false;
     bool jump_key_down_ = false;
     double last_jump_press_ = -1.0;
     double wheel_ = 0.0;
@@ -187,6 +229,17 @@ private:
     bool cursor_captured_ = false;
     double last_frame_ms_ = 0.0;
     std::vector<InputEvent> events_;
+    bool headless_ = false;
+    bool closed_ = false;
+    bool capture_ = false;
+    double clock_ = 0.0;
+    double pending_x_ = 0.0;
+    double pending_y_ = 0.0;
+    std::map<int, bool> held_;
+    bool held_buttons_[8]{};
+    std::string clipboard_;
+    std::vector<uint8_t> pixels_;
+    const Keybinds* keybinds_ = nullptr;
 };
 
 } // namespace mcpp::gpu

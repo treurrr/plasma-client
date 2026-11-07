@@ -50,6 +50,10 @@ namespace mcpp::gpu {
 class WeatherRenderer;
 }
 
+namespace mcpp::ui::hud {
+class Chat;
+}
+
 namespace client {
 
 using ChunkKey = std::pair<int32_t, int32_t>;
@@ -381,6 +385,11 @@ void hud_start(Game& game);
 void hud_tick(Game& game);
 void hud_render(Game& game);
 void hud_stop(Game& game);
+// H/M: the hud's own chat log and its tick count. The chat screen draws over
+// the log, scrolls it and writes its history into it, so it has to be handed
+// the same one the hud keeps rather than a second copy.
+mcpp::ui::hud::Chat* hud_chat(Game& game);
+int32_t hud_ticks(const Game& game);
 
 // P: the frame recorder, in src/client/perfrec.cpp. It records what every
 // frame of a played session cost; `perfreport` reads the file back.

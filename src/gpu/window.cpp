@@ -1,5 +1,7 @@
 #include "mcpp/gpu/window.hpp"
 
+#include "mcpp/keybinds.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -170,7 +172,55 @@ Window::Window(Device& device, uint32_t width, uint32_t height, const std::strin
     }
 }
 
+// M: the headless window. Nothing is created that a screen would need, so
+// there is no glfw, no surface and no swapchain to go stale; the colour format
+// is the one WorldRenderer draws into, which is where the overlay lands.
+Window::Window(Device& device, uint32_t width, uint32_t height, Headless)
+    : device_(device) {
+    headless_ = true;
+    format_ = VK_FORMAT_R8G8B8A8_UNORM;
+    extent_ = {width, height};
+    cursor_captured_ = true;
+}
+
+void Window::send_key(int key, int action, int mods) {
+    held_[key] = action != GLFW_RELEASE;
+    events_.push_back({InputEvent::Type::Key, key, 0, action, mods, 0.0, 0.0});
+}
+
+void Window::send_char(uint32_t code) {
+    events_.push_back({InputEvent::Type::Char, static_cast<int>(code), 0, 0, 0, 0.0, 0.0});
+    if (!typing_) return;
+    if (code >= 32 && code < 127 && typed_.size() < 256) typed_ += static_cast<char>(code);
+}
+
+void Window::send_button(int button, int action, int mods) {
+    if (button >= 0 && button < 8) held_buttons_[button] = action != GLFW_RELEASE;
+    events_.push_back({InputEvent::Type::Button, button, 0, action, mods, last_x_, last_y_});
+}
+
+void Window::send_scroll(double y) {
+    wheel_ += y;
+    events_.push_back({InputEvent::Type::Scroll, 0, 0, 0, 0, 0.0, y});
+}
+
+void Window::send_cursor(double x, double y) {
+    if (!events_.empty() && events_.back().type == InputEvent::Type::Move) {
+        events_.back().x = x;
+        events_.back().y = y;
+    } else {
+        events_.push_back({InputEvent::Type::Move, 0, 0, 0, 0, x, y});
+    }
+    pending_x_ = x;
+    pending_y_ = y;
+}
+
+void Window::send_close() { closed_ = true; }
+
+void Window::advance_clock(double seconds) { clock_ += seconds; }
+
 Window::~Window() {
+    if (headless_) return;
     if (device_.handle() != VK_NULL_HANDLE) vkDeviceWaitIdle(device_.handle());
     destroy_swapchain();
     for (auto& frame : frames_) {
@@ -296,15 +346,47 @@ void Window::destroy_swapchain() {
     images_.clear();
 }
 
+bool Window::key_held(int key) const {
+    if (headless_) {
+        const auto found = held_.find(key);
+        return found != held_.end() && found->second;
+    }
+    return glfwGetKey(window_, key) == GLFW_PRESS;
+}
+
+bool Window::button_held(int button) const {
+    if (headless_) return button >= 0 && button < 8 && held_buttons_[button];
+    return glfwGetMouseButton(window_, button) == GLFW_PRESS;
+}
+
 bool Window::open() const {
+    if (headless_) return !closed_;
     return window_ != nullptr && glfwWindowShouldClose(window_) == GLFW_FALSE;
 }
 
+// `KeyMapping.isDown`: a binding is held when the key or the mouse button it
+// is on is held, and a binding on nothing is never held.
+bool Window::bound_down(std::string_view binding, int fallback_key, bool fallback_is_mouse) const {
+    const Keybind* bind = keybinds_ != nullptr ? keybinds_->find(binding) : nullptr;
+    if (bind == nullptr) {
+        return fallback_is_mouse ? button_held(fallback_key) : key_held(fallback_key);
+    }
+    if (bind->current.unbound()) return false;
+    return bind->current.type == InputKey::Type::Mouse ? button_held(bind->current.code)
+                                                       : key_held(bind->current.code);
+}
+
 FrameInput Window::poll() {
-    glfwPollEvents();
+    if (!headless_) glfwPollEvents();
     FrameInput input;
 
-    const auto down = [&](int key) { return glfwGetKey(window_, key) == GLFW_PRESS; };
+    const auto down = [&](int key) { return key_held(key); };
+    const auto bound = [&](std::string_view binding, int fallback) {
+        return bound_down(binding, fallback, false);
+    };
+    const auto bound_mouse = [&](std::string_view binding, int fallback) {
+        return bound_down(binding, fallback, true);
+    };
 
     const bool enter = down(GLFW_KEY_ENTER);
     const bool escape = down(GLFW_KEY_ESCAPE);
@@ -323,30 +405,32 @@ FrameInput Window::poll() {
         return input;
     }
 
-    const bool chat_now = down(GLFW_KEY_T);
+    const bool chat_now = bound("key.chat", GLFW_KEY_T);
     input.start_typing = chat_now && !chat_key_down_;
     chat_key_down_ = chat_now;
 
-    const bool forward_now = down(GLFW_KEY_W);
+    const bool forward_now = bound("key.forward", GLFW_KEY_W);
     if (forward_now) input.forward += 1.0f;
-    if (down(GLFW_KEY_S)) input.forward -= 1.0f;
-    if (down(GLFW_KEY_D)) input.right += 1.0f;
-    if (down(GLFW_KEY_A)) input.right -= 1.0f;
-    const bool jump_now = down(GLFW_KEY_SPACE);
+    if (bound("key.back", GLFW_KEY_S)) input.forward -= 1.0f;
+    if (bound("key.right", GLFW_KEY_D)) input.right += 1.0f;
+    if (bound("key.left", GLFW_KEY_A)) input.right -= 1.0f;
+    const bool jump_now = bound("key.jump", GLFW_KEY_SPACE);
     if (jump_now) input.up += 1.0f;
-    input.sneak = down(GLFW_KEY_LEFT_SHIFT);
+    input.jump = jump_now;
+    input.sneak = bound("key.sneak", GLFW_KEY_LEFT_SHIFT);
     if (input.sneak) input.up -= 1.0f;
 
     // Forwards twice in quick succession sprints until forwards comes up, which
     // is how most people sprint; the key is there for the rest.
-    const double seconds_now = glfwGetTime();
+    const double seconds_now = headless_ ? clock_ : glfwGetTime();
     if (forward_now && !forward_key_down_) {
         double_tap_sprint_ = seconds_now - last_forward_press_ < 0.3;
         last_forward_press_ = seconds_now;
     }
     if (!forward_now) double_tap_sprint_ = false;
     forward_key_down_ = forward_now;
-    input.sprint = down(GLFW_KEY_LEFT_CONTROL) || double_tap_sprint_;
+    input.sprint_key = bound("key.sprint", GLFW_KEY_LEFT_CONTROL);
+    input.sprint = input.sprint_key || double_tap_sprint_;
     // Escape opens and closes the menu, the way it does in the game; leaving
     // is what the window's own close button is for.
     input.toggle_menu = escape_edge;
@@ -359,24 +443,32 @@ FrameInput Window::poll() {
     }
     jump_key_down_ = jump_now;
 
-    const bool drop_now = down(GLFW_KEY_Q);
+    const bool drop_now = bound("key.drop", GLFW_KEY_Q);
     input.drop = drop_now && !drop_key_down_;
+    // `Minecraft.handleKeybinds`: control and drop throws the whole stack.
+    input.drop_stack = input.drop && (down(GLFW_KEY_LEFT_CONTROL) || down(GLFW_KEY_RIGHT_CONTROL));
     drop_key_down_ = drop_now;
+
+    const bool swap_now = bound("key.swapOffhand", GLFW_KEY_F);
+    input.swap_offhand = swap_now && !swap_key_down_;
+    swap_key_down_ = swap_now;
 
     // The wheel steps one slot at a time whatever the mouse reports, and the
     // number row picks a slot outright, the way the game does both.
     input.wheel = wheel_ > 0.5 ? 1 : (wheel_ < -0.5 ? -1 : 0);
     wheel_ = 0.0;
     for (int i = 0; i < 9; ++i) {
-        const bool pressed = down(GLFW_KEY_1 + i);
+        char name[] = "key.hotbar.0";
+        name[11] = static_cast<char>('1' + i);
+        const bool pressed = bound(name, GLFW_KEY_1 + i);
         if (pressed && !slot_key_down_[i]) input.pick_slot = i;
         slot_key_down_[i] = pressed;
     }
 
-    input.attack = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-    input.use = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    input.attack = bound_mouse("key.attack", GLFW_MOUSE_BUTTON_LEFT);
+    input.use = bound_mouse("key.use", GLFW_MOUSE_BUTTON_RIGHT);
 
-    const bool inventory_now = down(GLFW_KEY_E);
+    const bool inventory_now = bound("key.inventory", GLFW_KEY_E);
     input.toggle_inventory = inventory_now && !inventory_key_down_;
     inventory_key_down_ = inventory_now;
 
@@ -384,8 +476,8 @@ FrameInput Window::poll() {
     input.toggle_menu = input.toggle_menu || (menu_now && !menu_key_down_);
     menu_key_down_ = menu_now;
 
-    double x = 0.0, y = 0.0;
-    glfwGetCursorPos(window_, &x, &y);
+    double x = pending_x_, y = pending_y_;
+    if (!headless_) glfwGetCursorPos(window_, &x, &y);
     if (have_cursor_ && cursor_captured_) {
         input.yaw_delta = static_cast<float>(x - last_x_);
         input.pitch_delta = static_cast<float>(y - last_y_);
@@ -396,11 +488,23 @@ FrameInput Window::poll() {
     input.cursor_x = static_cast<float>(x);
     input.cursor_y = static_cast<float>(y);
 
-    const bool pressed = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+    // `click` and the two click counters are the left and right buttons
+    // themselves: the feature menu's pointer and the cps readout follow the
+    // mouse, not whatever key attack happens to be on.
+    const bool pressed = button_held(GLFW_MOUSE_BUTTON_LEFT);
     input.click = pressed && !mouse_down_;
     mouse_down_ = pressed;
+    const bool right = button_held(GLFW_MOUSE_BUTTON_RIGHT);
 
-    const bool right = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    // The three the game counts as presses rather than as a held button.
+    input.attack_clicks = input.attack && !attack_key_down_ ? 1 : 0;
+    attack_key_down_ = input.attack;
+    input.use_clicks = input.use && !use_key_down_ ? 1 : 0;
+    use_key_down_ = input.use;
+    const bool pick_now = bound_mouse("key.pickItem", GLFW_MOUSE_BUTTON_MIDDLE);
+    input.pick_item_clicks = pick_now && !pick_key_down_ ? 1 : 0;
+    pick_key_down_ = pick_now;
+
     const auto now = std::chrono::steady_clock::now();
     if (input.click) left_clicks_.push_back(now);
     if (right && !right_down_) right_clicks_.push_back(now);
@@ -436,13 +540,21 @@ std::vector<InputEvent> Window::take_events() {
 }
 
 std::string Window::clipboard() const {
+    if (headless_) return clipboard_;
     const char* text = glfwGetClipboardString(window_);
     return text != nullptr ? std::string(text) : std::string{};
 }
 
-void Window::set_clipboard(const std::string& text) { glfwSetClipboardString(window_, text.c_str()); }
+void Window::set_clipboard(const std::string& text) {
+    if (headless_) {
+        clipboard_ = text;
+        return;
+    }
+    glfwSetClipboardString(window_, text.c_str());
+}
 
 double Window::content_scale() const {
+    if (headless_) return 1.0;
     int window_w = 0, window_h = 0, frame_w = 0, frame_h = 0;
     glfwGetWindowSize(window_, &window_w, &window_h);
     glfwGetFramebufferSize(window_, &frame_w, &frame_h);
@@ -456,7 +568,9 @@ int Window::clicks_per_second(bool right_button) const {
 void Window::capture_cursor(bool captured) {
     if (captured == cursor_captured_) return;
     cursor_captured_ = captured;
-    glfwSetInputMode(window_, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    if (!headless_) {
+        glfwSetInputMode(window_, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    }
     // The jump from wherever the pointer was to wherever it is now is not a
     // look, so the next frame starts a fresh delta.
     have_cursor_ = false;
@@ -465,6 +579,17 @@ void Window::capture_cursor(bool captured) {
 void Window::present(WorldRenderer& renderer, const Camera& camera,
                      const Overlay& overlay) {
     const auto started = std::chrono::steady_clock::now();
+    if (headless_) {
+        // The same frame the window would show, read back when asked for.
+        if (capture_) {
+            pixels_ = renderer.render(camera, overlay);
+        } else {
+            renderer.draw(camera, overlay);
+        }
+        last_frame_ms_ = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - started).count();
+        return;
+    }
     if (swapchain_stale_) {
         int w = 0, h = 0;
         glfwGetFramebufferSize(window_, &w, &h);
@@ -624,6 +749,10 @@ void Window::present(WorldRenderer& renderer, const Camera& camera,
 namespace mcpp::gpu {
 
 bool Window::key_down(int glfw_key) const {
+    if (headless_) {
+        const auto found = held_.find(glfw_key);
+        return found != held_.end() && found->second;
+    }
     return glfw_key >= 0 && glfwGetKey(window_, glfw_key) == GLFW_PRESS;
 }
 
