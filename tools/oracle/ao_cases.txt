@@ -1,0 +1,43 @@
+# Neighbourhoods for AoOracle and ao_probe: ambient occlusion and smooth
+# lighting for one quad of one block, with the blocks around it placed by hand.
+#
+#   name  centre  face  from(x,y,z)  to(x,y,z) | blocks | lights
+#
+# from and to are the quad's box in sixteenths. blocks are offsets from the
+# centre with the block that stands there, lights are offsets with block/sky
+# light; a cell with no light of its own is dark inside an opaque block and
+# full sky outside one. The cell the face looks into is always empty, or the
+# face would be culled and there would be nothing to measure.
+open-up minecraft:stone up 0,16,0 16,16,16 | |
+side-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone |
+two-sides-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone;0,1,1=minecraft:stone |
+corner-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone;0,1,1=minecraft:stone;1,1,1=minecraft:stone |
+diagonal-up minecraft:stone up 0,16,0 16,16,16 | 1,1,1=minecraft:stone |
+pit-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone;-1,1,0=minecraft:stone;0,1,1=minecraft:stone;0,1,-1=minecraft:stone |
+shaft-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone;1,2,0=minecraft:stone;1,1,1=minecraft:stone |
+slab-side-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:oak_slab |
+stairs-side-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:oak_stairs |
+leaves-side-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:oak_leaves |
+glass-side-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:glass |
+snow-side-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:snow |
+glow-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone | 1,2,0=14/15;0,1,1=7/15
+dark-up minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone | 0,1,0=0/4;1,2,0=0/8;0,1,1=3/12;1,1,1=6/2
+down-face minecraft:stone down 0,0,0 16,0,16 | 1,-1,0=minecraft:stone;0,-1,1=minecraft:stone |
+north-face minecraft:stone north 0,0,0 16,16,0 | 1,0,-1=minecraft:stone;0,1,-1=minecraft:stone;1,1,-1=minecraft:stone |
+south-face minecraft:stone south 0,0,16 16,16,16 | -1,0,1=minecraft:stone;0,-1,1=minecraft:stone |
+west-face minecraft:stone west 0,0,0 0,16,16 | -1,1,0=minecraft:stone;-1,0,1=minecraft:stone |
+east-face minecraft:stone east 16,0,0 16,16,16 | 1,1,0=minecraft:stone;1,0,-1=minecraft:stone;1,1,-1=minecraft:stone |
+glass-centre minecraft:glass up 0,16,0 16,16,16 | 1,1,0=minecraft:stone;1,1,1=minecraft:stone |
+leaves-centre minecraft:oak_leaves up 0,16,0 16,16,16 | 1,1,0=minecraft:stone |
+glowstone-centre minecraft:glowstone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone |
+sea-lantern-centre minecraft:sea_lantern up 0,16,0 16,16,16 | 1,1,0=minecraft:stone |
+sand-over-stone minecraft:sand up 0,16,0 16,16,16 | 0,-1,0=minecraft:stone;1,1,0=minecraft:stone;0,1,-1=minecraft:stone |
+deep-corner minecraft:stone up 0,16,0 16,16,16 | 1,1,0=minecraft:stone;0,1,1=minecraft:stone;1,1,1=minecraft:stone;-1,1,0=minecraft:stone;0,1,-1=minecraft:stone;-1,1,-1=minecraft:stone | 0,1,0=0/9
+# The first state of a slab is the top half, so its underside sits halfway up
+# and its sides only cover the upper half of the block: a face that is not
+# cubic, and one that is partial.
+slab-under minecraft:oak_slab down 0,8,0 16,8,16 | 1,0,0=minecraft:stone;1,-1,0=minecraft:stone;0,-1,1=minecraft:stone |
+slab-north minecraft:oak_slab north 0,8,0 16,16,0 | 1,0,-1=minecraft:stone;0,1,-1=minecraft:stone;1,-1,-1=minecraft:stone |
+slab-east minecraft:oak_slab east 16,8,0 16,16,16 | 1,1,0=minecraft:stone;1,0,1=minecraft:stone;1,-1,0=minecraft:stone |
+glass-partial minecraft:oak_slab west 0,8,0 0,16,16 | -1,1,0=minecraft:glass;-1,0,1=minecraft:stone;-1,1,1=minecraft:oak_leaves |
+pane-corner minecraft:oak_slab south 0,8,16 16,16,16 | 0,1,1=minecraft:stone;1,0,1=minecraft:stone;1,1,1=minecraft:stone | 0,0,1=5/11

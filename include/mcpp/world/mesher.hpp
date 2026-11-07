@@ -17,10 +17,17 @@ constexpr int32_t kPositionBias = 1;      // in blocks
 
 struct Vertex {
     uint16_t position[3];
-    uint16_t packed;        // face | tint kind | corner shadow
+    // Tint kind in the low three bits, the corner's own brightness - ambient
+    // occlusion already multiplied by the face's shade - in the high byte.
+    uint16_t packed;
     uint16_t uv[2];         // normalised across the texture
     uint16_t texture;       // array layer
-    uint16_t light;         // sky and block light in the low byte, biome in the high one
+    // The game's packed light, blended per corner: block light in the low
+    // byte, sky light in the high one, both over 255 rather than over 15, so
+    // the quarter steps a corner blend produces survive to the lightmap.
+    uint16_t light;
+    uint16_t biome;         // the biome index the tint is looked up in
+    uint16_t spare;
 
     static uint16_t encode(float blocks) {
         const float shifted = (blocks + static_cast<float>(kPositionBias)) *
@@ -28,8 +35,14 @@ struct Vertex {
         const auto rounded = static_cast<int32_t>(shifted + 0.5f);
         return static_cast<uint16_t>(std::clamp(rounded, 0, 65535));
     }
+
+    void set_brightness(float brightness) {
+        const auto value = static_cast<uint32_t>(
+            std::clamp(brightness, 0.0f, 1.0f) * 255.0f + 0.5f);
+        packed = static_cast<uint16_t>((packed & 0x00FFu) | (value << 8));
+    }
 };
-static_assert(sizeof(Vertex) == 16, "the vertex layout must match the pipeline");
+static_assert(sizeof(Vertex) == 20, "the vertex layout must match the pipeline");
 
 // Geometry for one 16x16x16 section, with positions relative to its own corner.
 // Per section rather than per chunk because that is the unit the renderer can
