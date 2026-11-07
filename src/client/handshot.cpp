@@ -137,8 +137,8 @@ int handshot(int argc, char** argv) {
                 .count() / 1000.0;
         const float light[3] = {1.0f, 1.0f, 1.0f};
         world.set_hand([&](VkCommandBuffer command, const float*, uint32_t width,
-                           uint32_t height, const float*, const mcpp::gpu::Camera&) {
-            hand.record(command, width, height, light);
+                           uint32_t height, const float*, const mcpp::gpu::Camera& view) {
+            hand.record(command, width, height, light, view);
         });
 
         mcpp::gpu::Camera camera{};
@@ -163,8 +163,8 @@ int handshot(int argc, char** argv) {
             without += world.last_gpu_ms();
         }
         world.set_hand([&](VkCommandBuffer command, const float*, uint32_t width,
-                           uint32_t height, const float*, const mcpp::gpu::Camera&) {
-            hand.record(command, width, height, light);
+                           uint32_t height, const float*, const mcpp::gpu::Camera& view) {
+            hand.record(command, width, height, light, view);
         });
         const auto start = std::chrono::steady_clock::now();
         const auto pixels = world.render(camera);

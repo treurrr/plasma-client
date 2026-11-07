@@ -6,6 +6,7 @@
 // hand: a few hundred vertices against two textures, once a frame.
 #include "mcpp/entity/model.hpp"
 #include "mcpp/gpu/device.hpp"
+#include "mcpp/gpu/world_renderer.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -59,8 +60,11 @@ public:
     // `GameRenderer.getFov` for the hand: seventy degrees, whatever the fov
     // option says, and a hundred blocks deep.
     static void projection(float aspect, float out[16]);
-    // `light` is what the world's lightmap says where the player stands.
-    void record(VkCommandBuffer command, uint32_t width, uint32_t height, const float light[3]);
+    // `light` is what the world's lightmap says where the player stands, and
+    // the camera's turn is what the world's own two lights are rotated by:
+    // they point the same way in the world however the player faces.
+    void record(VkCommandBuffer command, uint32_t width, uint32_t height, const float light[3],
+                const Camera& camera);
 
     static std::filesystem::path default_path(int32_t protocol);
 

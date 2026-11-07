@@ -54,13 +54,14 @@ void hand_start(Game& game) {
     area->crossbow = game.screens.items.find("crossbow");
     game.hand = area;
     game.renderer->set_hand([&game](VkCommandBuffer command, const float*, uint32_t width,
-                                    uint32_t height, const float*, const mcpp::gpu::Camera&) {
+                                    uint32_t height, const float*,
+                                    const mcpp::gpu::Camera& view) {
         if (!game.hand || !game.hand->renderer) return;
         const auto& atmosphere = game.renderer->atmosphere();
         float light[3] = {1.0f, 1.0f, 1.0f};
         mcpp::world::lightmap_texel(atmosphere, game.hand->block_light, game.hand->sky_light,
                                     light);
-        game.hand->renderer->record(command, width, height, light);
+        game.hand->renderer->record(command, width, height, light, view);
     });
 }
 

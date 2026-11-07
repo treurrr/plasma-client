@@ -28,9 +28,14 @@ struct Push {
 constexpr float kLight0[3] = {0.2f, 1.0f, -0.7f};
 constexpr float kLight1[3] = {-0.2f, 1.0f, 0.7f};
 
-void normalise(const float in[3], float out[4]) {
+// A world direction as the camera sees it. The hand is posed in camera space
+// and the game's two lights are the world's, so one of the two has to turn.
+void in_camera(const float in[3], const Matrix4& view, float out[4]) {
     const float length = std::sqrt(in[0] * in[0] + in[1] * in[1] + in[2] * in[2]);
-    for (int i = 0; i < 3; ++i) out[i] = in[i] / length;
+    const float unit[3] = {in[0] / length, in[1] / length, in[2] / length};
+    for (int row = 0; row < 3; ++row) {
+        out[row] = view.m[row] * unit[0] + view.m[4 + row] * unit[1] + view.m[8 + row] * unit[2];
+    }
     out[3] = 0.0f;
 }
 
@@ -370,7 +375,7 @@ void HandRenderer::add_arm(const entity::Matrix& pose, bool left_arm, bool slim,
 }
 
 void HandRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t height,
-                          const float light[3]) {
+                          const float light[3], const Camera& camera) {
     if (vertices_.empty()) return;
     const size_t offset = size_t{slot_} * kMaxVertices * sizeof(Vertex);
     std::memcpy(static_cast<uint8_t*>(mapped_) + offset, vertices_.data(),
@@ -378,8 +383,9 @@ void HandRenderer::record(VkCommandBuffer command, uint32_t width, uint32_t heig
 
     Push push{};
     projection(static_cast<float>(width) / static_cast<float>(height), push.projection);
-    normalise(kLight0, push.light0);
-    normalise(kLight1, push.light1);
+    const Matrix4 view = camera_rotation(camera);
+    in_camera(kLight0, view, push.light0);
+    in_camera(kLight1, view, push.light1);
     for (int i = 0; i < 3; ++i) push.lightmap[i] = light[i];
     push.lightmap[3] = 1.0f;
 
