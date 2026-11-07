@@ -1,6 +1,7 @@
 #pragma once
 #include "mcpp/entity/assets.hpp"
 #include "mcpp/entity/equipment.hpp"
+#include "mcpp/entity/held_items.hpp"
 #include "mcpp/entity/humanoid.hpp"
 #include "mcpp/entity/mob_tick.hpp"
 #include "mcpp/entity/mobs.hpp"
@@ -56,6 +57,10 @@ public:
     // textures too, when they have been baked.
     void bind(const gpu::EntityRenderer& renderer);
     void bind(const gpu::EntityRenderer& renderer, const EquipmentAssets* equipment);
+    // `ItemInHandLayer`: what a mob holds is item geometry, not a model layer,
+    // so it goes to the renderer that owns the item quads. Without one, a mob
+    // is drawn with empty hands.
+    void hold_items_with(gpu::HandRenderer* hand, const world::Atmosphere* atmosphere);
 
     void add(const Entity& entity);
     void moved(const EntityMove& move);
@@ -108,6 +113,8 @@ private:
         // texture comes from the item, so only the model is settled here.
         std::array<std::array<Layer, 4>, 2> armour{};
         bool has_armour = false;
+        // `ArmedModel.translateToHand`: whose version of it this body uses.
+        HandModel hand_model = HandModel::Plain;
     };
 
     struct Skin {
@@ -157,6 +164,8 @@ private:
     void submit_armour(gpu::EntityRenderer& renderer, std::span<const Layer> models,
                        const Tracked& tracked, const Matrix& root,
                        const gpu::EntityRenderer::Instance& like);
+    void items_in_hand(HandModel kind, const MobModel& animator, Tracked& tracked,
+                       const Matrix& root, std::array<uint8_t, 2> light);
     void name_tag(gpu::EntityRenderer& renderer, const Tracked& tracked, const View& view,
                   std::string_view text, double x, double y, double z, bool discrete,
                   std::array<uint8_t, 2> light);
@@ -169,6 +178,8 @@ private:
     skins::Cache* skins_;
     const gpu::EntityRenderer* renderer_ = nullptr;
     const EquipmentAssets* equipment_ = nullptr;
+    gpu::HandRenderer* hand_ = nullptr;
+    const world::Atmosphere* atmosphere_ = nullptr;
     std::vector<Tracked> tracked_;
     std::unordered_map<int32_t, size_t> index_;
     std::map<std::string, PlayerLine, std::less<>> players_;
@@ -185,6 +196,8 @@ private:
     // The player's own four armour layers, wide and slim.
     std::array<std::array<Layer, 4>, 2> player_armour_{};
     std::vector<Matrix> matrices_;
+    // The same model posed again with one arm moved, for the item in it.
+    std::vector<Matrix> hand_matrices_;
     // The pose an overlay or an armour piece is animated into: one layer at a
     // time, so one buffer serves them all.
     Pose scratch_;

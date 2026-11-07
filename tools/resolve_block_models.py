@@ -99,6 +99,10 @@ class Assets:
         # same way, per context, which is how block/block hands every block
         # item the same turn in a slot.
         display = dict(model.get("display", {}))
+        for right, left in (("thirdperson_righthand", "thirdperson_lefthand"),
+                            ("firstperson_righthand", "firstperson_lefthand")):
+            if right in display and left not in display:
+                display[left] = display[right]
         gui_light = model.get("gui_light")
         root = ref
 

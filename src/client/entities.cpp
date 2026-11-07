@@ -1,5 +1,7 @@
 #include "client/game.hpp"
 
+#include "client/hand_view.hpp"
+
 #include "mcpp/protocol_versions.hpp"
 
 #include <cmath>
@@ -101,12 +103,16 @@ void entities_start(Game& game) {
                      "drawn\n";
     }
     area.scene->bind(renderer, &area.equipment);
-    game.renderer->set_in_world([&renderer](VkCommandBuffer command, const float* view_projection,
-                                            uint32_t width, uint32_t height, const float* fog,
-                                            const mcpp::gpu::Camera& camera) {
+    game.renderer->set_in_world([&game, &renderer](
+                                    VkCommandBuffer command, const float* view_projection,
+                                    uint32_t width, uint32_t height, const float* fog,
+                                    const mcpp::gpu::Camera& camera) {
         const double eye[3] = {camera.eye[0], camera.eye[1], camera.eye[2]};
         renderer.record(command, view_projection, eye, width, height, fog, camera.fog_start,
                         camera.fog_end);
+        if (mcpp::gpu::HandRenderer* hand = hand_renderer(game)) {
+            hand->record_world(command, view_projection, eye, width, height);
+        }
     });
 }
 

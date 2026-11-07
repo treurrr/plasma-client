@@ -36,7 +36,10 @@ public:
         float scale[3]{1.0f, 1.0f, 1.0f};
         bool present = false;
     };
-    Display item_display(int32_t item, bool left_hand) const;
+    // The model's own display transform for one hand. `third_person` picks
+    // the transform an item in a mob's hand is drawn with, in the world,
+    // rather than the one in front of the camera.
+    Display item_display(int32_t item, bool left_hand, bool third_person = false) const;
 
     // The arm's own geometry, from the player model. Both are kept, so a slim
     // skin and a wide one each get the arm that fits them.
@@ -117,8 +120,8 @@ private:
         uint32_t first[kStages]{};
         uint32_t count[kStages]{};
         float threshold[kStages - 1]{2.0f, 2.0f, 2.0f};
-        Display right;
-        Display left;
+        // [first person or third][right hand or left].
+        Display display[2][2];
     };
     struct ArmModel {
         std::vector<entity::Vertex> vertices;

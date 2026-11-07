@@ -3,6 +3,7 @@
 #include "client/common.hpp"
 
 #include "mcpp/entity/assets.hpp"
+#include "mcpp/entity/held_items.hpp"
 #include "mcpp/entity/equipment.hpp"
 #include "mcpp/entity/humanoid.hpp"
 #include "mcpp/entity/mobs.hpp"
@@ -10,6 +11,7 @@
 #include "mcpp/session.hpp"
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/entity_renderer.hpp"
+#include "mcpp/gpu/hand.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 #include "mcpp/image_png.hpp"
 #include "mcpp/protocol_versions.hpp"
@@ -77,6 +79,7 @@ int entityshot(int argc, char** argv) {
     bool baby = false;
     bool gear = false;
     std::string armour;
+    std::string held;
     for (int i = 3; i < argc; ++i) {
         const std::string argument = argv[i];
         const auto next = [&]() -> std::string {
@@ -95,6 +98,7 @@ int entityshot(int argc, char** argv) {
         else if (argument == "--age") age = std::stof(next());
         else if (argument == "--baby") baby = true;
         else if (argument == "--gear") gear = true;
+        else if (argument == "--hold") held = next();
         else if (argument == "--armour") armour = next();
         else prefix = argument;
     }
@@ -120,6 +124,7 @@ int entityshot(int argc, char** argv) {
         std::cerr << std::format("no model {} in the data\n", layer_name);
         return 1;
     }
+    int32_t held_item = -1;
     mcpp::entity::EquipmentAssets equipment;
     const bool has_equipment =
         equipment.open(mcpp::entity::EquipmentAssets::default_path(kProtocol));
@@ -137,6 +142,31 @@ int entityshot(int argc, char** argv) {
     mcpp::gpu::WorldRenderer world(device, kSide, kSide, atlas);
     mcpp::gpu::EntityRenderer renderer(device, world.colour_format());
     renderer.load(assets);
+    std::optional<mcpp::gpu::HandRenderer> hand;
+    if (!held.empty()) {
+        hand.emplace(device, world.colour_format(), world.depth_format(),
+                     mcpp::gpu::HandRenderer::default_path(kProtocol));
+        if (!hand->has_items()) {
+            std::cerr << "no held item data; bake it with tools/bake_held.py\n";
+            return 1;
+        }
+        std::ifstream items(mcpp::entity::default_registries_path(kProtocol));
+        std::string line;
+        int32_t at = 0;
+        while (std::getline(items, line)) {
+            constexpr std::string_view kPrefix = "minecraft:item\t";
+            if (!line.starts_with(kPrefix)) continue;
+            if (line.substr(kPrefix.size()) == "minecraft:" + held) {
+                held_item = at;
+                break;
+            }
+            ++at;
+        }
+        if (held_item < 0) {
+            std::cerr << std::format("no item {}\n", held);
+            return 1;
+        }
+    }
     const int32_t model_index = renderer.model(layer_name);
 
     const bool player = layer_name == "player" || layer_name == "player_slim";
@@ -248,7 +278,11 @@ int entityshot(int argc, char** argv) {
         over.colour = colour;
         over.type = type;
         over.eyes = eyes;
-        if (over.animator != nullptr) overs.push_back(std::move(over));
+        if (over.animator == nullptr) {
+            std::cerr << std::format("- no model class animates {}\n", name);
+            return;
+        }
+        overs.push_back(std::move(over));
     };
     if (row != nullptr) {
         for (const mcpp::entity::MobOverlay& one : row->overlays) {
@@ -264,9 +298,12 @@ int entityshot(int argc, char** argv) {
             if (colour == 0) continue;
             add_over(name, one.texture, colour, one.render, one.kind == mcpp::entity::Overlay::Eyes);
         }
+    }
+    {
+        const bool wears_armour = (row != nullptr && row->humanoid_armour) || player;
         // `HumanoidArmorLayer`: one asset's worth of armour, in every slot that
         // asset has a layer for, which is what a full set looks like.
-        if (row->humanoid_armour && !armour.empty() && has_equipment) {
+        if (wears_armour && !armour.empty() && has_equipment) {
             struct Piece {
                 std::string_view suffix;
                 mcpp::entity::LayerType type;
@@ -378,11 +415,33 @@ int entityshot(int argc, char** argv) {
             renderer.add(one, layer_matrices);
         }
 
+        if (hand && held_item >= 0) {
+            hand->begin();
+            const auto chain = animator->hand_chain(false);
+            if (!chain.empty()) {
+                const int32_t last = chain.back();
+                const HandModel kind = layer_name == "player_slim" ? HandModel::SlimAvatar
+                                                                   : HandModel::Plain;
+                const float nudge = hand_arm_offset(kind, false);
+                pose[last].x += nudge;
+                pose_matrices(*model, pose, root, matrices);
+                pose[last].x -= nudge;
+                const Matrix arm = hand_after_chain(matrices[static_cast<size_t>(last)], kind,
+                                                    false, pose[last].x_rot);
+                const auto display = hand->item_display(held_item, false, true);
+                constexpr float kFull[3] = {1.0f, 1.0f, 1.0f};
+                hand->add_world_item(held_item, held_item_placement(arm, false, display), kFull);
+                pose_matrices(*model, pose, root, matrices);
+            }
+        }
         world.set_in_world([&](VkCommandBuffer command, const float* view_projection,
                                uint32_t width, uint32_t height_px, const float* fog,
                                const mcpp::gpu::Camera& cam) {
             const double eye[3] = {cam.eye[0], cam.eye[1], cam.eye[2]};
             renderer.record(command, view_projection, eye, width, height_px, fog, 0.0f, 0.0f);
+            if (hand && held_item >= 0) {
+                hand->record_world(command, view_projection, eye, width, height_px);
+            }
         });
         const auto pixels = world.render(camera);
         const std::string out = std::format("{}-{}.png", prefix, shot.name);

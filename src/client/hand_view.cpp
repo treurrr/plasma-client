@@ -50,6 +50,9 @@ void hand_start(Game& game) {
         skin != nullptr) {
         area->renderer->set_skin(skin->rgba);
     }
+    if (game.entities.scene) {
+        game.entities.scene->hold_items_with(&*area->renderer, &game.renderer->atmosphere());
+    }
     area->bow = game.screens.items.find("bow");
     area->crossbow = game.screens.items.find("crossbow");
     game.hand = area;
@@ -63,6 +66,11 @@ void hand_start(Game& game) {
                                     light);
         game.hand->renderer->record(command, width, height, light, view);
     });
+}
+
+mcpp::gpu::HandRenderer* hand_renderer(Game& game) {
+    if (!game.hand || !game.hand->renderer) return nullptr;
+    return &*game.hand->renderer;
 }
 
 void hand_tick(Game& game) {

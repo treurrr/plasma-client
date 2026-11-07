@@ -94,7 +94,7 @@ void HandRenderer::load(const std::filesystem::path& held) {
     if (bytes.size() < 32 || std::memcmp(bytes.data(), "PLHD", 4) != 0) return;
     uint32_t header[8]{};
     std::memcpy(header, bytes.data() + 4, sizeof(header));
-    if (header[0] != 2 || header[7] != kStages) return;
+    if (header[0] != 3 || header[7] != kStages) return;
     tile_ = header[2];
     layers_ = header[3];
     item_count_ = header[4];
@@ -113,8 +113,10 @@ void HandRenderer::load(const std::filesystem::path& held) {
     const uint8_t* index = pixels + pixel_bytes;
     items_.resize(item_count_);
     constexpr size_t kDisplayBytes = 9 * sizeof(float) + sizeof(uint32_t);
-    constexpr size_t kEntryBytes =
-        2 * kStages * sizeof(uint32_t) + (kStages - 1) * sizeof(float) + 2 * kDisplayBytes;
+    // Four display transforms per item: first person then third, each hand.
+    constexpr size_t kDisplays = 4;
+    constexpr size_t kEntryBytes = 2 * kStages * sizeof(uint32_t) +
+                                   (kStages - 1) * sizeof(float) + kDisplays * kDisplayBytes;
     for (uint32_t i = 0; i < item_count_; ++i) {
         const uint8_t* row = index + size_t{i} * kEntryBytes;
         for (uint32_t stage = 0; stage < kStages; ++stage) {
@@ -122,10 +124,10 @@ void HandRenderer::load(const std::filesystem::path& held) {
             std::memcpy(&items_[i].count[stage], row + stage * 8 + 4, sizeof(uint32_t));
         }
         std::memcpy(items_[i].threshold, row + 8 * kStages, sizeof(items_[i].threshold));
-        for (int hand = 0; hand < 2; ++hand) {
+        for (size_t which = 0; which < kDisplays; ++which) {
             const uint8_t* at = row + 8 * kStages + (kStages - 1) * sizeof(float)
-                                + size_t{hand} * kDisplayBytes;
-            Display& display = hand == 0 ? items_[i].right : items_[i].left;
+                                + which * kDisplayBytes;
+            Display& display = items_[i].display[which / 2][which % 2];
             std::memcpy(display.rotation, at, 3 * sizeof(float));
             std::memcpy(display.translation, at + 12, 3 * sizeof(float));
             std::memcpy(display.scale, at + 24, 3 * sizeof(float));
@@ -266,10 +268,11 @@ uint32_t HandRenderer::item_quads(int32_t item) const {
     return items_[static_cast<size_t>(item)].count[0];
 }
 
-HandRenderer::Display HandRenderer::item_display(int32_t item, bool left_hand) const {
+HandRenderer::Display HandRenderer::item_display(int32_t item, bool left_hand,
+                                                 bool third_person) const {
     if (item < 0 || static_cast<uint32_t>(item) >= item_count_) return {};
     const Entry& entry = items_[static_cast<size_t>(item)];
-    return left_hand ? entry.left : entry.right;
+    return entry.display[third_person ? 1 : 0][left_hand ? 1 : 0];
 }
 
 void HandRenderer::set_skin(std::span<const uint8_t> rgba) {

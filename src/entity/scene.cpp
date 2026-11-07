@@ -1,6 +1,7 @@
 #include "mcpp/entity/scene.hpp"
 
 #include "mcpp/entity/dye.hpp"
+#include "mcpp/world/atmosphere.hpp"
 #include "mcpp/entity/mob_tick.hpp"
 
 #include <algorithm>
@@ -39,6 +40,21 @@ constexpr std::array<ArmourPiece, 4> kArmour = {{
     {Equipment::Head, "#helmet", LayerType::Humanoid},
 }};
 
+// `ArmedModel.translateToHand`: the bodies that do more than hang the item
+// off the arm, named by their own layer, the way each model class is bound to
+// one renderer.
+HandModel hand_model_for(std::string_view layer) {
+    if (layer == "player_slim") return HandModel::SlimAvatar;
+    if (layer == "allay") return HandModel::Allay;
+    if (layer == "vex") return HandModel::Vex;
+    if (layer.starts_with("copper_golem")) return HandModel::CopperGolemIdle;
+    if (layer == "skeleton" || layer == "stray" || layer == "wither_skeleton" ||
+        layer == "bogged") {
+        return HandModel::Skeleton;
+    }
+    return HandModel::Plain;
+}
+
 } // namespace
 
 std::filesystem::path default_registries_path(int32_t protocol) {
@@ -75,6 +91,11 @@ Scene::Scene(std::vector<std::string> types, skins::Cache* skins)
 }
 
 void Scene::bind(const gpu::EntityRenderer& renderer) { bind(renderer, nullptr); }
+
+void Scene::hold_items_with(gpu::HandRenderer* hand, const world::Atmosphere* atmosphere) {
+    hand_ = hand;
+    atmosphere_ = atmosphere;
+}
 
 void Scene::bind(const gpu::EntityRenderer& renderer, const EquipmentAssets* equipment) {
     renderer_ = &renderer;
@@ -153,6 +174,7 @@ Scene::TypeInfo& Scene::type_info(int32_t type) {
                 layer_for(name, over.texture, over.kind, over.render));
         }
     }
+    info.hand_model = hand_model_for(row->layer);
     if (row->humanoid_armour) {
         info.has_armour = true;
         for (int age = 0; age < 2; ++age) {
@@ -599,6 +621,41 @@ void Scene::draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View
     if (info.has_armour) {
         submit_armour(renderer, info.armour[age], tracked, root, instance);
     }
+    if (info.row->items_in_hand) {
+        items_in_hand(info.hand_model, *base.animator, tracked, root, lit);
+    }
+}
+
+// `ItemInHandLayer.submit`: the item in each hand, in the world, hung off the
+// matrix that arm's own part chain ends on. A skeleton and a slim player move
+// the arm sideways for as long as the chain is posed, so the chain is posed
+// again rather than read off the body's own matrices.
+void Scene::items_in_hand(HandModel kind, const MobModel& animator, Tracked& tracked,
+                          const Matrix& root, std::array<uint8_t, 2> light) {
+    if (hand_ == nullptr || atmosphere_ == nullptr || !hand_->has_items()) return;
+    const MobState& s = tracked.state;
+    const Model& data = animator.model();
+    float lit[3];
+    world::lightmap_texel(*atmosphere_, light[1], light[0], lit);
+    for (int side = 0; side < 2; ++side) {
+        const bool left = side == 1;
+        const ItemStack& stack = tracked.worn.arm(left, s.main_arm_right);
+        if (stack.count <= 0 || stack.id <= 0) continue;
+        const auto chain = animator.hand_chain(left);
+        if (chain.empty()) continue;
+        const int32_t last = chain.back();
+        if (last < 0 || static_cast<size_t>(last) >= data.parts.size()) continue;
+        if (hand_matrices_.size() < data.parts.size()) hand_matrices_.resize(data.parts.size());
+        std::span<Matrix> posed(hand_matrices_.data(), data.parts.size());
+        const float nudge = hand_arm_offset(kind, left);
+        tracked.pose[last].x += nudge;
+        pose_matrices(data, tracked.pose, root, posed);
+        tracked.pose[last].x -= nudge;
+        const Matrix arm = hand_after_chain(posed[static_cast<size_t>(last)], kind, left,
+                                            tracked.pose[last].x_rot);
+        const auto display = hand_->item_display(stack.id, left, true);
+        hand_->add_world_item(stack.id, held_item_placement(arm, left, display), lit);
+    }
 }
 
 void Scene::draw_player(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
@@ -660,6 +717,7 @@ void Scene::draw_player(gpu::EntityRenderer& renderer, Tracked& tracked, const V
         stats_.parts += out.size();
     }
     submit_armour(renderer, player_armour_[slim ? 1 : 0], tracked, root, instance);
+    items_in_hand(slim ? HandModel::SlimAvatar : HandModel::Plain, *avatar, tracked, root, lit);
 
     if (view.name_tags && !info.name.empty()) {
         name_tag(renderer, tracked, view, info.name, x, y, z, s.crouching, lit);

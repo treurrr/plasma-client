@@ -137,8 +137,11 @@ int32_t MobModel::optional(std::string_view path) const { return model_->find(pa
 // scale. Visibility is not part of it: a layer that hides a part keeps it
 // hidden until something sets it again, which is what the game relies on.
 std::unique_ptr<MobModel> make_mob_model(std::string_view layer, const Model& model) {
-    if (layer == "player") return std::make_unique<Avatar>(model, false);
-    if (layer == "player_slim") return std::make_unique<Avatar>(model, true);
+    // `AvatarRenderer`: the player's armour is a `PlayerModel` of its own, so
+    // every piece walks and swings with the body it is worn on.
+    const std::string_view body = layer.substr(0, layer.find('#'));
+    if (body == "player") return std::make_unique<Avatar>(model, false);
+    if (body == "player_slim") return std::make_unique<Avatar>(model, true);
     if (auto found = make_humanoid_mob_model(layer, model)) return found;
     if (auto found = make_animal_model(layer, model)) return found;
     if (auto found = make_monster_model(layer, model)) return found;

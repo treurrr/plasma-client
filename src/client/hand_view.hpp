@@ -18,6 +18,9 @@ void queue_hand(mcpp::gpu::HandRenderer& renderer, const mcpp::client::HandPlaye
                 const mcpp::client::HandBob& bob, bool slim);
 
 void hand_start(Game& game);
+// The renderer that owns the item quads, for the entity area: what a mob
+// holds is item geometry, not a model layer. Null until the hand has started.
+mcpp::gpu::HandRenderer* hand_renderer(Game& game);
 // `ItemInHandRenderer.tick`: the dip as the hand changes what it holds.
 void hand_tick(Game& game);
 void hand_draw(Game& game);
