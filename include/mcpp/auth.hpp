@@ -4,6 +4,8 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace mcpp::auth {
 
@@ -33,6 +35,7 @@ struct DeviceCode {
 
 enum class Failure {
     None,
+    SessionExpired,    // the cached session ran out and cannot be refreshed here
     Network,
     Declined,          // the player refused on the Microsoft page
     TimedOut,
@@ -44,6 +47,58 @@ enum class Failure {
 };
 
 std::string_view describe(Failure failure);
+
+// Asks Mojang whose token this is. An empty return means the account owns the
+// game and `profile` now carries the uuid and name Mojang itself reports; any
+// other return is the reason it does not.
+std::string check_ownership(Profile& profile);
+
+// Taking over a session from a launcher the player is already signed in to on
+// this machine. The store is read, nothing is sent anywhere, and the result
+// goes into the same cache the Microsoft flow writes.
+struct LauncherStore {
+    enum class Kind {
+        Vanilla,     // .minecraft/launcher_accounts.json
+        PrismLike,   // Prism Launcher / MultiMC accounts.json
+    };
+    Kind kind = Kind::Vanilla;
+    std::string launcher;
+    std::filesystem::path path;
+};
+
+struct Handover {
+    enum class Result {
+        Found,
+        NoStore,      // no launcher account store on this machine
+        NoAccount,    // a store, but no account that can be singled out
+        NoToken,      // an account, but the launcher kept no session token
+        Expired,      // a token that is past its expiry
+        Unreadable,   // a store that is not shaped like one
+    };
+    Result result = Result::NoStore;
+    std::string launcher;
+    std::filesystem::path path;
+    Profile profile;                 // only when Found
+    std::vector<std::string> names;  // profile names seen, for a NoAccount hint
+};
+
+std::string_view describe(Handover::Result result);
+
+std::vector<LauncherStore> launcher_stores();
+
+// Split out from the file for testing: the same parse, over text.
+Handover parse_launcher_store(LauncherStore::Kind kind, std::string_view text,
+                              std::string_view wanted_name,
+                              std::chrono::system_clock::time_point now);
+
+Handover read_launcher_store(const LauncherStore& store, std::string_view wanted_name,
+                             std::chrono::system_clock::time_point now);
+
+// Walks the stores in order and returns the first one that has a session, or
+// the most telling failure if none of them does.
+Handover take_from_launcher(std::string_view wanted_name = {},
+                            std::chrono::system_clock::time_point now =
+                                std::chrono::system_clock::now());
 
 class Session {
 public:
@@ -59,6 +114,11 @@ public:
     // Walks the device-code flow. `show` is called once with the code and the
     // page to open; it then polls until the player finishes or gives up.
     std::optional<Profile> sign_in(const std::function<void(const DeviceCode&)>& show);
+
+    // Puts a session that came from somewhere else (a launcher) into the cache
+    // `play` and `join` read. There is no refresh token with it, so it lasts
+    // only as long as the launcher's own token does.
+    void adopt(const Profile& profile, std::string_view source);
 
     void sign_out();
 

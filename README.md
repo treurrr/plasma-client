@@ -70,10 +70,14 @@ table exists and a join against a real server of that version has been tested.
 
 ## Signing in
 
-Joining a server in online mode needs a Microsoft account. The whole flow is
-here - device code, Xbox Live, XSTS, Mojang, and the profile request that is
-the actual proof the account owns the game - but a build has to carry an
-application id of its own:
+Joining a server in online mode needs a Microsoft account. There are two ways
+in, and the client never asks for a password in either.
+
+### Microsoft's own flow
+
+The whole flow is here - device code, Xbox Live, XSTS, Mojang, and the profile
+request that is the actual proof the account owns the game - but a build has to
+carry an application id of its own:
 
 ```sh
 export PLASMA_MSA_CLIENT_ID=<your azure application id>
@@ -83,9 +87,48 @@ plasma-client login
 Register the application under Microsoft Entra as a public client with the
 device-code flow enabled; a client secret is neither needed nor wanted. Mojang
 approves applications separately before they may sign players in for real.
-Without an id the client says so and refuses rather than pretending.
+Without an id the client says so and refuses rather than pretending. Borrowing
+another project's application id is not an option on offer: it signs players in
+under their name, and a revocation aimed at us would lock their users out.
 
-A build configured with `-DMCPP_DEV_OFFLINE=ON` skips the ownership check and
+### A session handed over by a launcher
+
+If a launcher on this machine is already signed in, the session can be taken
+from it, with no application id of our own:
+
+```sh
+plasma-client login --from-launcher            # the account the launcher has selected
+plasma-client login --from-launcher <name>     # when several are signed in
+```
+
+Read: the Minecraft launcher's `launcher_accounts.json` (`~/.minecraft`, the
+flatpak's `~/.var/app/com.mojang.Minecraft/.minecraft`, `%APPDATA%\.minecraft`,
+or `$MINECRAFT_DIR`), and Prism Launcher's or MultiMC's `accounts.json`.
+`PLASMA_LAUNCHER_ACCOUNTS` points at one directly. The Modrinth App keeps its
+accounts in a SQLite database rather than a json file and is not read.
+`usercache.json` is a server-side list of names and uuids and holds no session
+at all.
+
+Three fields are taken - the profile's uuid, its name and the access token -
+and they go into the same cache the Microsoft flow writes, so `play` and `join`
+need nothing further. The token is read from the launcher's file and sent only
+to Mojang's own join endpoint, exactly as the normal flow sends it; it is never
+printed or logged, not even in part.
+
+**It expires, and this client cannot renew it.** A launcher's access token lasts
+hours, not days, and the refresh token next to it was issued to that launcher's
+application, so renewing it would mean asking Microsoft in that launcher's name.
+When the session runs out, the client says so by name and the cure is to open
+the launcher once - which signs it in again - and run the handover again. The
+same goes for a launcher that is signed in but holds no token in its file at
+that moment: the Minecraft launcher is known to leave `accessToken` empty while
+it is closed, and that is reported as what it is, with the same cure, not as a
+mysterious failure. Its `launcher_msa_credentials.bin` is not touched; the
+Microsoft tokens in it belong to the launcher's own application.
+
+Ownership is still checked: the handed-over token is put to Mojang's profile
+endpoint before anything is written, which answers only for an account that owns
+the game. A build configured with `-DMCPP_DEV_OFFLINE=ON` skips that check and
 can only join servers in offline mode. It is for testing and never ships.
 
 ## Building
@@ -116,6 +159,7 @@ biome tints are looked up in, and the sky.
 
 ```sh
 plasma-client login                            # sign in with a Microsoft account
+plasma-client login --from-launcher [name]     # take the session from a signed-in launcher
 plasma-client play <host>[:port]               # open a window and walk around
 plasma-client join <host>[:port] [name]        # join and stay in the play state
 plasma-client bench <host>[:port]              # frame time and fps
