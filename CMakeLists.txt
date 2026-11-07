@@ -184,6 +184,7 @@ add_executable(plasma-client src/tools/client_main.cpp src/features.cpp src/ui/m
     src/client/clicktest.cpp src/client/inspect.cpp src/client/entityshot.cpp
     src/client/player_rules.cpp src/client/movetest.cpp src/client/crafttest.cpp
     src/client/outlineshot.cpp
+    src/client/blockshot.cpp
     ${MCPP_PLAY_SOURCES})
 target_include_directories(plasma-client PRIVATE src)
 target_link_libraries(plasma-client PRIVATE mcpp_net)

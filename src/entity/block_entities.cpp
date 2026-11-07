@@ -1,6 +1,7 @@
 #include "mcpp/entity/block_entities.hpp"
 
 #include "mcpp/jmath.hpp"
+#include "mcpp/world/chunk.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -280,6 +281,14 @@ void BlockEntityScene::put(int32_t x, int32_t y, int32_t z, nbt::Value data) {
     entity.y = y;
     entity.z = z;
     entity.data = std::move(data);
+}
+
+void BlockEntityScene::appear(int32_t x, int32_t y, int32_t z) {
+    const auto [at, fresh] = entities_.try_emplace(key_of(x, y, z));
+    if (!fresh) return;
+    at->second.x = x;
+    at->second.y = y;
+    at->second.z = z;
 }
 
 void BlockEntityScene::removed(int32_t x, int32_t y, int32_t z) {
@@ -808,6 +817,36 @@ void BlockEntityScene::draw(gpu::EntityRenderer& renderer, const View& view,
     stats_.pose_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
             .count();
+}
+
+void scan_chunk(const world::Chunk& chunk, const BlockEntityTable& table,
+                BlockEntityScene& scene) {
+    for (size_t index = 0; index < chunk.sections.size(); ++index) {
+        const world::PalettedContainer& blocks = chunk.sections[index].blocks;
+        const std::vector<int32_t>& palette = blocks.palette();
+        if (!palette.empty()) {
+            // A section whose whole palette is ordinary blocks is skipped
+            // without reading a single entry.
+            bool any = false;
+            for (const int32_t state : palette) {
+                if (table.find(state) != nullptr) {
+                    any = true;
+                    break;
+                }
+            }
+            if (!any) continue;
+        }
+        const auto base = static_cast<int32_t>(index) * 16;
+        for (int32_t y = 0; y < 16; ++y) {
+            for (int32_t z = 0; z < 16; ++z) {
+                for (int32_t x = 0; x < 16; ++x) {
+                    const int32_t state = chunk.block_state(x, base + y, z);
+                    if (table.find(state) == nullptr) continue;
+                    scene.appear((chunk.x << 4) + x, chunk.min_y + base + y, (chunk.z << 4) + z);
+                }
+            }
+        }
+    }
 }
 
 } // namespace mcpp::entity

@@ -53,9 +53,10 @@ void entities_bind(Game& game, mcpp::SessionEvents& events) {
         if (next) next(x, y, z, type, data);
         blocks.put(x, y, z, data);
     };
-    events.world.on_chunk = [&blocks, next = events.world.on_chunk](
+    events.world.on_chunk = [&game, &blocks, next = events.world.on_chunk](
                                 const mcpp::world::Chunk& chunk) {
         if (next) next(chunk);
+        mcpp::entity::scan_chunk(chunk, game.entities.block_entity_table, blocks);
         for (const mcpp::world::BlockEntity& one : chunk.block_entities) {
             blocks.put(one.x, one.y, one.z, one.data);
         }
@@ -71,6 +72,7 @@ void entities_bind(Game& game, mcpp::SessionEvents& events) {
         // A block entity whose block is gone goes with it; one that stays
         // keeps what the server last said about it.
         if (game.entities.block_entity_table.find(state) == nullptr) blocks.removed(x, y, z);
+        else blocks.appear(x, y, z);
     };
     events.world.on_respawn = [&blocks, next = events.world.on_respawn](
                                   const mcpp::Dimension& dimension) {

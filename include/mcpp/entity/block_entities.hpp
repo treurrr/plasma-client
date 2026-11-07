@@ -15,6 +15,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace mcpp::world {
+struct Chunk;
+}
+
 namespace mcpp::entity {
 
 // `BlockEntityRenderers`: the blocks the game draws with a model of their own,
@@ -94,6 +98,10 @@ public:
               skins::Cache* skins = nullptr);
 
     void put(int32_t x, int32_t y, int32_t z, nbt::Value data);
+    // `LevelChunk.setBlockState`: a block that carries a block entity gets one
+    // the moment the block is there, whether or not the server had anything to
+    // say about it. An empty chest is still a chest with a lid.
+    void appear(int32_t x, int32_t y, int32_t z);
     void removed(int32_t x, int32_t y, int32_t z);
     void forget_chunk(int32_t chunk_x, int32_t chunk_z);
     // `ChestBlockEntity.triggerEvent`: how many players have it open.
@@ -106,6 +114,10 @@ public:
 
     const BlockEntityStats& stats() const { return stats_; }
     size_t size() const { return entities_.size(); }
+    template <typename Visit>
+    void each(Visit&& visit) const {
+        for (const auto& [key, entity] : entities_) visit(entity);
+    }
 
     // One model of one block entity, already placed: what `draw` hands the
     // renderer, and what a probe compares with the game.
@@ -164,5 +176,9 @@ private:
     std::vector<Matrix> matrices_;
     BlockEntityStats stats_;
 };
+
+// Every block in a chunk that carries one, given a block entity.
+void scan_chunk(const world::Chunk& chunk, const BlockEntityTable& table,
+                BlockEntityScene& scene);
 
 } // namespace mcpp::entity
