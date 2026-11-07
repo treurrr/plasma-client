@@ -218,30 +218,35 @@ public:
     size_t index;
 
 private:
-    void upload_icon(GuiGraphics& gfx);
+    bool upload_icon(GuiGraphics& gfx);
 
     std::vector<uint8_t> uploaded_;
     bool uploaded_any_ = false;
+    bool has_icon_ = false;
 };
 
-void OnlineServerEntry::upload_icon(GuiGraphics& gfx) {
+// `ServerSelectionList.OnlineServerEntry.uploadServerIcon`: the icon the file
+// holds, or the one the status ping brought, put into a texture of its own.
+bool OnlineServerEntry::upload_icon(GuiGraphics& gfx) {
     auto& entry = data();
-    if (entry.icon_png == uploaded_ && uploaded_any_) return;
+    if (entry.icon_png == uploaded_ && uploaded_any_) return has_icon_;
     uploaded_ = entry.icon_png;
     uploaded_any_ = true;
-    if (entry.icon_png.empty() && !entry.icon.empty()) {
-        const auto bytes = base64_decode(entry.icon);
-        if (const auto image = read_png(bytes)) {
-            gfx.quads.set_dynamic(icon_layer(index), image->rgba, image->width, image->height);
-            return;
-        }
-    }
+    has_icon_ = false;
     if (!entry.icon_png.empty()) {
         if (const auto image = read_png(entry.icon_png)) {
             gfx.quads.set_dynamic(icon_layer(index), image->rgba, image->width, image->height);
             entry.icon = base64_encode(entry.icon_png);
+            has_icon_ = true;
+        }
+    } else if (!entry.icon.empty()) {
+        const auto bytes = base64_decode(entry.icon);
+        if (const auto image = read_png(bytes)) {
+            gfx.quads.set_dynamic(icon_layer(index), image->rgba, image->width, image->height);
+            has_icon_ = true;
         }
     }
+    return has_icon_;
 }
 
 // `ServerSelectionList.OnlineServerEntry.renderContent`: the ping is started
@@ -260,11 +265,16 @@ void OnlineServerEntry::render_content(GuiGraphics& gfx, double mx, double my, b
         gfx.draw_string(motd[line], content_x() + kIconSize + 3,
                         content_y() + 12 + 9 * static_cast<int>(line), kGrey);
     }
-    upload_icon(gfx);
-    gfx.quads.dynamic(icon_layer(index), static_cast<float>(content_x() * gfx.scale),
-                      static_cast<float>(content_y() * gfx.scale),
-                      static_cast<float>(kIconSize * gfx.scale),
-                      static_cast<float>(kIconSize * gfx.scale));
+    // The game's FaviconTexture: the server's own icon, or the square
+    // the game shows for a server that sends none.
+    if (upload_icon(gfx)) {
+        gfx.quads.dynamic(icon_layer(index), static_cast<float>(content_x() * gfx.scale),
+                          static_cast<float>(content_y() * gfx.scale),
+                          static_cast<float>(kIconSize * gfx.scale),
+                          static_cast<float>(kIconSize * gfx.scale));
+    } else {
+        gfx.blit_sprite("misc/unknown_server", content_x(), content_y(), kIconSize, kIconSize);
+    }
 
     std::string icon_name;
     Component icon_tooltip;
