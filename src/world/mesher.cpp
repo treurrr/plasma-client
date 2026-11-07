@@ -56,8 +56,8 @@ constexpr int kFaceAxes[6][2] = {{0, 2}, {0, 2}, {0, 1}, {0, 1}, {1, 2}, {1, 2}}
 // `ClientLevel.getShade`: how dark a face is for pointing the way it does.
 constexpr float kFaceShade[6] = {0.5f, 1.0f, 0.8f, 0.8f, 0.6f, 0.6f};
 
-// `ModelBlockRenderer.AdjacencyInfo.corners`: the four neighbours in the plane
-// of each face, in the order the corner blending expects them.
+// `ModelBlockRenderer.AdjacencyInfo.AdjacencyInfo`: the four neighbours in
+// the plane of each face, in the order the corner blending expects them.
 constexpr int kAdjacent[6][4] = {
     {4, 5, 2, 3},   // down:  west, east, north, south
     {5, 4, 2, 3},   // up
@@ -67,14 +67,14 @@ constexpr int kAdjacent[6][4] = {
     {0, 1, 2, 3},   // east
 };
 
-// `ModelBlockRenderer.SizeInfo`: where each extent of the quad sits in the
-// shape array, the second six being one minus the first six.
+// `ModelBlockRenderer.SizeInfo.SizeInfo`: where each extent of the quad sits
+// in the shape array, the second six being one minus the first six.
 enum : int { kSizeDown, kSizeUp, kSizeNorth, kSizeSouth, kSizeWest, kSizeEast };
 constexpr int kSizeCount = 12;
 
-// `ModelBlockRenderer.AdjacencyInfo.vert0Weights` and the three after it: for
-// each face, for each of the four blended corners, the four pairs of extents
-// whose product weights that corner into this vertex.
+// `ModelBlockRenderer.AdjacencyInfo.AdjacencyInfo`: for each face, for each of
+// the four blended corners, the four pairs of extents whose product weights
+// that corner into this vertex.
 constexpr int kCornerWeights[6][4][8] = {
     {{10, 3, 10, 9, 4, 9, 4, 3}, {10, 2, 10, 8, 4, 8, 4, 2},
      {11, 2, 11, 8, 5, 8, 5, 2}, {11, 3, 11, 9, 5, 9, 5, 3}},   // down
@@ -90,9 +90,9 @@ constexpr int kCornerWeights[6][4][8] = {
      {7, 2, 7, 8, 1, 8, 1, 2}, {7, 3, 7, 9, 1, 9, 1, 3}},       // east
 };
 
-// `ModelBlockRenderer.AmbientVertexRemap`, read the other way round: which of
-// the four blended corners a quad corner is, by the side it lies on along the
-// face's two axes.
+// `ModelBlockRenderer.AmbientVertexRemap.AmbientVertexRemap`, read backwards:
+// which of the four blended corners a quad corner is, by the side it lies on
+// along the face's two axes.
 constexpr int kCornerOrder[6][4] = {
     {1, 0, 2, 3},   // down
     {2, 3, 1, 0},   // up
@@ -668,6 +668,11 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
                     if (quads.empty()) continue;
 
                     const RenderInfo& here = render.at(state);
+                    // `ModelBlockRenderer.tesselateBlock`: a plant stands a
+                    // little off the middle of its own block, by a hash of the
+                    // column it grows in, so a field is not a grid.
+                    float wander[3];
+                    block_offset(here, chunk.x * kSection + x, chunk.z * kSection + z, wander);
 
                     // A fluid also hides against its own kind, or an ocean
                     // would be full of faces between neighbouring water blocks.
@@ -884,9 +889,9 @@ std::vector<SectionMesh> mesh_sections(const Chunk& chunk, const ChunkBlocks& bl
 
                         for (int corner = 0; corner < 4; ++corner) {
                             const float world[3] = {
-                                static_cast<float>(x) + placed[corner][0],
-                                static_cast<float>(local_y) + placed[corner][1],
-                                static_cast<float>(z) + placed[corner][2],
+                                static_cast<float>(x) + placed[corner][0] + wander[0],
+                                static_cast<float>(local_y) + placed[corner][1] + wander[1],
+                                static_cast<float>(z) + placed[corner][2] + wander[2],
                             };
 
                             Vertex vertex{};

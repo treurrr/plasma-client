@@ -1558,7 +1558,7 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         push.eye[2] = camera.eye[2];
         push.eye[3] = kCutout;
         push.extra[0] = static_cast<float>(atlas_tile_);
-        // `GraphicsPreset.FANCY`: the rotated grid is what the default preset
+        // `GraphicsPreset.apply`: the rotated grid is what the default preset
         // picks, and it is what the default preset's pictures are compared to.
         push.extra[1] = 1.0f;
         push.view_projection = view_projection(camera, static_cast<float>(width_) /
