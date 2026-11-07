@@ -44,6 +44,11 @@ of the frame times beside the recording: every column of pixels is the fastest
 to the slowest frame in that slice of the session, with the mean in white, cpu
 in green, gpu in purple and the 60 and 120 fps lines dashed across it.
 
+`PLASMA_PERF=<file> plasma-client worldbench ...` records the bench's own
+frames the same way. It is how the recorder and the report are proved without
+opening a window, and the file it writes says `worldbench`, so its report
+carries "a tool, not a played game" on every copy of it.
+
 What it costs
 -------------
 
