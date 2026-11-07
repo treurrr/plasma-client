@@ -24,6 +24,7 @@
 #include "mcpp/ui/screen.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -261,26 +262,32 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
             cell(x, z) += cell(x - 1, z) + cell(x, z - 1) - cell(x - 1, z - 1);
         }
     }
-    constexpr int32_t kCentreReach = 16;
     int32_t centre_cx = (min_cx + max_cx) / 2;
     int32_t centre_cz = (min_cz + max_cz) / 2;
-    int32_t fullest = -1;
+    const auto held_within = [&](size_t x, size_t z, int32_t reach) {
+        const auto clamp = [](long value, long high) {
+            return static_cast<size_t>(std::max(0L, std::min(high, value)));
+        };
+        const size_t x0 = clamp(static_cast<long>(x) - reach - 1, static_cast<long>(grid_width));
+        const size_t x1 = clamp(static_cast<long>(x) + reach, static_cast<long>(grid_width));
+        const size_t z0 = clamp(static_cast<long>(z) - reach - 1, static_cast<long>(grid_depth));
+        const size_t z1 = clamp(static_cast<long>(z) + reach, static_cast<long>(grid_depth));
+        return cell(x1, z1) - cell(x0, z1) - cell(x1, z0) + cell(x0, z0);
+    };
+    // The nearest square first, then the wider one: a world that fills both
+    // leaves the near one to pick the middle, where a corner would do as well
+    // for the wide one.
+    std::array<int32_t, 3> fullest{-1, -1, -(1 << 30)};
     for (size_t z = 1; z <= grid_depth; ++z) {
         for (size_t x = 1; x <= grid_width; ++x) {
-            const auto clamp = [](long value, long low, long high) {
-                return static_cast<size_t>(std::max(low, std::min(high, value)));
-            };
-            const size_t x0 = clamp(static_cast<long>(x) - kCentreReach - 1, 0,
-                                    static_cast<long>(grid_width));
-            const size_t x1 = clamp(static_cast<long>(x) + kCentreReach, 0,
-                                    static_cast<long>(grid_width));
-            const size_t z0 = clamp(static_cast<long>(z) - kCentreReach - 1, 0,
-                                    static_cast<long>(grid_depth));
-            const size_t z1 = clamp(static_cast<long>(z) + kCentreReach, 0,
-                                    static_cast<long>(grid_depth));
-            const int32_t held = cell(x1, z1) - cell(x0, z1) - cell(x1, z0) + cell(x0, z0);
-            if (held > fullest) {
-                fullest = held;
+            const int32_t dx = min_cx + static_cast<int32_t>(x) - 1 - (min_cx + max_cx) / 2;
+            const int32_t dz = min_cz + static_cast<int32_t>(z) - 1 - (min_cz + max_cz) / 2;
+            const std::array<int32_t, 3> score{held_within(x, z, 8), held_within(x, z, 16),
+                                               -(dx * dx + dz * dz)};
+            if (score[0] > fullest[0] ||
+                (score[0] == fullest[0] &&
+                 (score[1] > fullest[1] || (score[1] == fullest[1] && score[2] > fullest[2])))) {
+                fullest = score;
                 centre_cx = min_cx + static_cast<int32_t>(x) - 1;
                 centre_cz = min_cz + static_cast<int32_t>(z) - 1;
             }

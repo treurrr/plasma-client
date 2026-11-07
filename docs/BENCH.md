@@ -134,3 +134,18 @@ touches them is structural: the translucent sort belongs on a worker thread
 (vanilla sorts there too), the per-section draws belong in one indirect draw,
 and the frustum test belongs on whole chunk columns before their sections.
 Those are the three to do before anyone writes a generator.
+
+What the room for geometry allows
+---------------------------------
+
+The uploaded geometry of a recorded world comes to about 0.45 MB a chunk in
+open hills and 0.58 MB a chunk in a dark forest, vertices and indices
+together. The client reserves 384 MB for vertices and 160 MB for indices
+(`world.cpp`), so it holds somewhere around 900 to 1200 chunks before it runs
+out of room and stops appending: a square of about 31 by 31, which is render
+distance 15.
+
+That is the number to keep in mind beside any render distance 32 row. A vanilla
+client at 32 holds 4225 chunks, which would be around 2.4 GB of geometry here.
+Our client cannot draw that today, whatever the frame rate of a flight through
+fewer chunks says.
