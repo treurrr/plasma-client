@@ -2,6 +2,9 @@
 #include "mcpp/session.hpp"
 #include "mcpp/world/atlas.hpp"
 #include "mcpp/world/environment.hpp"
+#include "mcpp/world/light.hpp"
+#include "mcpp/world/render_table.hpp"
+#include "mcpp/world/shapes.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -277,6 +280,88 @@ void test_texture_animation() {
     check(near(Atlas::frame_at(animation, 3).fade, 1.0 / 3.0), "a third through a three-tick frame");
 }
 
+// `BlockLightEngine.checkNode`, `BlockBehaviour.BlockStateBase.getLightBlock`:
+// the two things a relight reads from the block itself. A torch gives off 14,
+// which is the game's own light_torch value, and every step away from it costs
+// max(1, light_block). Ice stops one level, which is why water and ice get
+// darker with depth; a rule over block names has it at nothing.
+void test_relight() {
+    const auto& shapes = BlockShapes::game();
+    RenderTable render;
+    if (!shapes.loaded() || !render.open(RenderTable::default_path(774))) {
+        std::cout << "skipped: no baked block tables\n";
+        ++skipped;
+        return;
+    }
+    const int32_t torch = shapes.find("minecraft:torch");
+    const int32_t ice = shapes.find("minecraft:ice");
+    check(render.at(torch).emission == 14, "the game says a torch gives off 14");
+    check(render.at(ice).light_block == 1, "and that ice stops one level");
+
+    mcpp::ByteBuffer air;
+    air.write_u8(0);
+    air.write_varint(0);
+    mcpp::ByteBuffer biomes;
+    biomes.write_u8(0);
+    biomes.write_varint(0);
+    ChunkSection section;
+    section.blocks = PalettedContainer::read(air, 4096, 8);
+    section.biomes = PalettedContainer::read(biomes, 64, 3);
+
+    ChunkMap world;
+    auto& chunk = world[{0, 0}];
+    chunk.min_y = 0;
+    chunk.sections.push_back(std::move(section));
+    chunk.sky_light.sections.assign(3, std::vector<uint8_t>(2048, 0));
+    chunk.block_light.sections.assign(3, std::vector<uint8_t>(2048, 0));
+    for (int32_t y = 0; y < 16; ++y) {
+        for (int32_t z = 0; z < 16; ++z) {
+            for (int32_t x = 0; x < 16; ++x) chunk.sky_light.set(1, x, y, z, 15);
+        }
+    }
+    LightEngine light;
+
+    chunk.set_block_state(8, 8, 8, torch);
+    light.relight(world, 8, 8, 8);
+    check(chunk.block_light_at(8, 8, 8) == 14, "a torch lights its own cell to 14");
+    check(chunk.block_light_at(9, 8, 8) == 13, "the cell beside it to 13");
+    check(chunk.block_light_at(11, 8, 8) == 11, "and three cells away to 11");
+    check(chunk.block_light_at(8, 8, 8 + 14) == 0, "fourteen away there is nothing left");
+
+    // A shaft of air in stone, sky light falling down it: only what the shaft
+    // itself lets through reaches the bottom, so what ice stops is visible.
+    ChunkMap shaft_world;
+    auto& shaft = shaft_world[{0, 0}];
+    shaft.min_y = 0;
+    ChunkSection stone_section;
+    mcpp::ByteBuffer air2;
+    air2.write_u8(0);
+    air2.write_varint(0);
+    mcpp::ByteBuffer biomes2;
+    biomes2.write_u8(0);
+    biomes2.write_varint(0);
+    stone_section.blocks = PalettedContainer::read(air2, 4096, 8);
+    stone_section.biomes = PalettedContainer::read(biomes2, 64, 3);
+    shaft.sections.push_back(std::move(stone_section));
+    shaft.sky_light.sections.assign(3, std::vector<uint8_t>(2048, 0));
+    shaft.block_light.sections.assign(3, std::vector<uint8_t>(2048, 0));
+    const int32_t stone = shapes.find("minecraft:stone");
+    for (int32_t y = 0; y < 16; ++y) {
+        for (int32_t z = 0; z < 16; ++z) {
+            for (int32_t x = 0; x < 16; ++x) {
+                const bool open = x == 8 && z == 8;
+                if (!open) shaft.set_block_state(x, y, z, stone);
+                shaft.sky_light.set(1, x, y, z, open ? 15 : 0);
+            }
+        }
+    }
+    shaft.set_block_state(8, 10, 8, ice);
+    light.relight(shaft_world, 8, 10, 8);
+    check(shaft.sky_light_at(8, 10, 8) == 14, "ice takes one level out of the sky light");
+    check(shaft.sky_light_at(8, 9, 8) == 13, "and the cell under it one more");
+    check(shaft.sky_light_at(8, 7, 8) == 11, "three blocks under it, three more");
+}
+
 } // namespace
 
 int main() {
@@ -284,6 +369,7 @@ int main() {
     test_tracks();
     test_datapack();
     test_recording();
+    test_relight();
     if (failures == 0) {
         std::cout << std::format("all world tests passed ({} skipped)\n", skipped);
         return 0;

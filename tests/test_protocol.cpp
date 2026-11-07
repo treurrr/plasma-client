@@ -543,7 +543,7 @@ void test_light_engine() {
     }
     const auto sky = [&](int32_t y) { return chunk.sky_light_at(8, y + 64, 8); };
 
-    mcpp::world::LightEngine light(table);
+    mcpp::world::LightEngine light;
 
     // Dig the top stone. Sunlight falls into it at full strength.
     chunk.set_block_state(8, 7, 8, 0);

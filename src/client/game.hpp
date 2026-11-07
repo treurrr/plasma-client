@@ -48,8 +48,6 @@ namespace client {
 using ChunkKey = std::pair<int32_t, int32_t>;
 
 struct WorldArea {
-    explicit WorldArea(const mcpp::world::BlockTable& table) : light(table) {}
-
     // The first chunks, fetched before the window opens.
     std::mutex guard;
     std::vector<mcpp::world::Chunk> chunks;
@@ -227,7 +225,7 @@ struct BreakingArea;
 struct HandArea;
 
 struct Game {
-    explicit Game(size_t limit) : chunk_limit(limit), world(table) {}
+    explicit Game(size_t limit) : chunk_limit(limit) {}
 
     Address address;
     size_t chunk_limit = 0;
