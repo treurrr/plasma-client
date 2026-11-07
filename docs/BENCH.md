@@ -6,6 +6,10 @@ Horizon client publishes. The two tables are printed in the same columns so
 they can sit next to each other, and the section after them says which of those
 columns may honestly be compared. Most of them may not.
 
+A frame of a played game is a different frame: more work in it, and nothing
+here measures it. That is the frame recorder's job - docs/LIVEPERF.md - and a
+number from a recorded session is never quoted as a row of the table below.
+
 Running it
 ----------
 

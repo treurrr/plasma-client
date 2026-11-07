@@ -81,7 +81,7 @@ int play(const std::string& target, size_t chunk_limit) {
 
     std::cout << "- window open: WASD to move, mouse to look, shift and space for down and up,\n"
                  "  left control to sprint, f to fly, t to chat, m for the feature menu,\n"
-                 "  escape for the game menu\n";
+                 "  f10 to start and stop the frame recorder, escape for the game menu\n";
 
     auto previous = std::chrono::steady_clock::now();
     size_t frames = 0;
@@ -152,12 +152,14 @@ int play(const std::string& target, size_t chunk_limit) {
         player_draw(game);
         sound_draw(game);
         screens_draw(game);
+        perf_draw(game);
 
         window.present(renderer, game.camera,
                        [&](VkCommandBuffer command, uint32_t w, uint32_t h) {
                            screens_record(game, command, w, h);
                        });
         gpu_total += renderer.last_gpu_ms();
+        perf_frame(game);
         if (frames > 30) frame_times.push_back(window.last_frame_ms());
         ++frames;
     }
@@ -168,6 +170,7 @@ int play(const std::string& target, size_t chunk_limit) {
     screens_stop(game);
     sound_stop(game);
     hud_stop(game);
+    perf_stop(game);
     session.close();
     if (frames > 0) {
         std::cout << std::format("- {} frames, {:.3f} ms gpu on average, {} positions sent, "

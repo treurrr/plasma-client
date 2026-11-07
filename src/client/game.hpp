@@ -381,4 +381,13 @@ void hud_tick(Game& game);
 void hud_render(Game& game);
 void hud_stop(Game& game);
 
+// P: the frame recorder, in src/client/perfrec.cpp. It records what every
+// frame of a played session cost; `perfreport` reads the file back.
+//   perf_draw   after every area has drawn: its on-screen indicator
+//   perf_frame  after the frame was presented: that frame's timings
+//   perf_stop   after the last frame: writes whatever was being recorded
+void perf_draw(Game& game);
+void perf_frame(Game& game);
+void perf_stop(Game& game);
+
 } // namespace client

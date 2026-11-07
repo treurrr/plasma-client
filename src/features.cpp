@@ -26,6 +26,7 @@ constexpr std::array<Feature, static_cast<size_t>(Id::Count)> kFeatures{{
     {"nofireoverlay","No fire overlay",       Category::Visual, true,  false},
     {"cleanscore",   "Clean scoreboard",      Category::Visual, false, false},
     {"plasmahotbar", "Plasma hotbar",         Category::Visual, false, false},
+    {"framerecorder","Frame recorder",        Category::Hud,    false, false},
 }};
 
 } // namespace

@@ -141,6 +141,17 @@ void preview(const Painter& paint, size_t index, float x, float y, float w,
     const float cx = x + w * 0.5f;
     const float cy = y + 50.0f;
 
+    // P: by key rather than by index, so the card keeps its preview wherever
+    // the feature ends up in the list.
+    const auto all = features::Registry::instance().all();
+    if (index < all.size() && all[index].key == "framerecorder") {
+        paint.rect(cx - 55.0f, cy - 23.0f, 110.0f, 46.0f, 6.0f, kSunken, 0x1F1F23FFu, 1.0f);
+        paint.rect(cx - 38.0f, cy - 4.0f, 8.0f, 8.0f, 4.0f, 0xE05252FFu);
+        paint.middle("REC", cx - 24.0f, cy, 17.0f, kText, Style::Mono);
+        paint.middle("F10", cx + 20.0f, cy + 1.0f, 10.0f, kMute, Style::Mono);
+        return;
+    }
+
     const auto number = [&](std::string_view value, std::string_view unit, float box_w) {
         paint.rect(cx - box_w * 0.5f, cy - 23.0f, box_w, 46.0f, 6.0f, kSunken, 0x1F1F23FFu, 1.0f);
         const float value_w = paint.measure(value, 24.0f, Style::Mono);

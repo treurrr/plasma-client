@@ -16,6 +16,7 @@
 #include "mcpp/gpu/ui.hpp"
 #include "mcpp/jmath.hpp"
 #include "mcpp/options.hpp"
+#include "mcpp/perf.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/skins.hpp"
 #include "mcpp/translations.hpp"
@@ -399,6 +400,28 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
                  "thread's own cpu time, so the wait for the gpu is not in it; gpu ms comes from\n"
                  "timestamp queries around the frame.\n\n";
 
+    // P: the live frame recorder, fed from here too. It is the one render loop
+    // that runs without a window, so it is where the recorder and its report
+    // are proved; the file it writes says `worldbench` rather than `live`, so
+    // nobody quotes it as a number about playing.
+    mcpp::perf::Recorder recorder;
+    const char* perf_file = std::getenv("PLASMA_PERF");
+    if (perf_file != nullptr && *perf_file != '\0') {
+        mcpp::perf::Context perf_context;
+        perf_context.source = "worldbench";
+        perf_context.server = target;
+        perf_context.dimension = session.dimension().name;
+        perf_context.profile = "offscreen";
+        perf_context.note = std::format("{} frames a flight, 1920x1080 offscreen", frames);
+        const std::time_t when = std::time(nullptr);
+        std::tm local{};
+        localtime_r(&when, &local);
+        char text[32] = {};
+        std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &local);
+        perf_context.started = text;
+        recorder.open(frames * std::size(kFlights) * distances.size() + 16, std::move(perf_context));
+    }
+
     std::cout << "flight                       rd  chunks  of want  drawn   ktris   avg fps  1% low  "
                  "0.1% low  p99 ms   cpu ms  gpu ms\n";
     std::vector<std::string> split_rows;
@@ -514,6 +537,26 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
                 record.wall = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - frame_started).count();
                 if (frame >= 10) measured.push_back(record);
+                if (recorder.recording() && frame >= 10) {
+                    mcpp::perf::Sample sample;
+                    sample.wall_ms = record.wall;
+                    sample.cpu_ms = record.cpu;
+                    sample.gpu_ms = record.gpu;
+                    sample.cost.sort = static_cast<float>(record.cost.sort_ms);
+                    sample.cost.sort_upload = static_cast<float>(record.cost.sort_upload_ms);
+                    sample.cost.sky = static_cast<float>(record.cost.sky_ms);
+                    sample.cost.overlay = static_cast<float>(record.cost.overlay_ms);
+                    sample.cost.geometry = static_cast<float>(record.cost.geometry_ms);
+                    sample.cost.record = static_cast<float>(record.cost.record_ms);
+                    sample.cost.submit = static_cast<float>(record.cost.submit_ms);
+                    sample.cost.readback = static_cast<float>(record.cost.readback_ms);
+                    sample.sections = static_cast<uint32_t>(renderer.drawn_sections());
+                    sample.entities = static_cast<uint32_t>(scene.stats().drawn);
+                    sample.width = 1920;
+                    sample.height = 1080;
+                    sample.render_distance = static_cast<uint8_t>(distance);
+                    recorder.push(sample);
+                }
             }
             const size_t triangles = renderer.drawn_triangles();
             const size_t drawn = renderer.drawn_sections();
@@ -607,6 +650,13 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
     std::cout << std::format("the sky, fog and lightmap at the camera: {:.4f} ms a frame\n",
                              sky_total / std::max(flights_run, 1));
     std::cout << std::format("resident after the flights: {:.0f} MB\n", resident_mb());
+    if (recorder.recording()) {
+        recorder.close();
+        if (recorder.write(perf_file)) {
+            std::cout << std::format("frame recording: {} frames in {}\n", recorder.stored(),
+                                     perf_file);
+        }
+    }
     session.close();
     return 0;
 }

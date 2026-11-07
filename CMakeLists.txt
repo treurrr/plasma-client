@@ -326,3 +326,12 @@ mcpp_test(menus)
 
 # The item in the hand of something in the world, not in front of the camera.
 mcpp_test(held)
+
+# P: what a played frame costs, recorded in the running client and reported
+# by `plasma-client perfreport`.
+target_sources(mcpp_net PRIVATE src/perf.cpp src/perf_report.cpp)
+target_sources(plasma-client PRIVATE src/client/perfreport.cpp)
+if(glfw3_FOUND)
+    target_sources(plasma-client PRIVATE src/client/perfrec.cpp)
+endif()
+mcpp_test(perf)

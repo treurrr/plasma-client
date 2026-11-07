@@ -368,6 +368,11 @@ void breaking_draw(Game& game) {
     ++b->frames;
 }
 
+size_t breaking_particles(const Game& game) {
+    const auto* b = area(game);
+    return b == nullptr ? 0 : b->engine.count();
+}
+
 void breaking_stop(Game& game) {
     auto* b = area(game);
     if (b == nullptr) return;
