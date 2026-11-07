@@ -106,3 +106,31 @@ Their document adds that render distance 32 still has long stalls in the forest
 and village flights, that the slowest frames there are game ticks rather than
 rendering, and that results swing between runs on a shared desktop: one probe
 saw render distance 32 forest anywhere from 15 to 335 fps.
+
+Would generating specialised code help?
+---------------------------------------
+
+Not in a frame. The profile says where a frame's cpu time goes, and none of it
+is the kind of per-case branching a generator flattens.
+
+- **The mesher's per-state branching.** Meshing is not in a measured frame at
+  all: the client meshes on its own thread and the frame only copies the
+  result. Making every block state's meshing free would not move a single
+  column of the table. What it would buy is a shorter wait for a world to
+  appear, and the ceiling on that is the measured meshing time per chunk minus
+  the time spent unpacking the chunk, which is not block-state dispatch.
+- **The packet codecs' per-field dispatch.** The packets that arrive in bulk
+  are chunks, and a chunk's cost is palette and bit unpacking and the zlib
+  stream, not a field-by-field dispatch. The packets with many fields arrive a
+  handful at a time per tick.
+- **Shader permutations.** The gpu is not the limit at these distances, and the
+  world shader's branches are driven by push constants that are the same for
+  every pixel of a draw, which is the case a gpu handles well.
+
+Where the time actually is, per the renderer's own counters: re-sorting
+translucent quads as the camera moves, recording one draw per section, and the
+fixed driver work of a frame. A generator does not touch any of them. What
+touches them is structural: the translucent sort belongs on a worker thread
+(vanilla sorts there too), the per-section draws belong in one indirect draw,
+and the frustum test belongs on whole chunk columns before their sections.
+Those are the three to do before anyone writes a generator.

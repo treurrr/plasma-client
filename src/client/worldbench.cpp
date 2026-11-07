@@ -241,10 +241,51 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
         max_cz = std::max(max_cz, key.second);
     }
     // The square of chunks a client holds at render distance d is the one
-    // around the camera, so the flights start from the middle of what was
-    // recorded and each distance takes its own square out of it.
-    const int32_t centre_cx = (min_cx + max_cx) / 2;
-    const int32_t centre_cz = (min_cz + max_cz) / 2;
+    // around the camera, so each distance takes its own square out of what was
+    // recorded. The middle of the recording is not where that square belongs:
+    // a recording made by walking somewhere else first has a tail of chunks
+    // over there, and the middle of the two is a hole. The flights start from
+    // the fullest square instead.
+    const size_t grid_width = static_cast<size_t>(max_cx - min_cx + 1);
+    const size_t grid_depth = static_cast<size_t>(max_cz - min_cz + 1);
+    std::vector<int32_t> filled((grid_width + 1) * (grid_depth + 1), 0);
+    const auto cell = [&](size_t x, size_t z) -> int32_t& {
+        return filled[z * (grid_width + 1) + x];
+    };
+    for (const auto& [key, chunk] : by_position) {
+        cell(static_cast<size_t>(key.first - min_cx) + 1,
+             static_cast<size_t>(key.second - min_cz) + 1) = 1;
+    }
+    for (size_t z = 1; z <= grid_depth; ++z) {
+        for (size_t x = 1; x <= grid_width; ++x) {
+            cell(x, z) += cell(x - 1, z) + cell(x, z - 1) - cell(x - 1, z - 1);
+        }
+    }
+    constexpr int32_t kCentreReach = 16;
+    int32_t centre_cx = (min_cx + max_cx) / 2;
+    int32_t centre_cz = (min_cz + max_cz) / 2;
+    int32_t fullest = -1;
+    for (size_t z = 1; z <= grid_depth; ++z) {
+        for (size_t x = 1; x <= grid_width; ++x) {
+            const auto clamp = [](long value, long low, long high) {
+                return static_cast<size_t>(std::max(low, std::min(high, value)));
+            };
+            const size_t x0 = clamp(static_cast<long>(x) - kCentreReach - 1, 0,
+                                    static_cast<long>(grid_width));
+            const size_t x1 = clamp(static_cast<long>(x) + kCentreReach, 0,
+                                    static_cast<long>(grid_width));
+            const size_t z0 = clamp(static_cast<long>(z) - kCentreReach - 1, 0,
+                                    static_cast<long>(grid_depth));
+            const size_t z1 = clamp(static_cast<long>(z) + kCentreReach, 0,
+                                    static_cast<long>(grid_depth));
+            const int32_t held = cell(x1, z1) - cell(x0, z1) - cell(x1, z0) + cell(x0, z0);
+            if (held > fullest) {
+                fullest = held;
+                centre_cx = min_cx + static_cast<int32_t>(x) - 1;
+                centre_cz = min_cz + static_cast<int32_t>(z) - 1;
+            }
+        }
+    }
     std::vector<mcpp::world::Chunk> chunks;
     chunks.reserve(by_position.size());
     for (auto& [key, chunk] : by_position) chunks.push_back(std::move(chunk));
@@ -364,6 +405,11 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
             return ring(c) <= distance;
         }));
         const size_t want = static_cast<size_t>(2 * distance + 1) * static_cast<size_t>(2 * distance + 1);
+        if (held == 0) {
+            std::cout << std::format("  -- render distance {}: no chunks around the centre\n",
+                                     distance);
+            continue;
+        }
         double mesh_ms = 0.0;
         double unpack_ms = 0.0;
         {
