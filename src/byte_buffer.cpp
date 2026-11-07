@@ -124,14 +124,30 @@ int64_t ByteBuffer::read_varlong() {
     throw ProtocolError("varlong longer than 10 bytes");
 }
 
+// `Utf8String.read`: a string off the wire, refused when it is longer than the
+// field allows - once in bytes before it is read, once in characters after.
+// The game's limit is a Java string's length, which counts UTF-16 units: one
+// per code point, two for the ones above the basic plane. A lead byte starts a
+// code point and a continuation byte never does, so counting the bytes that
+// are not continuations, and the four-byte leads twice, is that length.
 std::string ByteBuffer::read_string(size_t max_len) {
     int32_t len = read_varint();
-    if (len < 0 || static_cast<size_t>(len) > max_len * 4) {
+    if (static_cast<size_t>(len) > max_len * 4 || len < 0) {
         throw ProtocolError(std::format("string length {} out of range", len));
     }
     need(static_cast<size_t>(len));
     std::string s(reinterpret_cast<const char*>(data_.data() + pos_), static_cast<size_t>(len));
     pos_ += static_cast<size_t>(len);
+    size_t units = 0;
+    for (const char c : s) {
+        const auto byte = static_cast<uint8_t>(c);
+        if ((byte & 0xC0) == 0x80) continue;
+        units += byte >= 0xF0 ? 2 : 1;
+    }
+    if (units > max_len) {
+        throw ProtocolError(std::format("string of {} characters over the {} allowed", units,
+                                        max_len));
+    }
     return s;
 }
 

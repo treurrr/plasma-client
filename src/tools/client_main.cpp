@@ -1062,7 +1062,7 @@ int do_digtest(const std::string& target) {
         world.insert_or_assign({chunk.x, chunk.z}, chunk);
         if (world.size() >= 25 && placed) ready.store(true);
     };
-    mcpp::world::LightEngine light(table);
+    mcpp::world::LightEngine light;
     std::vector<std::string> said_in_chat;
     std::vector<std::string> said_over_hotbar;
     events.ui.on_chat = [&](std::string_view line) { said_in_chat.emplace_back(line); };

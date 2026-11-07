@@ -10,12 +10,14 @@
 #include "mcpp/world/block_table.hpp"
 #include "mcpp/world/chunk.hpp"
 #include "mcpp/world/mesher.hpp"
+#include "mcpp/world/render_table.hpp"
 #include "mcpp/world/shape_edges.hpp"
 #include "mcpp/world/shapes.hpp"
 
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <string_view>
 #include <vector>
 
 namespace client {
@@ -68,7 +70,19 @@ int outlineshot(const std::vector<std::string>& args) {
         return 1;
     }
 
-    std::vector<std::string> wanted(args.begin() + 1, args.end());
+    // `--through=<block>`: a wall of that block between the camera and the
+    // aimed one, which is how the pass the outline belongs to becomes visible.
+    std::string through;
+    std::vector<std::string> wanted;
+    for (const auto& arg : std::vector<std::string>(args.begin() + 1, args.end())) {
+        if (arg.starts_with("--through=")) {
+            through = arg.substr(std::string_view("--through=").size());
+        } else {
+            wanted.push_back(arg);
+        }
+    }
+    mcpp::world::RenderTable render;
+    render.open(mcpp::world::RenderTable::default_path(protocol));
     if (wanted.empty()) {
         wanted = {"minecraft:snow:layers=1",
                   "minecraft:snow:layers=4",
@@ -133,6 +147,14 @@ int outlineshot(const std::vector<std::string>& args) {
             for (int32_t x = 0; x < 16; ++x) states[index(x, 0, z)] = stone;
         }
         states[index(bx, by, bz)] = state;
+        if (!through.empty()) {
+            const int32_t wall = shapes.find(through);
+            if (wall > 0) {
+                for (int32_t x = bx - 1; x <= bx + 1; ++x) {
+                    for (int32_t y = by; y <= by + 1; ++y) states[index(x, y, bz + 2)] = wall;
+                }
+            }
+        }
         mcpp::world::Chunk chunk;
         chunk.min_y = 0;
         chunk.sections.push_back(section_of(states));
@@ -149,7 +171,10 @@ int outlineshot(const std::vector<std::string>& args) {
                                    });
         const auto range = outline.add(shape, edges);
         const int32_t block_pos[3] = {bx, by, bz};
-        renderer.set_outlined_block(block_pos, range.count != 0);
+        const mcpp::world::RenderLayer layer = render.at(state).layer;
+        renderer.set_outlined_block(block_pos, range.count != 0,
+                                    layer == mcpp::world::RenderLayer::Translucent ||
+                                        layer == mcpp::world::RenderLayer::Tripwire);
 
         const std::string name(shapes.name(state));
         const auto tidy = [&] {

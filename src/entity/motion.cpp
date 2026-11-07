@@ -21,6 +21,8 @@ float clamp_x_rot(float degrees) { return std::clamp(std::fmod(degrees, 360.0f),
 
 } // namespace
 
+// `DeltaTracker.Timer.advanceGameTime`, `Minecraft.runTick`: the ticks this
+// frame covers, the part-tick kept for the next one, at most ten at once.
 int TickClock::advance(float seconds) {
     accumulated_ += std::clamp(static_cast<double>(seconds), 0.0, 1.0);
     int ticks = 0;

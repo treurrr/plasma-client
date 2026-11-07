@@ -249,6 +249,70 @@ void test_ladder() {
     check(near(per_tick * 20.0, 2.352, 0.01), "a ladder climbs at 2.35 m/s");
 }
 
+// `Player.onClimbable`: a flying player is on nothing. `handleOnClimbable`
+// cuts horizontal speed to 0.15 a tick on a ladder, which is 3 m/s; creative
+// flight is 0.05 a tick of acceleration against 0.91 drag, so it passes 0.15
+// within two ticks and settles far above it. Flown through a line of vines,
+// the body must therefore keep flying speed and keep its height.
+void test_flying_climbable() {
+    TestWorld t;
+    t.tags.bits.assign(shapes().size(), 0);
+    const int32_t vine = state("minecraft:vine", {{"south", "true"}});
+    t.tags.bits[shapes().state(vine).block] |= w::BlockTags::kClimbable;
+    for (int z = -2; z < 40; ++z) t.set(0, 70, z, vine);
+    w::Body b = body_at(0.5, 70.0, 0.5);
+    b.on_ground = false;
+    b.flying = true;
+    w::Keys keys;
+    keys.forward = true;
+    w::Stats stats;
+    stats.may_fly = true;
+    for (int i = 0; i < 20; ++i) w::tick(b, keys, stats, t.world());
+    check(b.flying, "flight is still on");
+    check(horizontal_speed(b) > 0.3, "flying through vines keeps flying speed");
+    check(near(b.y, 70.0, 1.0e-9), "and holds the height");
+}
+
+// `Player.getBlockSpeedFactor`: 1.0 while flying, whatever is underneath. The
+// same flight over soul sand and over stone covers the same ground; on foot
+// soul sand's 0.4 is what makes the difference, so the factor is live.
+void test_flying_speed_factor() {
+    const auto fly_over = [](int32_t floor_state) {
+        TestWorld t;
+        t.tags.bits.assign(shapes().size(), 0);
+        for (int x = -2; x < 40; ++x) {
+            for (int z = -2; z < 3; ++z) t.set(x, 64, z, floor_state);
+        }
+        w::Body b = body_at(0.5, 65.0, 0.5);
+        b.on_ground = false;
+        b.flying = true;
+        w::Keys keys;
+        keys.forward = true;
+        w::Stats stats;
+        stats.may_fly = true;
+        for (int i = 0; i < 20; ++i) w::tick(b, keys, stats, t.world());
+        return b.z - 0.5;
+    };
+    const auto walk_over = [](int32_t floor_state) {
+        TestWorld t;
+        t.ground = floor_state;
+        w::Body b = body_at(0.5, 64.0, 0.5);
+        w::Keys keys;
+        keys.forward = true;
+        const w::Stats stats;
+        for (int i = 0; i < 20; ++i) w::tick(b, keys, stats, t.world());
+        return b.z - 0.5;
+    };
+    const int32_t soul_sand = state("minecraft:soul_sand");
+    const int32_t stone = state("minecraft:stone");
+    const double flown_slow = fly_over(soul_sand);
+    const double flown_fast = fly_over(stone);
+    check(flown_slow > 1.0, "flight covers ground");
+    check(near(flown_slow, flown_fast, 1.0e-12), "flying over soul sand is flying over stone");
+    check(walk_over(soul_sand) < walk_over(stone) * 0.6,
+          "while walking soul sand still slows the body down");
+}
+
 void test_dig() {
     client::DigContext hand;
     const float stone = client::destroy_progress(1.5f, true, hand);
@@ -304,6 +368,8 @@ int main() {
     test_ice();
     test_water();
     test_ladder();
+    test_flying_climbable();
+    test_flying_speed_factor();
     test_dig();
     test_speed();
     if (failures > 0) {

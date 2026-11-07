@@ -48,8 +48,6 @@ namespace client {
 using ChunkKey = std::pair<int32_t, int32_t>;
 
 struct WorldArea {
-    explicit WorldArea(const mcpp::world::BlockTable& table) : light(table) {}
-
     // The first chunks, fetched before the window opens.
     std::mutex guard;
     std::vector<mcpp::world::Chunk> chunks;
@@ -115,7 +113,6 @@ struct EntitiesArea {
     std::optional<mcpp::skins::Cache> skins;
     std::optional<mcpp::entity::Scene> scene;
     std::optional<mcpp::gpu::EntityRenderer> renderer;
-    mcpp::entity::TickClock clock;
 };
 
 struct PlayerArea {
@@ -228,7 +225,7 @@ struct BreakingArea;
 struct HandArea;
 
 struct Game {
-    explicit Game(size_t limit) : chunk_limit(limit), world(table) {}
+    explicit Game(size_t limit) : chunk_limit(limit) {}
 
     Address address;
     size_t chunk_limit = 0;
@@ -258,6 +255,12 @@ struct Game {
     std::shared_ptr<HudArea> hud;
     std::shared_ptr<BreakingArea> breaking;
     std::shared_ptr<HandArea> hand;
+
+    // I: the game's one clock. `play.cpp` advances it once a frame; whole
+    // ticks go to every area's tick and the remainder is the partial tick
+    // everything is drawn at, so nothing runs on a clock of its own.
+    mcpp::entity::TickClock clock;
+    int ticks = 0;
 };
 
 // Opens a window on a server and plays until it is closed.

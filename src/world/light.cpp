@@ -1,5 +1,8 @@
 #include "mcpp/world/light.hpp"
 
+#include "mcpp/protocol_versions.hpp"
+#include "mcpp/world/render_table.hpp"
+
 #include <algorithm>
 #include <array>
 #include <climits>
@@ -18,6 +21,17 @@ struct Cell {
 constexpr std::array<std::array<int32_t, 3>, 6> kSides{{
     {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}};
 constexpr size_t kDown = 3;
+
+// What the game itself reported for every block state, baked beside the
+// textures: how much light a block stops and how much it gives off.
+const RenderTable& render() {
+    static const RenderTable table = [] {
+        RenderTable loaded;
+        loaded.open(RenderTable::default_path(protocol::kTargetProtocol));
+        return loaded;
+    }();
+    return table;
+}
 
 // One light layer seen across chunk boundaries. A chunk that is not loaded is
 // absent, never written, which keeps a fill inside the world the client has.
@@ -89,23 +103,16 @@ private:
 
 } // namespace
 
+// `BlockBehaviour.BlockStateBase.getLightBlock`: how many levels of light a
+// block state takes out of what crosses it. The game reports it per state and
+// the bake wrote it down; a rule over block names guesses wrong for ice, for
+// the half-transparent blocks and for anything added since.
 int LightEngine::opacity(int32_t state) {
     if (state <= 0) return 0;
     const auto index = static_cast<size_t>(state);
     if (index >= opacity_.size()) opacity_.resize(index + 1, -1);
     int8_t& cached = opacity_[index];
-    if (cached < 0) {
-        if (table_.occludes(state)) {
-            cached = 15;
-        } else if (table_.fluid(state)) {
-            cached = 1;
-        } else {
-            // Leaves and cobwebs thin the light without stopping it, which is
-            // why the ground under a tree is dim rather than dark.
-            const auto name = table_.block_name(state);
-            cached = name.ends_with("_leaves") || name == "minecraft:cobweb" ? 1 : 0;
-        }
-    }
+    if (cached < 0) cached = static_cast<int8_t>(render().at(state).light_block);
     return cached;
 }
 
@@ -141,6 +148,17 @@ std::set<std::pair<int32_t, int32_t>> LightEngine::relight(ChunkMap& world, int3
                 } else {
                     addition.push_back({nx, ny, nz, static_cast<uint8_t>(level)});
                 }
+            }
+        }
+
+        // `BlockLightEngine.checkNode`: a block's own light is a source of its
+        // own, put back the moment the old light has been taken away. Without
+        // it a torch placed in the dark lights nothing but the cell it is in.
+        if (!sky) {
+            const int emitted = render().at(field.state(x, y, z)).emission;
+            if (emitted > 0) {
+                field.set(x, y, z, emitted);
+                addition.push_back({x, y, z, static_cast<uint8_t>(emitted)});
             }
         }
 

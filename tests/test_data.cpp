@@ -376,9 +376,36 @@ void test_table() {
           "names and ids round trip");
 }
 
+// `Utf8String.read`: two limits, one on the bytes before they are read and one
+// on the characters after. "ä" is two bytes for one character and the rock
+// emoji is four bytes for two UTF-16 units, so a field of three characters
+// takes at most twelve bytes and holds one emoji and one letter, but not two
+// emoji.
+void test_utf8_limits() {
+    const auto reads = [](const std::string& text, size_t max_len) {
+        mcpp::ByteBuffer out;
+        out.write_string(text);
+        mcpp::ByteBuffer in(out.take());
+        try {
+            return in.read_string(max_len) == text;
+        } catch (const mcpp::ProtocolError&) {
+            return false;
+        }
+    };
+    const std::string umlaut = "\xc3\xa4";
+    const std::string rock = "\xf0\x9f\xaa\xa8";
+    check(reads("abc", 3), "three bytes in a field of three");
+    check(!reads("abcd", 3), "and not four");
+    check(reads(umlaut + umlaut + umlaut, 3), "three two-byte characters in a field of three");
+    check(reads(rock + umlaut, 3), "an emoji counts for two characters");
+    check(!reads(rock + rock, 3), "so two of them are over a field of three");
+    check(reads(rock + rock, 4), "and fit a field of four");
+}
+
 } // namespace
 
 int main() {
+    test_utf8_limits();
     test_inventory();
     test_entity_data();
     test_packets();

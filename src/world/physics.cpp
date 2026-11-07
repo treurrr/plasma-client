@@ -461,8 +461,9 @@ public:
 
     const BlockInfo& block_at(const int32_t p[3]) const { return level.block(p[0], p[1], p[2]); }
 
-    // `LivingEntity.getBlockSpeedFactor`, `Entity.getBlockSpeedFactor`: how much the block slows walking.
+    // `Player.getBlockSpeedFactor`, `LivingEntity.getBlockSpeedFactor`, `Entity.getBlockSpeedFactor`: how much the block slows walking.
     float block_speed_factor() const {
+        if (b.flying) return 1.0f;
         const int32_t here = level.state(block_x(), block_y(), block_z());
         const auto& block = level.shapes.block(here);
         float f = block.speed;
@@ -484,8 +485,9 @@ public:
         return here == 1.0f ? under : here;
     }
 
-    // `LivingEntity.onClimbable`, `LivingEntity.trapdoorUsableAsLadder`: whether the body is on a ladder or vine.
+    // `Player.onClimbable`, `LivingEntity.onClimbable`, `LivingEntity.trapdoorUsableAsLadder`: whether the body is on a ladder or vine.
     bool on_climbable() const {
+        if (b.flying) return false;
         if (stats.spectator) return false;
         const int32_t x = block_x();
         const int32_t y = block_y();
@@ -947,7 +949,7 @@ public:
         double y = std::max(b.vy, static_cast<double>(-0.15f));
         const bool scaffolding =
             level.block(block_x(), block_y(), block_z()).special == Special::Scaffolding;
-        if (y < 0.0 && !scaffolding && !b.flying && keys.shift) y = 0.0;
+        if (y < 0.0 && !scaffolding && keys.shift) y = 0.0;
         b.vy = y;
     }
 

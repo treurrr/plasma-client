@@ -19,7 +19,7 @@ int32_t floor_i(double v) {
 
 // `AttributeInstance.calculateValue`: an attribute's value from its modifiers.
 // An attribute's value as the game computes it, leaving out one modifier.
-double value_without(const mcpp::Attribute& a, std::string_view skip) {
+double value_without(std::string_view name, const mcpp::Attribute& a, std::string_view skip) {
     double sum = a.base;
     for (const auto& m : a.modifiers) {
         if (m.operation == 0 && m.id != skip) sum += m.amount;
@@ -31,7 +31,7 @@ double value_without(const mcpp::Attribute& a, std::string_view skip) {
     for (const auto& m : a.modifiers) {
         if (m.operation == 2 && m.id != skip) result *= 1.0 + m.amount;
     }
-    return result;
+    return mcpp::sanitize_attribute(name, result);
 }
 
 // `Direction.getApproximateNearest`: the face a vector points at most.
@@ -132,7 +132,8 @@ mcpp::world::Stats player_stats(const mcpp::Session& session) {
     const int32_t me = session.entity_id();
     const auto& attributes = session.attributes(me);
     if (const auto found = attributes.find("minecraft:movement_speed"); found != attributes.end()) {
-        s.movement_speed = value_without(found->second, "minecraft:sprinting");
+        s.movement_speed =
+            value_without("minecraft:movement_speed", found->second, "minecraft:sprinting");
     } else {
         s.movement_speed = session.abilities().walking_speed;
     }
