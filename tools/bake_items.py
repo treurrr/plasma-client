@@ -31,10 +31,12 @@ from resolve_block_models import Assets, deref_texture
 
 MAGIC = b"PLIT"
 VERSION = 4
-# A slot is sixteen game pixels across; the game renders its own cell at
-# sixteen times the gui scale, so a tile baked at four times over is what the
-# largest scale asks for and an exact nearest sample at every smaller one.
-TILE = 64
+# A slot is sixteen game pixels across and the game renders its own cell at
+# sixteen times the gui scale, so no one baked size is right at every scale.
+# Thirty two is gui scale two exactly, which is what this client's shots and
+# the vanilla screenshot they are checked against both use; a larger scale
+# enlarges it rather than resampling someone else's render.
+TILE = 32
 
 
 def align8(value):

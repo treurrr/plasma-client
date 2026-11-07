@@ -11,6 +11,7 @@
 #include "client/game_mode.hpp"
 #include "client/breakshot.hpp"
 #include "client/handshot.hpp"
+#include "client/itemshot.hpp"
 #endif
 
 #include "mcpp/auth.hpp"
@@ -1836,6 +1837,9 @@ int main(int argc, char** argv) {
         }
         if (command == "digtest" && argc > 2) {
             return do_digtest(argv[2]);
+        }
+        if (command == "itemshot") {
+            return client::itemshot(std::vector<std::string>(argv + 2, argv + argc));
         }
         if (command == "handshot") {
             return client::handshot(argc, argv);
