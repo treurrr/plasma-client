@@ -80,6 +80,38 @@ def default_branch(node, depth=0):
     return None, []
 
 
+def default_special(node, depth=0):
+    """The `minecraft:special` renderer a bare stack resolves to.
+
+    Returns the base model, which carries the display transforms, and the
+    renderer's own node. The branch taken is the same default one
+    `default_branch` walks, so a chest is the ordinary chest rather than the
+    gift one and a shield is the one that is not being raised.
+    """
+    if depth > 12 or not isinstance(node, dict):
+        return None
+    if node.get("type") == "minecraft:special":
+        return node.get("base"), node.get("model")
+    if node.get("type") == "minecraft:composite":
+        for part in node.get("models") or []:
+            found = default_special(part, depth + 1)
+            if found is not None:
+                return found
+        return None
+    for key in ("fallback", "on_false", "model", "on_true"):
+        if key in node:
+            found = default_special(node.get(key), depth + 1)
+            if found is not None:
+                return found
+    for key in ("cases", "entries"):
+        for case in node.get(key) or []:
+            found = default_special(case.get("model") if isinstance(case, dict) else None,
+                                    depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
 class Textures:
     """Every picture a model asks for, decoded once and kept."""
 
@@ -189,7 +221,13 @@ def item_icon(assets, jar, textures, grass_map, item, tile, entity_models):
     reference, tint_entries = default_branch(node)
     tints = tint_colours(tint_entries, grass_map)
     if reference is None:
-        return special_items.icon(item, node, entity_models, textures, tile)
+        special = default_special(node)
+        if special is None:
+            return None, "its model definition names no model at all"
+        base, renderer = special
+        resolved = assets.resolve_model(base) if isinstance(base, str) else None
+        return special_items.icon(item, renderer, resolved, entity_models, textures, tile,
+                                  item_render)
     resolved = assets.resolve_model(reference)
     if resolved is None:
         return None, f"model {reference} is missing"
@@ -203,14 +241,20 @@ def item_icon(assets, jar, textures, grass_map, item, tile, entity_models):
 
 
 def main(args):
-    positional = [a for a in args if not a.startswith("--")]
+    positional = []
     tile = TILE
     entity_models = None
-    for index, argument in enumerate(args):
+    rest = list(args)
+    while rest:
+        argument = rest.pop(0)
         if argument == "--tile":
-            tile = int(args[index + 1])
+            tile = int(rest.pop(0))
         elif argument == "--entity-models":
-            entity_models = Path(args[index + 1])
+            entity_models = Path(rest.pop(0))
+        elif argument.startswith("--"):
+            sys.exit(f"unknown option {argument}")
+        else:
+            positional.append(argument)
     if len(positional) != 5:
         sys.exit(__doc__)
     jar_path, registries_path, items_path, protocol, out_path = positional

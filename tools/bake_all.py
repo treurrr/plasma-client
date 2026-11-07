@@ -61,9 +61,14 @@ def main(args):
     run("bake_atlas.py", jar, table, out / f"atlas-{protocol}.plat")
     run("bake_colormaps.py", jar, out / f"colormaps-{protocol}.plcm")
     run("bake_sky.py", jar, out / f"sky-{protocol}.plsk")
+    # The entity model layers first: the items the game draws with a block
+    # entity's model - a chest, a bed, a banner - have no icon without them.
+    models = out / f"entity_models-{protocol}.txt"
+    has_models = ask_the_game("export/export_models.py", models)
+    item_args = ["--entity-models", models] if has_models else []
     run("bake_items.py", jar, Path(report).parent / "registries.json",
         Path(report).parent / "items.json", protocol,
-        out / f"items-{protocol}.plit")
+        out / f"items-{protocol}.plit", *item_args)
     run("bake_held.py", jar, Path(report).parent / "registries.json", protocol,
         out / f"held-{protocol}.plhd")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu",
@@ -76,8 +81,7 @@ def main(args):
     ask_the_game("bake_creative.py", out / f"creative-{protocol}.txt")
     ask_the_game("bake_particles.py", jar, report, out / f"particles-{protocol}.txt",
                  out / f"cracks-{protocol}")
-    models = out / f"entity_models-{protocol}.txt"
-    if ask_the_game("export/export_models.py", models):
+    if has_models:
         run("bake_entities.py", jar, models, out / f"entities-{protocol}.plen")
     else:
         print("-- bake_entities.py skipped: it needs the model layers")
