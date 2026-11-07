@@ -149,6 +149,10 @@ public:
     // and after the translucent terrain, before the clouds (particles).
     void set_after_entities(InWorld draw) { after_entities_ = std::move(draw); }
     void set_after_translucent(InWorld draw) { after_translucent_ = std::move(draw); }
+    // D: last in the world's pass, with the depth cleared in front of it, the
+    // way the game clears its depth before it draws the hand. What it draws
+    // has a projection of its own, so the matrix it is handed is ignored.
+    void set_hand(InWorld draw) { hand_ = std::move(draw); }
 
 private:
     void record_frame(VkCommandBuffer command, const Camera& camera, bool readback);
@@ -316,6 +320,7 @@ private:
     InWorld in_world_;
     InWorld after_entities_;
     InWorld after_translucent_;
+    InWorld hand_;
 
 public:
     // Recorded into the frame after the world and before the overlay, after

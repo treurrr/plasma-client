@@ -2,13 +2,17 @@
 """Bake the inventory icons the game draws for every item it knows.
 
 Usage: bake_items.py <client.jar> <reports/registries.json> <reports/items.json>
-                     <protocol> <out.plit>
+                     <protocol> <out.plit> [--tile N] [--entity-models FILE]
 
 An item id from the server indexes straight into a layer here, the same way a
-block texture id indexes into the block atlas. Items whose icon is a flat
-sprite are taken as they are; items that are blocks have no sprite at all - the
-game builds their icon out of the block model - so those carry the names of the
-faces the renderer should assemble instead.
+block texture id indexes into the block atlas. The game resolves an item to a
+model, places it with that model's `gui` display transform and renders it into
+a cell of its own item atlas once per item state; this does the same work once,
+at bake time, so a slot costs one textured quad.
+
+Items whose model is a flat sprite - `item/generated` and its children - come
+out of their layers unchanged. Everything else is rendered: a block's own
+model, turned and shaded the way the game turns and shades it in a slot.
 """
 import io
 import json
@@ -21,124 +25,195 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
-from bake_block_table import (TINT_BIRCH, TINT_DRY, TINT_EVERGREEN, TINT_FOLIAGE, TINT_GRASS,
-                              TINT_LILY, TINT_WATER, tint_kind)
-from item_cube import render as render_cube
+import item_render
+import special_items
 from resolve_block_models import Assets, deref_texture
-
-# The colours a plains biome resolves to, which is what the game paints an
-# inventory icon with: a slot has no biome to ask.
-PLAINS = {
-    TINT_GRASS: (0x91, 0xBD, 0x59),
-    TINT_FOLIAGE: (0x77, 0xAB, 0x2F),
-    TINT_WATER: (0x3F, 0x76, 0xE4),
-    TINT_DRY: (0x8F, 0x7A, 0x36),
-    # These three never vary with the biome, in a slot or in the world.
-    TINT_EVERGREEN: (0x61, 0x99, 0x61),
-    TINT_BIRCH: (0x80, 0xA7, 0x55),
-    TINT_LILY: (0x20, 0x80, 0x30),
-}
 
 MAGIC = b"PLIT"
 VERSION = 4
-TILE = 16
+# A slot is sixteen game pixels across and the game renders its own cell at
+# sixteen times the gui scale, so no one baked size is right at every scale.
+# Thirty two is gui scale two exactly, which is what this client's shots and
+# the vanilla screenshot they are checked against both use; a larger scale
+# enlarges it rather than resampling someone else's render.
+TILE = 32
 
 
 def align8(value):
     return (value + 7) & ~7
 
 
-def first_model(node, depth=0):
-    """The first plain model reference under an item definition."""
-    if depth > 8 or node is None:
-        return None
+def default_branch(node, depth=0):
+    """The model a stack with no components of its own resolves to.
+
+    Every branching item definition picks by something a bare stack does not
+    have - a charge, a trim, a damage fraction - so the default branch is the
+    one the creative menu and an empty hand show.
+    """
+    if depth > 12 or node is None:
+        return None, []
     if isinstance(node, str):
-        return node
+        return node, []
     if not isinstance(node, dict):
-        return None
-    if node.get("type") == "minecraft:model":
+        return None, []
+    kind = node.get("type")
+    if kind == "minecraft:model":
         reference = node.get("model")
-        return reference if isinstance(reference, str) else None
-    for key in ("model", "on_false", "on_true", "fallback"):
-        found = first_model(node.get(key), depth + 1)
-        if found is not None:
-            return found
+        return (reference if isinstance(reference, str) else None), node.get("tints") or []
+    if kind == "minecraft:composite":
+        for part in node.get("models") or []:
+            found, tints = default_branch(part, depth + 1)
+            if found is not None:
+                return found, tints
+        return None, []
+    for key in ("fallback", "on_false", "model", "on_true"):
+        if key in node:
+            found, tints = default_branch(node.get(key), depth + 1)
+            if found is not None:
+                return found, tints
     for key in ("cases", "entries"):
         for case in node.get(key) or []:
-            found = first_model(case if isinstance(case, str) else case.get("model"), depth + 1)
+            found, tints = default_branch(
+                case if isinstance(case, str) else case.get("model"), depth + 1)
             if found is not None:
-                return found
-    return None
+                return found, tints
+    return None, []
 
 
-def cube_icon(assets, jar, names, item):
-    """The inventory icon the game builds out of a block's own model.
+class Textures:
+    """Every picture a model asks for, decoded once and kept."""
 
-    Only blocks whose model really is one full cube are drawn: a staircase or a
-    fence would need its whole model rendered, and a cube in its place would be
-    a lie about what the item is.
+    def __init__(self, jar):
+        self.jar = jar
+        self.names = set(jar.namelist())
+        self.cache = {}
+
+    def get(self, reference):
+        if reference in self.cache:
+            return self.cache[reference]
+        path = f"assets/minecraft/textures/{reference.split(':')[-1]}.png"
+        image = None
+        if path in self.names:
+            with self.jar.open(path) as handle:
+                picture = Image.open(handle).convert("RGBA")
+            # An animated texture stacks its frames; a slot shows the first.
+            if picture.height > picture.width:
+                picture = picture.crop((0, 0, picture.width, picture.width))
+            image = np.array(picture, dtype=np.uint8)
+        self.cache[reference] = image
+        return image
+
+
+def tint_colours(entries, grass_map):
+    """What each tint index multiplies by for a stack with nothing on it.
+
+    A tint source reads a component the stack does not carry, so it falls back
+    to the `default` the definition names; the two that read the world instead
+    - a constant and a biome colour - are known here and now.
     """
-    definition = f"assets/minecraft/items/{item}.json"
-    if definition not in names:
+    colours = []
+    for entry in entries:
+        kind = entry.get("type", "")
+        if kind == "minecraft:constant":
+            packed = entry.get("value", -1)
+        elif kind == "minecraft:grass":
+            # `GrassColor.get`: the colour map read at the biome's own corner.
+            temperature = float(entry.get("temperature", 0.5))
+            downfall = float(entry.get("downfall", 1.0))
+            x = int((1.0 - temperature) * 255.0)
+            y = int((1.0 - downfall * temperature) * 255.0)
+            pixel = grass_map[min(y, 255), min(x, 255)]
+            packed = 0xFF000000 | int(pixel[0]) << 16 | int(pixel[1]) << 8 | int(pixel[2])
+        else:
+            packed = entry.get("default", -1)
+        colours.append(np.array([(packed >> 16) & 0xFF, (packed >> 8) & 0xFF, packed & 0xFF,
+                                 (packed >> 24) & 0xFF], dtype=np.float64) / 255.0)
+    return colours
+
+
+def flat_icon(resolved, textures, tints, tile):
+    """An item whose model is layers of flat sprite: its own picture, tinted.
+
+    `item/generated` leaves the `gui` context untransformed, so the sprite
+    fills the cell exactly and the whole render is one upscale.
+    """
+    out = np.zeros((tile, tile, 4), dtype=np.float64)
+    drawn = False
+    for index in range(16):
+        reference = resolved["textures"].get(f"layer{index}")
+        if reference is None:
+            break
+        path = deref_texture(f"#layer{index}", resolved["textures"])
+        image = textures.get(path) if isinstance(path, str) else None
+        if image is None:
+            continue
+        side = image.shape[0]
+        if side != tile:
+            rows = (np.arange(tile) * side) // tile
+            image = image[rows][:, rows]
+        layer = image.astype(np.float64)
+        tint = tints[index] if index < len(tints) else item_render.WHITE
+        layer[..., :3] *= tint[:3]
+        layer[..., 3] *= tint[3]
+        alpha = layer[..., 3:4] / 255.0
+        out[..., :3] = layer[..., :3] * alpha + out[..., :3] * (1.0 - alpha)
+        out[..., 3:4] = 255.0 * alpha + out[..., 3:4] * (1.0 - alpha)
+        drawn = True
+    return np.clip(out, 0, 255).astype(np.uint8) if drawn else None
+
+
+def model_icon(resolved, textures, tints, tile):
+    """A model with real geometry, placed by its `gui` transform and shaded."""
+    quads = item_render.model_quads(resolved["elements"], resolved["textures"], deref_texture)
+    if not quads:
         return None
+    pose = item_render.Pose()
+    item_render.apply_transform(pose, resolved["display"].get("gui"))
+    flat_light = resolved.get("gui_light") == "front"
+    pixels = item_render.render(
+        quads, pose, textures.get, tile, flat_light=flat_light,
+        tints=(lambda index: tints[index] if index < len(tints) else item_render.WHITE))
+    return pixels if pixels[..., 3].any() else None
+
+
+def item_icon(assets, jar, textures, grass_map, item, tile, entity_models):
+    """One item's slot picture, or the reason the game draws it some other way."""
+    definition = f"assets/minecraft/items/{item}.json"
+    if definition not in textures.names:
+        return None, "no items/*.json definition"
     try:
         entry = json.loads(jar.read(definition))
     except ValueError:
-        return None
-    # Conditional and composite definitions pick between models by the item's
-    # own state. For a slot icon the first model that can be reached is close
-    # enough, so this walks down the first branch and gives up rather than
-    # guessing at a state the item does not have here.
-    reference = first_model(entry.get("model"))
+        return None, "items/*.json is not readable json"
+    node = entry.get("model")
+    reference, tint_entries = default_branch(node)
+    tints = tint_colours(tint_entries, grass_map)
     if reference is None:
-        return None
-
+        return special_items.icon(item, node, entity_models, textures, tile)
     resolved = assets.resolve_model(reference)
     if resolved is None:
-        return None
-    elements = resolved["elements"]
-    full = next((e for e in elements
-                 if e.get("from") == [0, 0, 0] and e.get("to") == [16, 16, 16]), None)
-    if full is None:
-        return None
-
-    faces = {}
-    for side in ("down", "up", "north", "south", "west", "east"):
-        face = full.get("faces", {}).get(side)
-        if face is None:
-            continue
-        path = deref_texture(face.get("texture"), resolved["textures"])
-        if not isinstance(path, str):
-            continue
-        full_path = f"assets/minecraft/textures/{path.split(':')[-1]}.png"
-        if full_path not in names:
-            continue
-        image = Image.open(io.BytesIO(jar.read(full_path))).convert("RGBA")
-        if image.height > image.width:
-            image = image.crop((0, 0, image.width, image.width))
-        # A tinted face ships grey and is multiplied by a colour the block
-        # decides from its biome; a slot has no biome, so it gets plains.
-        kind = tint_kind("minecraft:" + item, face.get("tintindex"))
-        colour = PLAINS.get(kind)
-        if colour is not None:
-            tinted = np.array(image, dtype=np.float32)
-            for channel in range(3):
-                tinted[..., channel] *= colour[channel] / 255.0
-            image = Image.fromarray(np.clip(tinted, 0, 255).astype(np.uint8), "RGBA")
-        faces[side] = image
-
-    # A cutout texture would show straight through a three faced cube, so the
-    # gaps are closed first: the game draws the far faces behind the near ones
-    # and you never see daylight through a block of leaves in a slot.
-    if not all(side in faces for side in ("up", "north", "east")):
-        return None
-    return render_cube(faces, TILE)
+        return None, f"model {reference} is missing"
+    if any(key.startswith("layer") for key in resolved["textures"]):
+        icon = flat_icon(resolved, textures, tints, tile)
+        return (icon, None) if icon is not None else (None, "its layers are empty")
+    if resolved["elements"]:
+        icon = model_icon(resolved, textures, tints, tile)
+        return (icon, None) if icon is not None else (None, "its model draws nothing")
+    return None, f"model {reference} has neither layers nor elements"
 
 
 def main(args):
-    if len(args) != 5:
+    positional = [a for a in args if not a.startswith("--")]
+    tile = TILE
+    entity_models = None
+    for index, argument in enumerate(args):
+        if argument == "--tile":
+            tile = int(args[index + 1])
+        elif argument == "--entity-models":
+            entity_models = Path(args[index + 1])
+    if len(positional) != 5:
         sys.exit(__doc__)
-    jar_path, registries_path, items_path, protocol, out_path = args
+    jar_path, registries_path, items_path, protocol, out_path = positional
     protocol = int(protocol)
 
     registries = json.loads(Path(registries_path).read_text())
@@ -159,51 +234,38 @@ def main(args):
             if modifier.get("type") == "minecraft:armor":
                 armour[protocol_id] = int(modifier.get("amount", 0))
 
-    tiles = []
-    flat = 0
-    cubes = 0
-    block_like = []
     assets = Assets(jar_path)
+    tiles = []
+    missing = []
     with zipfile.ZipFile(jar_path) as jar:
-        names = set(jar.namelist())
+        textures = Textures(jar)
+        with jar.open("assets/minecraft/textures/colormap/grass.png") as handle:
+            grass_map = np.array(Image.open(handle).convert("RGB"), dtype=np.uint8)
+        models = special_items.load_models(entity_models) if entity_models else None
         for name in by_id:
-            path = f"assets/minecraft/textures/item/{name}.png"
-            # A compass or a clock has no picture of its own, only frames; the
-            # inventory shows the first one when no world says otherwise.
-            if path not in names:
-                path = f"assets/minecraft/textures/item/{name}_00.png"
-            if path in names:
-                with jar.open(path) as handle:
-                    image = Image.open(handle).convert("RGBA")
-                # Animated items store their frames stacked; the icon is the first.
-                if image.height > image.width:
-                    image = image.crop((0, 0, image.width, image.width))
-                tiles.append(image.resize((TILE, TILE), Image.NEAREST).tobytes())
-                flat += 1
+            icon, reason = item_icon(assets, jar, textures, grass_map, name, tile, models)
+            if icon is None:
+                tiles.append(b"\0" * (tile * tile * 4))
+                if name != "air":
+                    missing.append((name, reason))
             else:
-                icon = cube_icon(assets, jar, names, name)
-                if icon is not None:
-                    tiles.append(icon.tobytes())
-                    cubes += 1
-                else:
-                    tiles.append(b"\0" * (TILE * TILE * 4))
-                    block_like.append(name)
+                tiles.append(icon.tobytes())
 
     pixels = b"".join(tiles)
     # Names follow the pixels so the hud can say what is in hand without a
     # second file to keep in step.
     names = b"".join(struct.pack("<H", len(n.encode())) + n.encode() + struct.pack("<B", a)
                      for n, a in zip(by_id, armour))
-    header = MAGIC + struct.pack("<6I", VERSION, protocol, TILE, len(tiles), len(pixels),
+    header = MAGIC + struct.pack("<6I", VERSION, protocol, tile, len(tiles), len(pixels),
                                  len(names))
     header += b"\0" * (align8(len(header)) - len(header))
     Path(out_path).write_bytes(header + pixels + names)
 
     print(f"{out_path}: {(len(header) + len(pixels)) / 1e6:.2f} MB")
-    print(f"  {len(tiles)} items, {flat} with a sprite of their own")
-    print(f"  {cubes} are blocks drawn as the cube the game draws in a slot")
-    print(f"  {len(block_like)} have neither, for example {', '.join(block_like[:5])}")
-    print(f"  {sum(1 for a in armour if a > 0)} are armour")
+    print(f"  {len(tiles)} items at {tile}x{tile}, {len(tiles) - len(missing) - 1} with an icon")
+    print(f"  {len(missing)} without one")
+    for name, reason in missing:
+        print(f"    {name}: {reason}")
 
 
 if __name__ == "__main__":

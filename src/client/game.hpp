@@ -224,6 +224,8 @@ struct SoundArea {
 struct HudArea;
 // B: digging, cracks and particles, kept in src/client/breaking.cpp.
 struct BreakingArea;
+// D: the arm and the item in front of the camera, kept in src/client/hand_view.cpp.
+struct HandArea;
 
 struct Game {
     explicit Game(size_t limit) : chunk_limit(limit), world(table) {}
@@ -255,6 +257,7 @@ struct Game {
     SoundArea sound;
     std::shared_ptr<HudArea> hud;
     std::shared_ptr<BreakingArea> breaking;
+    std::shared_ptr<HandArea> hand;
 };
 
 // Opens a window on a server and plays until it is closed.

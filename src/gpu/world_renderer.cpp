@@ -1586,6 +1586,20 @@ void WorldRenderer::record_frame(VkCommandBuffer command, const Camera& camera, 
         after_translucent_(command, matrix.m, width_, height_, atmosphere_.fog_colour, camera);
     }
     if (sky_ != nullptr) sky_->record_clouds(command, camera, width_, height_, atmosphere_);
+    // D: `GameRenderer.renderLevel` clears the depth before the hand, so the
+    // arm is never inside a wall however close the player stands to one.
+    if (hand_) {
+        VkClearAttachment clear{};
+        clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        clear.clearValue.depthStencil.depth = 0.0f;
+        VkClearRect rect{};
+        rect.rect = {{0, 0}, {width_, height_}};
+        rect.layerCount = 1;
+        vkCmdClearAttachments(command, 1, &clear, 1, &rect);
+        const Mat4 matrix =
+            view_projection(camera, static_cast<float>(width_) / static_cast<float>(height_));
+        hand_(command, matrix.m, width_, height_, atmosphere_.fog_colour, camera);
+    }
     vkCmdEndRendering(command);
     record_backdrop(command);
 

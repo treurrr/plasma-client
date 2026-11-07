@@ -399,18 +399,26 @@ it deserves a direct answer rather than a 200-item list to read first. The
 feeling has a cause, and in two cases the cause is literal: there really are
 pasted-in pictures in the build.
 
-**1. The inventory icons are pre-rendered PNGs. (P4.11, P7.3)**
-This is the literal one. `tools/bake_items.py` plus `tools/item_cube.py` draw
-each block item at bake time as *three affine-warped parallelograms* - one per
-visible face - shaded 1.0 / 0.8 / 0.6, and store the result as a texture layer.
-Vanilla has no picture for a block item at all. It renders the block's real
-model into the slot, live, every frame, under an orthographic projection turned
-30° down and 225° around, lit by two directional lights. The difference is
-invisible on a stone block and glaring on everything else: a stair, a torch, a
-fence, a bed, a cake, an anvil, a chest, a hopper, a cauldron and a flower have
-no cube to warp, so they come out wrong or absent. 419 cube icons exist for 1166
-blocks. Rendering items as models is the single most literal fix available, and
-it is the same code path the held item needs, so it pays twice.
+**1. The inventory icons are pre-rendered PNGs. (P4.11, P7.3) - done**
+`tools/bake_items.py` and `tools/item_render.py` now resolve each item to its
+own model and render that model, the way vanilla renders one into a cell of
+its item atlas: FaceBakery's vertex order and default uvs, ItemTransform's
+`gui` placement, the two directional lights of Lighting's ITEMS_3D entry and
+light.glsl's mix of them, against a depth buffer. A stair, a torch, a fence, a
+cake, an anvil, a hopper and a cauldron all come out as the model they are.
+1426 of 1505 items have an icon, up from 1006.
+
+What is left is the 78 items vanilla draws with a block entity's model - a
+chest, a bed, a banner, a shulker box, a skull, the shield, the conduit, the
+decorated pot and the copper golem statue. Their geometry is in the entity
+model table `tools/export/export_models.py` already writes, and each one needs
+its own `*SpecialRenderer.submit` placement ported; nothing else is missing.
+
+The one deviation left is resolution. Vanilla re-renders its atlas at sixteen
+times the gui scale whenever that changes; the bake has to pick one, and picks
+32, which is gui scale two exactly. A larger scale enlarges that rather than
+being rendered at its own size. Rendering the icons into an atlas on the gpu,
+once per item state, is what closes it.
 
 **2. Nothing in the world is alive. (P3.17 through P3.27)**
 Other players and every mob are invisible. A multiplayer server with twenty
@@ -421,13 +429,21 @@ the player's profile, the second skin layer, and the nametag. That is one
 coherent chunk of work (about two weeks) and it changes the client more than
 anything else in this document.
 
-**3. You cannot see your own hands. (P4.1 through P4.4)**
-In first person vanilla draws the held item and the arm in view space, swings it
-when you hit something, bobs it as you walk, and pushes it up when you place a
-block. Plasma draws nothing. The crosshair floats over terrain with no body
-attached to it. This is cheap compared to its effect - the model path is item
-rendering again (item 1), and the animation is three curves - and it is the
-first thing anyone notices when they load a client.
+**3. You cannot see your own hands. (P4.1 through P4.4) - done**
+ItemInHandRenderer is translated whole into `src/client/hand.cpp`: where the
+arm and the item rest, the swing, the equip dip, eating and drinking, the bow
+and crossbow draw, blocking, the brush, and the hurt reel and walk bob under
+all of it. Every pose is checked against the game's own private methods by
+`tools/oracle/HandOracle.java`, matrix by matrix, to the bit.
+
+The hand is drawn where the game draws it: last in the world's pass, with the
+depth cleared in front of it and a seventy degree projection of its own.
+`tools/bake_held.py` writes every item's model as the hand holds it, flat
+sprites extruded into relief the way ItemModelGenerator does, and the whole
+frame - both hands, the model, the sleeve - is one draw.
+
+What the window cannot feed it yet is the item use state, so eating and the
+bow draw are exercised offscreen only, and a map in the hand is not drawn.
 
 **4. It is completely silent. (Phase 5)**
 1838 sound events, 1740 of them with a subtitle, and not one plays. Footsteps

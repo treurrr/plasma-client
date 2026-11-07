@@ -64,6 +64,8 @@ def main(args):
     run("bake_items.py", jar, Path(report).parent / "registries.json",
         Path(report).parent / "items.json", protocol,
         out / f"items-{protocol}.plit")
+    run("bake_held.py", jar, Path(report).parent / "registries.json", protocol,
+        out / f"held-{protocol}.plhd")
     run("bake_gui.py", jar, protocol, out / f"gui-{protocol}.plgu",
         Path(report).parent / "registries.json", Path(report).parent / "items.json")
     run("bake_datapack.py", jar, out / f"datapack-{protocol}")

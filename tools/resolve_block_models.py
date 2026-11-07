@@ -95,6 +95,12 @@ class Assets:
         elements = model.get("elements")
         occlusion = model.get("ambientocclusion")
         parent = model.get("parent")
+        # An item's display transforms and its lighting mode are inherited the
+        # same way, per context, which is how block/block hands every block
+        # item the same turn in a slot.
+        display = dict(model.get("display", {}))
+        gui_light = model.get("gui_light")
+        root = ref
 
         if parent:
             inherited = self.resolve_model(parent, depth + 1)
@@ -106,8 +112,15 @@ class Assets:
                     elements = inherited["elements"]
                 if occlusion is None:
                     occlusion = inherited["ambientocclusion"]
+                contexts = dict(inherited["display"])
+                contexts.update(display)
+                display = contexts
+                if gui_light is None:
+                    gui_light = inherited["gui_light"]
+                root = inherited["root"]
         return {"textures": textures, "elements": elements or [], "parent": parent,
-                "ambientocclusion": occlusion}
+                "ambientocclusion": occlusion, "display": display,
+                "gui_light": gui_light, "root": root}
 
 
 def deref_texture(name, textures):

@@ -269,3 +269,22 @@ mcpp_probe(dig_probe)
 target_sources(dig_probe PRIVATE src/client/player_rules.cpp src/client/game_mode.cpp)
 target_include_directories(dig_probe PRIVATE src)
 mcpp_probe(ao_probe)
+
+# D: the first person hand and the item in it.
+mcpp_probe(hand_probe)
+target_sources(hand_probe PRIVATE src/client/hand.cpp)
+target_include_directories(hand_probe PRIVATE src)
+mcpp_shader(hand.vert HandVert)
+mcpp_shader(hand.frag HandFrag)
+add_custom_target(mcpp_shaders_hand DEPENDS ${MCPP_SHADER_DIR}/HandVert.hpp
+                                            ${MCPP_SHADER_DIR}/HandFrag.hpp)
+add_dependencies(mcpp_net mcpp_shaders_hand)
+target_sources(mcpp_net PRIVATE src/gpu/hand.cpp)
+target_sources(plasma-client PRIVATE src/client/hand.cpp src/client/hand_queue.cpp
+                                   src/client/handshot.cpp src/client/itemshot.cpp)
+if(glfw3_FOUND)
+    target_sources(plasma-client PRIVATE src/client/hand_view.cpp)
+endif()
+mcpp_test(hand)
+target_sources(test_hand PRIVATE src/client/hand.cpp)
+target_include_directories(test_hand PRIVATE src)
