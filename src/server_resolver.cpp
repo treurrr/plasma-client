@@ -14,20 +14,12 @@ uint16_t port_or_default(unsigned value) {
 
 } // namespace
 
-// `ServerRedirectHandler.createDnsSrvRedirectHandler`: only a host without a port
-// is looked up, the query is `_minecraft._tcp.<host>` for SRV, and the first
-// record answered is the one taken - JNDI hands vanilla the attribute's first
-// value, not the lowest priority. Any failure means no redirect, silently.
-std::optional<ServerAddress> lookup_srv_redirect(const ServerAddress& address) {
-    if (address.port != 25565) return std::nullopt;
-
-    const std::string query = "_minecraft._tcp." + address.host;
-    unsigned char answer[NS_PACKETSZ];
-    const int length = res_search(query.c_str(), ns_c_in, ns_t_srv, answer, sizeof(answer));
-    if (length < 0) return std::nullopt;
-
+// `ServerRedirectHandler.createDnsSrvRedirectHandler`: the first SRV record wins,
+// because JNDI gives vanilla the attribute's first value. Anything malformed is
+// skipped, and a malformed answer as a whole means no redirect, silently.
+std::optional<ServerAddress> first_srv_in_answer(const unsigned char* answer, int length) {
     ns_msg message;
-    if (ns_initparse(answer, length, &message) < 0) return std::nullopt;
+    if (length <= 0 || ns_initparse(answer, length, &message) < 0) return std::nullopt;
 
     const int count = ns_msg_count(message, ns_s_an);
     for (int index = 0; index < count; ++index) {
@@ -46,6 +38,18 @@ std::optional<ServerAddress> lookup_srv_redirect(const ServerAddress& address) {
         return ServerAddress{target, port};
     }
     return std::nullopt;
+}
+
+// `ServerRedirectHandler.createDnsSrvRedirectHandler`: only a host the player gave
+// no port for is looked up, as `_minecraft._tcp.<host>` for SRV.
+std::optional<ServerAddress> lookup_srv_redirect(const ServerAddress& address) {
+    if (address.port != 25565) return std::nullopt;
+
+    const std::string query = "_minecraft._tcp." + address.host;
+    unsigned char answer[NS_PACKETSZ];
+    const int length = res_search(query.c_str(), ns_c_in, ns_t_srv, answer, sizeof(answer));
+    if (length < 0) return std::nullopt;
+    return first_srv_in_answer(answer, length);
 }
 
 // `ServerNameResolver.resolveAddress`: the redirect is looked up whenever the
