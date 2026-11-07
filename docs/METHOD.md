@@ -76,6 +76,12 @@ machine and the fastest published native client per scene. Input latency
 (mouse to photon) is measured separately, because it is what a PvP player
 feels.
 
+`plasma-client worldbench` is that measurement and docs/BENCH.md holds its
+results, what a measured frame does and does not include, and what may
+honestly be compared with another client's published table. A number from a
+benchmark that leaves work out is quoted as a number from a benchmark that
+leaves work out, or it is not quoted.
+
 ## Running things
 
 Tests and probes run with scratch homes (`XDG_DATA_HOME`/`XDG_CONFIG_HOME` in

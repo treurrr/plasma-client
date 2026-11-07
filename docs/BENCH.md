@@ -149,3 +149,68 @@ That is the number to keep in mind beside any render distance 32 row. A vanilla
 client at 32 holds 4225 chunks, which would be around 2.4 GB of geometry here.
 Our client cannot draw that today, whatever the frame rate of a flight through
 fewer chunks says.
+
+The sky, and what the old figure was really measuring
+------------------------------------------------------
+
+The bench used to print "sky, fog and lightmap worked out from scratch each
+frame: 0.0400 ms". Most of that was the bench, not the client. It built a fresh
+attribute probe every frame and evaluated the whole environment at the camera -
+216 biome samples through a linear search of the chunk list - which the client
+does once a tick, not once a frame. Two things came out of taking it apart:
+
+- The client's real per-frame sky work is `world::atmosphere`, and about 11 us
+  of it was `fill_lightmap`, which rebuilds 256 texels from factors that only a
+  tick can change. The table is now kept and reused while its inputs are
+  unchanged, compared bitwise. `test_world` checks every frame's table against
+  `lightmap_texel` across a whole day with the flicker, gamma, night vision,
+  darkening and ambient light moving, and two worldshots of a terrain view, at
+  noon and at dusk, are byte-identical before and after.
+- What is left is 0.0018 to 0.0023 ms a frame, measured in the bench, against
+  0.0400 ms reported before. Roughly a quarter of that drop is the lightmap;
+  the rest was the bench measuring itself.
+
+Where a frame's cpu time goes
+------------------------------
+
+From the renderer's own counters, on the 200-chunk hill world at render
+distance 8, per frame:
+
+| part | ms |
+| --- | --- |
+| the renderer | 0.164 to 0.282 |
+| ... re-sorting translucent quads as the camera moves | 0.013 to 0.132 |
+| ... the loop that culls sections and records one draw each | 0.037 to 0.117 |
+| ... the rest of the recording (barriers, attachments, uploads) | 0.023 to 0.088 |
+| ... the queue submit and the timestamp readback | 0.007 to 0.017 |
+| ... the sky pass | 0.003 to 0.005 |
+| ... the hud | 0.001 to 0.002 |
+| getting the frame ready (camera, sky, entity poses, hud build) | 0.012 to 0.016 |
+| the tick | 0.001 |
+
+Two micro-optimisations the profile suggested were tried and kept because they
+are strictly less work, but neither moved a number outside the run-to-run
+spread on this machine: sending only the section's corner as a push constant
+inside a pass instead of the whole block, and sorting the translucent quads
+with their keys beside them out of scratch that is not reallocated every
+frame.
+
+The three that would move it, in the order the counters rank them:
+
+1. **The translucent re-sort belongs on a worker.** It is up to half of a
+   frame's cpu time in a flight over water, and nine tenths of that is the
+   sorting and the index shuffle, not the upload into the command buffer.
+   Vanilla sorts translucent sections on its chunk workers; we do it in the
+   frame. The budget is also per frame, so the faster the client runs, the more
+   sorting it does per second - exactly backwards.
+2. **One draw per section is one draw too many.** The geometry loop costs about
+   58 ns per section held, whether it is drawn or culled, so it grows with the
+   square of the render distance: around 0.12 ms for 2000 sections, and a
+   render distance 16 world holds five times that. An indirect draw over a
+   section table would collapse the recording; a frustum test on whole chunk
+   columns before their sections would cut the culling by an order of
+   magnitude.
+3. **A frame does not overlap with the gpu.** Wall time per frame is larger
+   than cpu plus gpu, because the bench and the client record, submit and then
+   wait on a fence. There is a frame of latency to win by letting the cpu build
+   frame n+1 while the gpu draws frame n.
