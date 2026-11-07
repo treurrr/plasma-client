@@ -378,6 +378,15 @@ void breaking_stop(Game& game) {
     }
 }
 
+// `WeatherEffectRenderer.tickRainParticles`: the drop it adds, which is smoke
+// where it lands on lava, magma or a lit campfire.
+void breaking_spawn_rain(Game& game, bool smoke, double x, double y, double z) {
+    auto* b = area(game);
+    if (b == nullptr || !b->sprites.is_open()) return;
+    const auto type = smoke ? mcpp::world::ParticleType::Smoke : mcpp::world::ParticleType::Rain;
+    b->engine.spawn(particle_level(game, *b), type, {}, x, y, z, 0.0, 0.0, 0.0);
+}
+
 void breaking_level_event(Game& game, int32_t type, int32_t x, int32_t y, int32_t z, int32_t data) {
     // `LevelEventHandler.levelEvent`: 2001, a block broken, shows its bits; the sound area plays its sound.
     const int32_t pos[3] = {x, y, z};

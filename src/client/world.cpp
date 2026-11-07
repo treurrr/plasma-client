@@ -1,5 +1,7 @@
 #include "client/game.hpp"
 
+#include "client/breaking.hpp"
+#include "client/sound.hpp"
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/jmath.hpp"
 #include "mcpp/world/biomes.hpp"
@@ -424,6 +426,91 @@ void advance_sky(Game& game) {
     game.renderer->set_texture_ticks(static_cast<uint64_t>(std::max<int64_t>(area.game_time, 0)));
 }
 
+
+// What the weather sees of the world: the top of a column, what falls on it,
+// and the light it falls through. The world lock is already held.
+mcpp::world::WeatherLevel weather_level(Game& game) {
+    auto& area = game.world;
+    const auto& session = *game.session;
+    const int32_t sea_level = session.dimension().sea_level;
+    mcpp::world::WeatherLevel level;
+    level.min_y = session.dimension().min_y;
+    level.height = [&area, min_y = session.dimension().min_y](int32_t x, int32_t z) {
+        const auto found = area.world.find({x >> 4, z >> 4});
+        return found == area.world.end() ? min_y : found->second.motion_blocking_at(x & 15, z & 15);
+    };
+    level.precipitation = [&area, &session, sea_level](int32_t x, int32_t y, int32_t z) {
+        // `WeatherEffectRenderer.getPrecipitationAt`: nothing at all where the
+        // chunk is not loaded, so the weather stops at the world's edge.
+        const auto found = area.world.find({x >> 4, z >> 4});
+        if (found == area.world.end()) return mcpp::world::Precipitation::None;
+        const int32_t index = found->second.index_of(y);
+        const int32_t rows = static_cast<int32_t>(found->second.sections.size()) * 16;
+        const int32_t row = std::clamp(index, 0, rows - 1);
+        const auto* biome = session.biomes().at(
+            static_cast<size_t>(std::max(found->second.biome_at(x & 15, row, z & 15), 0)));
+        if (biome == nullptr) return mcpp::world::Precipitation::None;
+        return mcpp::world::precipitation_at(biome->has_precipitation, biome->temperature, y,
+                                             sea_level);
+    };
+    level.light = [&area](int32_t x, int32_t y, int32_t z) {
+        const auto found = area.world.find({x >> 4, z >> 4});
+        if (found == area.world.end()) return 0;
+        const int32_t index = found->second.index_of(y);
+        const int32_t rows = static_cast<int32_t>(found->second.sections.size()) * 16;
+        if (index < 0 || index >= rows) return mcpp::world::light_pack(0, 15);
+        return mcpp::world::light_pack(found->second.block_light_at(x & 15, index, z & 15),
+                                       found->second.sky_light_at(x & 15, index, z & 15));
+    };
+    return level;
+}
+
+// `WeatherEffectRenderer.extractRenderState`, `WeatherEffectRenderer.tickRainParticles`: the
+// columns of falling texture around the camera, and once a tick the drops
+// that land and the sound one of them makes.
+void advance_weather(Game& game) {
+    auto& area = game.world;
+    const auto& weather = game.session->weather();
+    const float intensity = weather.rain_level;
+    const double camera[3] = {game.camera.eye[0], game.camera.eye[1], game.camera.eye[2]};
+    const int32_t radius = std::clamp(game.screens.options.get_int("weatherRadius"), 2, 15);
+    std::lock_guard lock(area.world_guard);
+    const auto level = weather_level(game);
+    mcpp::world::extract_weather(level, area.weather_ticks, area.partial, camera, intensity,
+                                 radius, area.weather);
+    if (!game.tick_due || intensity <= 0.0f) return;
+    ++area.weather_ticks;
+
+    mcpp::world::RainTick tick;
+    tick.min_y = level.min_y;
+    tick.height = level.height;
+    tick.precipitation = level.precipitation;
+    // The collision shape's top under the drop is the mesher's business and
+    // the fluid height the physics'; a full block's top is what almost every
+    // column comes to, and that is what is used here.
+    tick.surface = [](int32_t, int32_t, int32_t, double, double) { return 1.0; };
+    tick.hot = [&game, &area](int32_t x, int32_t y, int32_t z) {
+        const auto found = area.world.find({x >> 4, z >> 4});
+        if (found == area.world.end() || !game.table.is_open()) return false;
+        const int32_t index = found->second.index_of(y);
+        const int32_t rows = static_cast<int32_t>(found->second.sections.size()) * 16;
+        if (index < 0 || index >= rows) return false;
+        const auto name = game.table.block_name(found->second.block_state(x & 15, index, z & 15));
+        return name == "minecraft:lava" || name == "minecraft:magma_block" ||
+               name == "minecraft:campfire" || name == "minecraft:soul_campfire";
+    };
+    tick.particle = [&game](bool smoke, double x, double y, double z) {
+        breaking_spawn_rain(game, smoke, x, y, z);
+    };
+    tick.sound = [&game](std::string_view event, int32_t x, int32_t y, int32_t z, float volume,
+                         float pitch) {
+        sound_world(game, event, mcpp::audio::Category::Weather, x + 0.5, y + 0.5, z + 0.5, volume,
+                    pitch);
+    };
+    mcpp::world::tick_rain_particles(tick, area.weather_ticks, intensity, camera, radius,
+                                     area.rain_sound_time);
+}
+
 void world_tick(Game& game) {
     auto& area = game.world;
     auto& renderer = *game.renderer;
@@ -505,6 +592,7 @@ void world_tick(Game& game) {
     }
 
     advance_sky(game);
+    advance_weather(game);
 }
 
 void world_draw(Game&) {}

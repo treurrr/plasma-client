@@ -28,6 +28,7 @@
 #include "mcpp/world/render_table.hpp"
 #include "mcpp/world/light.hpp"
 #include "mcpp/world/mesher.hpp"
+#include "mcpp/world/weather.hpp"
 #include "mcpp/world/physics.hpp"
 
 #include <atomic>
@@ -110,6 +111,11 @@ struct WorldArea {
     // J: the biome colours and the blend radius the mesher averages with,
     // built once because the colour maps come off disk.
     mcpp::world::BiomeTints biome_tints;
+    // J: the columns of rain and snow around the camera this frame, and the
+    // clock the rain sound keeps between ticks.
+    mcpp::world::WeatherState weather;
+    int32_t rain_sound_time = 0;
+    int32_t weather_ticks = 0;
 };
 
 struct EntitiesArea {

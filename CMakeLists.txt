@@ -34,7 +34,9 @@ if(MCPP_SANITIZE OR CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 function(mcpp_defaults target)
-    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow)
+    # -ffp-contract=off: gcc otherwise fuses a float multiply and add into one
+    # rounding, and the game never does, so a port drifts by an ulp.
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -ffp-contract=off)
 endfunction()
 
 find_program(MCPP_GLSLANG NAMES glslangValidator REQUIRED)
@@ -104,6 +106,7 @@ add_library(mcpp_net STATIC
     src/world/chunk.cpp
     src/world/block_table.cpp
     src/world/mesher.cpp
+    src/world/weather.cpp
     src/world/physics.cpp
     src/world/shapes.cpp
     src/world/shape_edges.cpp
@@ -241,6 +244,7 @@ mcpp_probe(model_probe)
 mcpp_probe(movement_probe)
 target_sources(movement_probe PRIVATE src/client/player_rules.cpp)
 target_include_directories(movement_probe PRIVATE src)
+mcpp_probe(weather_probe)
 mcpp_probe(sound_probe)
 target_link_libraries(sound_probe PRIVATE mcpp_audio)
 

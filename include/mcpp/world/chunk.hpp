@@ -89,6 +89,13 @@ struct Chunk {
     // look like rather than a black wall.
     uint8_t sky_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const;
     uint8_t block_light_at(int32_t local_x, int32_t y_index, int32_t local_z) const;
+
+    // J: the MOTION_BLOCKING heightmap the server sends with the chunk, one
+    // entry a column, empty when it sent none. Weather falls onto it.
+    std::vector<int16_t> motion_blocking;
+    // `Level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z)`: the y of the
+    // first block above the column that stops neither motion nor a fluid.
+    int32_t motion_blocking_at(int32_t local_x, int32_t local_z) const;
 };
 
 // Reads a level_chunk_with_light payload, light included.

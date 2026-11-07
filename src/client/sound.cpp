@@ -344,6 +344,11 @@ void sound_block(Game& game, int32_t x, int32_t y, int32_t z, int32_t state, mcp
     play_at(game, cue->event, mcpp::audio::Category::Block, x + 0.5, y + 0.5, z + 0.5, cue->volume, cue->pitch);
 }
 
+void sound_world(Game& game, std::string_view event, mcpp::audio::Category category, double x,
+                 double y, double z, float volume, float pitch) {
+    play_at(game, std::string(event), category, x, y, z, volume, pitch);
+}
+
 mcpp::audio::CategoryVolumes* sound_volumes(Game& game) {
     auto* sound = game.sound.runtime.get();
     return sound != nullptr ? &sound->engine.volumes : nullptr;
