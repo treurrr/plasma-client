@@ -282,12 +282,13 @@ int do_churn(const std::string& target, size_t chunk_limit, int rounds) {
 // Records a world to a file: every packet from configuration on, until the
 // given number of chunks has arrived, plus a moment more so the light and the
 // entities that follow them are in it too.
-int do_record(const std::string& target, const std::string& file, size_t chunk_limit) {
+int do_record(const std::string& target, const std::string& file, size_t chunk_limit,
+              const std::string& as) {
     const auto address = parse_address(target);
     mcpp::SessionOptions options;
     options.host = address.host;
     options.port = address.port;
-    std::string username = "PlasmaShot";
+    std::string username = as;
     options.profile = signed_in_profile(username);
     options.username = username;
     options.record = file;
@@ -1858,7 +1859,8 @@ int main(int argc, char** argv) {
             return do_render(out, width, height);
         }
         if (command == "record" && argc > 3) {
-            return do_record(argv[2], argv[3], argc > 4 ? std::stoul(argv[4]) : 200);
+            return do_record(argv[2], argv[3], argc > 4 ? std::stoul(argv[4]) : 200,
+                             argc > 5 ? argv[5] : "PlasmaShot");
         }
         if (command == "churn" && argc > 2) {
             return do_churn(argv[2], argc > 3 ? std::stoul(argv[3]) : 64,

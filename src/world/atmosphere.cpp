@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <numbers>
 
 namespace mcpp::world {
@@ -216,6 +217,30 @@ void lightmap_texel(const Atmosphere& a, int32_t block_level, int32_t sky_level,
 }
 
 void fill_lightmap(Atmosphere& a) {
+    // `LightTexture.updateLightTexture`: the game rebuilds the 256 texels on a
+    // tick, not on a frame. Nothing here depends on where the camera is or
+    // looks, so the same inputs give the same bytes, and a frame between two
+    // ticks copies them instead of working them out again. The comparison is
+    // bitwise, so a reuse is only ever a reuse of an identical table.
+    struct Key {
+        float factors[7];
+        float sky_light_colour[3];
+        float ambient_colour[3];
+    };
+    struct Cache {
+        Key key{};
+        std::array<uint8_t, 16 * 16 * 4> lightmap{};
+        bool filled = false;
+    };
+    static thread_local Cache cache;
+    Key key{{a.ambient_light_factor, a.sky_factor, a.block_factor, a.night_vision_factor,
+             a.darkness_scale, a.darken_world_factor, a.brightness_factor},
+            {a.sky_light_colour[0], a.sky_light_colour[1], a.sky_light_colour[2]},
+            {a.ambient_colour[0], a.ambient_colour[1], a.ambient_colour[2]}};
+    if (cache.filled && std::memcmp(&key, &cache.key, sizeof(Key)) == 0) {
+        a.lightmap = cache.lightmap;
+        return;
+    }
     for (int32_t sky = 0; sky < 16; ++sky) {
         for (int32_t block = 0; block < 16; ++block) {
             float rgb[3];
@@ -227,6 +252,9 @@ void fill_lightmap(Atmosphere& a) {
             texel[3] = 255;
         }
     }
+    cache.key = key;
+    cache.lightmap = a.lightmap;
+    cache.filled = true;
 }
 
 } // namespace mcpp::world
