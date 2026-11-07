@@ -265,6 +265,22 @@ void test_push_cost() {
     std::cout << "perf: " << ns << " ns a push\n";
     check(ns < 2000.0, "a push stays far away from a millisecond");
     check(recorder.stored() == 65536 && recorder.seen() == kPushes, "the ring held");
+
+    // What the client pays around a push as well: the two clock reads the
+    // frame hook makes, which are the rest of the per-frame cost that can be
+    // measured without a window.
+    double paid = 0.0;
+    const double clocked_before = thread_cpu_ms();
+    for (size_t i = 0; i < kPushes; ++i) {
+        const double at = thread_cpu_ms();
+        recorder.push(sample);
+        paid += thread_cpu_ms() - at;
+    }
+    const double clocked = (thread_cpu_ms() - clocked_before) * 1e6 /
+                           static_cast<double>(kPushes);
+    std::cout << "perf: " << clocked << " ns a push with the frame hook's two clock reads\n";
+    check(paid >= 0.0, "the measured overhead is not negative");
+    check(recorder.stored() == 65536 && recorder.seen() == 2 * kPushes, "the ring held");
 }
 
 } // namespace

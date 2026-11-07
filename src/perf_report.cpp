@@ -148,21 +148,24 @@ std::string report(const Recording& recording) {
                     all.p99_ms, all.median_ms, all.worst_ms, all.cpu_ms, all.gpu_ms));
 
     add("\nthe renderer's own cpu split, ms a frame (what WorldRenderer::FrameCost counts)\n");
-    add("    sort  of it up    geom     sky     hud  submit  readbk     sum\n");
+    add("  record    sort  upload    geom     sky     hud    rest  submit  readbk\n");
     const auto split_row = [](const Cost& cost) {
-        const double sum = static_cast<double>(cost.sort) + cost.sky + cost.overlay +
-                           cost.geometry + cost.record + cost.submit + cost.readback;
-        return std::format("  {:>6.3f} {:>8.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f}"
-                           " {:>7.3f}\n",
-                           cost.sort, cost.sort_upload, cost.geometry, cost.sky, cost.overlay,
-                           cost.submit, cost.readback, sum);
+        const double rest = std::max(0.0, static_cast<double>(cost.record) - cost.sort -
+                                              cost.geometry - cost.sky - cost.overlay);
+        return std::format("  {:>6.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f}"
+                           " {:>7.3f} {:>7.3f}\n",
+                           cost.record, cost.sort, cost.sort_upload, cost.geometry, cost.sky,
+                           cost.overlay, rest, cost.submit, cost.readback);
     };
     add(split_row(all.cost));
-    add("  sort is the translucent quads re-sorted as the camera moves and of it the upload\n"
-        "  into the command buffer, which is part of sort rather than beside it; geom the loop\n"
-        "  that culls sections and records a draw each; hud the overlay pass; sum is every\n"
-        "  column except that upload. The parts of a frame outside the renderer - physics, the\n"
-        "  packets, meshing hand-offs, the hud's build - are in cpu ms but not split out here.\n");
+    add("  record is the whole recording into the command buffer and the five columns after it\n"
+        "  are inside it, not beside it: sort is the translucent quads re-sorted as the camera\n"
+        "  moves (upload is the part of that sort which copies into the command buffer), geom\n"
+        "  the loop that culls sections and records a draw each, hud the overlay pass, and rest\n"
+        "  the part of the recording those do not name. submit and readbk are outside record:\n"
+        "  the queue submit and the timestamp readback. All of it is the world renderer only -\n"
+        "  physics, the server's packets, meshing hand-offs and the hud's build are in cpu ms\n"
+        "  and not split out anywhere here.\n");
 
     const auto slices = minutes(frames);
     add(std::format("\nper minute ({} of them), so a drop in the middle of a game shows up\n",
@@ -336,11 +339,11 @@ bool write_graph(const std::filesystem::path& path, const Recording& recording) 
     if (frames.empty()) return false;
 
     constexpr uint32_t kWidth = 1600;
-    constexpr uint32_t kHeight = 620;
+    constexpr uint32_t kHeight = 648;
     constexpr int32_t kLeft = 78;
-    constexpr int32_t kRight = 24;
+    constexpr int32_t kRight = 78;
     constexpr int32_t kTop = 92;
-    constexpr int32_t kBottom = 56;
+    constexpr int32_t kBottom = 80;
     constexpr uint32_t kBack = 0x111114FFu;
     constexpr uint32_t kPlot = 0x17171AFFu;
     constexpr uint32_t kGrid = 0x2A2A30FFu;
@@ -390,11 +393,12 @@ bool write_graph(const std::filesystem::path& path, const Recording& recording) 
         const std::string label = std::format("{:.1f}", ms);
         canvas.text(label, plot_x - 10 - Canvas::text_width(label, 2), y - 7, 2, kMute);
         if (ms > 0.01) {
-            const std::string fps = std::format("{:.0f}F", 1000.0 / ms);
-            canvas.text(fps, plot_x + plot_w + 4, y - 7, 2, kGrid);
+            const std::string fps = std::format("{:.0f}", 1000.0 / ms);
+            canvas.text(fps, plot_x + plot_w + 8, y - 7, 2, kGrid);
         }
     }
-    canvas.text("MS", plot_x - 10 - Canvas::text_width("MS", 2), plot_y - 22, 2, kMute);
+    canvas.text("MS", 10, plot_y + plot_h + 10, 2, kMute);
+    canvas.text("FPS", plot_x + plot_w + 8, plot_y + plot_h + 10, 2, kMute);
 
     // The lines a player cares about: 60 and 120 frames a second.
     for (const double ms : {16.667, 8.333}) {
@@ -478,13 +482,13 @@ bool write_graph(const std::filesystem::path& path, const Recording& recording) 
         "WHITE=MEAN PER COLUMN  BLUE=FASTEST TO SLOWEST FRAME IN IT  GREEN=CPU MS  "
         "PURPLE=GPU MS  RED=OVER {:.1f} MS ({} FRAMES)",
         top_ms, clipped);
-    canvas.text(legend, 24, static_cast<int32_t>(kHeight) - 30, 2, kMute);
+    canvas.text(legend, 24, static_cast<int32_t>(kHeight) - 44, 2, kMute);
     const std::string split = std::format(
         "CPU {:.3f} MS  GPU {:.3f} MS  MEDIAN {:.2f} MS  WORST {:.2f} MS  SECTIONS {}-{}  "
         "ENTITIES {}-{}  PARTICLES MAX {}",
         all.cpu_ms, all.gpu_ms, all.median_ms, all.worst_ms, all.sections_min, all.sections_max,
         all.entities_min, all.entities_max, all.particles_max);
-    canvas.text(split, 24, static_cast<int32_t>(kHeight) - 14, 2, kGrid);
+    canvas.text(split, 24, static_cast<int32_t>(kHeight) - 24, 2, kMute);
 
     write_png(path, canvas.width(), canvas.height(), canvas.pixels());
     return true;

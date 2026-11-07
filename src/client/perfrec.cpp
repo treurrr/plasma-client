@@ -221,10 +221,14 @@ void perf_frame(Game& game) {
     state.previous = now;
     state.previous_cpu_ms = cpu_ms;
 
-    // What the recorder costs, measured rather than claimed. The two clock
-    // reads that measure it are in it; the one before the gathering is not.
-    state.overhead_ms += mcpp::perf::thread_cpu_ms() - cpu_ms;
-    ++state.overhead_frames;
+    // What the recorder costs, measured rather than claimed - but only on one
+    // frame in 64: reading the thread's cpu clock costs more than everything
+    // it would be measuring, so measuring every frame would be most of the
+    // overhead it reports.
+    if (state.recorder.seen() % 64 == 0) {
+        state.overhead_ms += mcpp::perf::thread_cpu_ms() - cpu_ms;
+        ++state.overhead_frames;
+    }
 }
 
 void perf_draw(Game& game) {
