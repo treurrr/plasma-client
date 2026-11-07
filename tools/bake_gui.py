@@ -29,6 +29,9 @@ CONTAINERS = "assets/minecraft/textures/gui/container/"
 # Whole textures the screens draw: the menu and list backgrounds, the header
 # and footer lines, the recipe book's sheet and the title screen's logo.
 TEXTURES = "assets/minecraft/textures/gui/"
+# Whole textures outside gui/ that a screen blits by name: the square a
+# server list row shows when the server sends no icon of its own.
+MISC = {"assets/minecraft/textures/misc/unknown_server.png": "misc/unknown_server"}
 TITLE = ("title/minecraft.png", "title/minceraft.png", "title/edition.png",
          "title/background/panorama_overlay.png")
 SIDE = 2048
@@ -130,6 +133,10 @@ def main(args):
     with zipfile.ZipFile(jar_path) as jar:
         glyphs = read_font(jar)
         for name in sorted(jar.namelist()):
+            if name in MISC:
+                image = Image.open(io.BytesIO(jar.read(name))).convert("RGBA")
+                sprites.append((MISC[name], image))
+                continue
             if name.startswith(TEXTURES) and name.endswith(".png"):
                 rest = name[len(TEXTURES):]
                 if ("/" not in rest and rest != "demo_background.png") or rest in TITLE:

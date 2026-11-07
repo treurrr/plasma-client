@@ -70,19 +70,23 @@ public:
     ShownChatScreen() : ChatScreen("/gamemode ", false) {
         chat = &lines_;
         commands = &tree_;
-        tree_.nodes.resize(4);
+        tree_.nodes.resize(6);
         tree_.root = 0;
-        tree_.nodes[0].children = {1, 2, 3};
+        tree_.nodes[0].children = {1, 2};
         for (size_t i = 1; i < tree_.nodes.size(); ++i) {
             tree_.nodes[i].kind = proto::CommandNode::Kind::Literal;
         }
-        tree_.nodes[1].name = "creative";
-        tree_.nodes[2].name = "spectator";
-        tree_.nodes[3].name = "survival";
+        tree_.nodes[1].name = "gamemode";
+        tree_.nodes[1].children = {3, 4, 5};
+        tree_.nodes[2].name = "gamerule";
+        tree_.nodes[3].name = "creative";
+        tree_.nodes[4].name = "spectator";
+        tree_.nodes[5].name = "survival";
     }
 
     void init() override {
         ChatScreen::init();
+        show_suggestions = true;
         if (lines_.size() != 0 || manager == nullptr || manager->font == nullptr ||
             manager->options == nullptr) {
             return;

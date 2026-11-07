@@ -114,7 +114,7 @@ void ChatScreen::init() {
         box.text_colour = 0xFFAAAAAAu;
     }
     box.on_change = [this](const std::string&) {
-        show_suggestions_ = true;
+        show_suggestions = true;
         is_draft_ = false;
         if (input != nullptr) input->text_colour = 0xFFE0E0E0u;
         update_suggestions();
@@ -198,7 +198,7 @@ void ChatScreen::apply_suggestion() {
 // `ChatScreen.keyPressed`: the completion first, then Enter to send, then the
 // arrows for the history and the page keys for the chat's own scroll.
 bool ChatScreen::key_pressed(const KeyEvent& event) {
-    if (!suggestions_.empty() && show_suggestions_) {
+    if (!suggestions_.empty() && show_suggestions) {
         if (event.key == key::Up || event.key == key::Down) {
             const int step = event.key == key::Up ? -1 : 1;
             const auto count = static_cast<int>(suggestions_.size());
@@ -216,7 +216,7 @@ bool ChatScreen::key_pressed(const KeyEvent& event) {
         }
     }
     if (event.key == key::Tab) {
-        show_suggestions_ = true;
+        show_suggestions = true;
         update_suggestions();
         if (suggestions_.size() == 1) apply_suggestion();
         return true;
@@ -269,7 +269,7 @@ void ChatScreen::move_in_history(int by) {
     }
     if (history_pos_ == count) history_buffer_ = input->value();
     input->set_value(chat->recent[static_cast<size_t>(next)]);
-    show_suggestions_ = false;
+    show_suggestions = false;
     history_pos_ = next;
 }
 
@@ -285,7 +285,7 @@ bool ChatScreen::mouse_scrolled(double, double, double, double dy) {
 // `ChatScreen.mouseClicked`: a click on a line with a click event follows it,
 // or with shift held puts its insertion in the box.
 bool ChatScreen::mouse_clicked(double mx, double my, int button) {
-    if (!suggestions_.empty() && show_suggestions_) {
+    if (!suggestions_.empty() && show_suggestions) {
         const int lines = static_cast<int>(std::min<size_t>(suggestions_.size() - offset_,
                                                             kSuggestionLineLimit));
         const int top = height - 12 - 3 - lines * 12;
@@ -389,7 +389,7 @@ void ChatScreen::render(GuiGraphics& gfx, double mx, double my) {
 // `CommandSuggestions.SuggestionsList.render`: the box above the input line,
 // the chosen line in yellow and the rest in grey.
 void ChatScreen::render_suggestions(GuiGraphics& gfx, double mx, double my) {
-    if (suggestions_.empty() || !show_suggestions_) return;
+    if (suggestions_.empty() || !show_suggestions) return;
     int widest = 0;
     for (const auto& suggestion : suggestions_) {
         widest = std::max(widest, gfx.width_of(suggestion.text));

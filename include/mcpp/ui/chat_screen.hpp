@@ -52,6 +52,9 @@ public:
     hud::Chat* chat = nullptr;
     const proto::CommandTree* commands = nullptr;
     int32_t gui_ticks = 0;
+    // `CommandSuggestions.setAllowSuggestions`: the list stays hidden until
+    // the player types.
+    bool show_suggestions = false;
 
 private:
     void update_suggestions();
@@ -67,7 +70,6 @@ private:
     std::vector<Suggestion> suggestions_;
     size_t chosen_ = 0;
     size_t offset_ = 0;
-    bool show_suggestions_ = false;
 };
 
 // `DeathScreen`: You Died, what killed the player, the score, and the two

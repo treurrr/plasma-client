@@ -209,11 +209,13 @@ std::vector<OptionDef> build() {
                    {1, 26, true, [](int v) { return std::to_string(v * 10); },
                     [](const std::string& t) { return as_int(t) / 10; }},
                    [](const Component& caption, int value) {
-                       return value == 260
+                       // The option's value is ten times the slider's step.
+                       const int fps = value * 10;
+                       return fps == 260
                                   ? generic_value_label(caption,
                                                         tr("options.framerateLimit.max"))
                                   : generic_value_label(
-                                        caption, tr("options.framerate", {literal(std::to_string(value))}));
+                                        caption, tr("options.framerate", {literal(std::to_string(fps))}));
                    }));
     add(boolean_def("enableVsync", "options.vsync"));
     add(enum_string("inactivityFpsLimit", "options.inactivityFpsLimit",

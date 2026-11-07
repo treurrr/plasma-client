@@ -1,4 +1,5 @@
 #include "client/outlineshot.hpp"
+#include "client/chattest.hpp"
 #include "client/crafttest.hpp"
 #include "client/common.hpp"
 #include "client/entityshot.hpp"
@@ -1820,6 +1821,10 @@ int main(int argc, char** argv) {
         }
         if (command == "crafttest") {
             return client::crafttest(std::vector<std::string>(argv + 2, argv + argc));
+        }
+        // F: the chat line, with the server as the referee.
+        if (command == "chattest") {
+            return client::chattest(std::vector<std::string>(argv + 2, argv + argc));
         }
         if (command == "booktest") {
             return client::booktest(std::vector<std::string>(argv + 2, argv + argc));

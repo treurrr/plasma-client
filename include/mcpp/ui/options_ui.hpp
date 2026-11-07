@@ -212,6 +212,14 @@ public:
     void add_options() override;
 };
 
+// The game's LanguageSelectionList: rows fifty wider than the usual list's.
+class LanguageSelectionList : public EntryList {
+public:
+    LanguageSelectionList(int list_w, int list_h, int top)
+        : EntryList(0, top, list_w, list_h, 18) {}
+    int row_width() const override { return 220 + 50; }
+};
+
 // `LanguageSelectScreen`: the languages the client has, with a search box.
 class LanguageSelectScreen : public OptionsSubScreen {
 public:

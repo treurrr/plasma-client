@@ -27,6 +27,19 @@ std::string translate(const Screen& screen, std::string_view key) {
                                                           : std::string(key);
 }
 
+// `InputConstants.Key.getDisplayName`: the game asks the window for the key's own
+// name and shouts it; only a key the window has no name for falls back to a
+// translation of its own.
+Component key_display(const Font* font, const InputKey& key) {
+    if (key.unbound()) return translatable("key.keyboard.unknown");
+    const std::string name = key.name();
+    if (font == nullptr || font->tr(name) != name) return translatable(name);
+    const size_t dot = name.rfind('.');
+    std::string tail = dot == std::string::npos ? name : name.substr(dot + 1);
+    for (char& c : tail) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return literal(tail);
+}
+
 // `KeyMapping` order: the five debug bindings the game puts out of their
 // alphabetical place.
 int bind_order(std::string_view name) {
@@ -627,7 +640,11 @@ void LanguageSelectScreen::add_title() {
     column.add_child(add<StringWidget>(0, 0, title_w, 9, title));
     auto& box = add<EditBox>(0, 0, 200, 15, literal(""));
     search = &box;
-    box.hint = translatable("gui.language.search");
+    // The game's EditBox.SEARCH_HINT_STYLE: grey and leaning.
+    Style hint;
+    hint.colour = 0xAAAAAAu;
+    hint.italic = true;
+    box.hint = translatable("gui.language.search", {}, hint);
     box.on_change = [this](const std::string& text) { filter(text); };
     if (manager != nullptr) box.platform = &manager->platform;
     column.add_child(box);
@@ -638,7 +655,7 @@ void LanguageSelectScreen::add_title() {
 
 // `LanguageSelectScreen.addContents`: the list of languages, rows 18 high.
 void LanguageSelectScreen::add_contents() {
-    auto& rows = add<EntryList>(0, frame->header_height(), width, height - 33 - 53, 18);
+    auto& rows = add<LanguageSelectionList>(width, height - 33 - 53, frame->header_height());
     rows.in_world = manager != nullptr && manager->in_world;
     language_list = &rows;
     content = &rows;
@@ -767,8 +784,9 @@ void KeyRow::refresh() {
     yellow.colour = 0xFFFF55u;
     Style white;
     white.colour = 0xFFFFFFu;
-    Component key_name = bind_.current.unbound() ? translatable("key.keyboard.unknown")
-                                                 : translatable(bind_.current.name());
+    Component key_name =
+        key_display(list_.screen.manager != nullptr ? list_.screen.manager->font : nullptr,
+                    bind_.current);
     reset_.active = !bind_.is_default();
     collision_ = false;
     std::vector<Component> clashing;
