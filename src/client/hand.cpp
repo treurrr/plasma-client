@@ -448,7 +448,9 @@ void arm_with_item(const HandPlayer& player, HandSide hand, float swing, int32_t
             translate(pose, charge * 0.0f, charge * 0.0f, charge * 0.04f);
             scale(pose, 1.0f, 1.0f, 1.0f + charge * 0.2f);
             rotate(pose, rotation_degrees_y(-(sign_f * 45.0f)));
-            pull = charge;
+            // `minecraft:use_duration` scaled by a twentieth, which is what
+            // picks the drawn model; the eased charge only bends the arm.
+            pull = std::min(used / 20.0f, 1.0f);
             break;
         }
         case UseAnimation::Trident: {

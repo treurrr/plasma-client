@@ -10,6 +10,7 @@
 #include "client/player_rules.hpp"
 #include "client/game_mode.hpp"
 #include "client/breakshot.hpp"
+#include "client/handshot.hpp"
 #endif
 
 #include "mcpp/auth.hpp"
@@ -1835,6 +1836,9 @@ int main(int argc, char** argv) {
         }
         if (command == "digtest" && argc > 2) {
             return do_digtest(argv[2]);
+        }
+        if (command == "handshot") {
+            return client::handshot(argc, argv);
         }
         if (command == "breakshot") {
             return client::breakshot(argc > 2 ? argv[2] : "break");
