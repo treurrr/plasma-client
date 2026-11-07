@@ -58,8 +58,9 @@ under it: every scene flies all four of them.
 the `(2d+1)^2` a vanilla client holds at that distance. Only the render
 distance 8 rows are full. `drawn` is the sections the frustum kept, and a row
 whose `drawn` is 0 drew no world at all: the flight is scaled to its render
-distance, so at 32 the path leaves the 27 by 27 chunks that were recorded and
-the camera spends the flight looking at sky. Those rows measure the sky, the
+distance, so at 32 the path leaves the square that was recorded - 27 by 27
+chunks, or 31 by 31 for the ocean - and the camera spends the flight looking
+at sky. Those rows measure the sky, the
 hud and an empty depth buffer. They are in the table because leaving them out
 would be the kind of tidying this document exists to stop.
 
