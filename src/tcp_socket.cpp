@@ -2,6 +2,7 @@
 #include "mcpp/tcp_socket.hpp"
 
 #include "mcpp/byte_buffer.hpp"
+#include "mcpp/server_resolver.hpp"
 
 #include <cerrno>
 #include <cstring>
@@ -31,15 +32,25 @@ TcpSocket& TcpSocket::operator=(TcpSocket&& other) noexcept {
 void TcpSocket::connect(const std::string& host, uint16_t port, int timeout_ms) {
     close();
 
+    // `ServerNameResolver.resolveAddress`: a host the player gave no port for may
+    // carry an SRV record pointing somewhere else entirely, which is how most
+    // networks publish their address.
+    const ServerAddress target = resolve_server_address(ServerAddress{host, port});
+    const std::string& resolved_host = target.host;
+    port = target.port;
+
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
     addrinfo* result = nullptr;
     const std::string service = std::to_string(port);
-    int rc = getaddrinfo(host.c_str(), service.c_str(), &hints, &result);
+    int rc = getaddrinfo(resolved_host.c_str(), service.c_str(), &hints, &result);
     if (rc != 0) {
-        throw ProtocolError(std::format("cannot resolve {}: {}", host, gai_strerror(rc)));
+        throw ProtocolError(resolved_host == host
+                                ? std::format("cannot resolve {}: {}", host, gai_strerror(rc))
+                                : std::format("cannot resolve {} (SRV of {}): {}", resolved_host,
+                                              host, gai_strerror(rc)));
     }
 
     int last_errno = 0;
@@ -60,7 +71,8 @@ void TcpSocket::connect(const std::string& host, uint16_t port, int timeout_ms) 
 
     if (fd_ < 0) {
         throw ProtocolError(
-            std::format("cannot connect to {}:{}: {}", host, port, std::strerror(last_errno)));
+            std::format("cannot connect to {}:{}: {}", resolved_host, port,
+                        std::strerror(last_errno)));
     }
 
     int one = 1;

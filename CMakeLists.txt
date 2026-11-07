@@ -88,6 +88,7 @@ add_library(mcpp_net STATIC
     src/byte_buffer.cpp
     src/crypto.cpp
     src/tcp_socket.cpp
+    src/server_resolver.cpp
     src/packet_io.cpp
     src/json.cpp
     src/nbt.cpp
@@ -177,7 +178,7 @@ add_library(mcpp_net STATIC
 )
 target_include_directories(mcpp_net PUBLIC include ${CMAKE_BINARY_DIR}/generated)
 add_dependencies(mcpp_net mcpp_shaders)
-target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl OpenSSL::Crypto)
+target_link_libraries(mcpp_net PUBLIC ZLIB::ZLIB Threads::Threads Vulkan::Vulkan CURL::libcurl OpenSSL::Crypto resolv)
 if(glfw3_FOUND)
     target_link_libraries(mcpp_net PUBLIC glfw)
     target_compile_definitions(mcpp_net PUBLIC MCPP_HAVE_WINDOW)
