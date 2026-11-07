@@ -44,6 +44,20 @@ of the frame times beside the recording: every column of pixels is the fastest
 to the slowest frame in that slice of the session, with the mean in white, cpu
 in green, gpu in purple and the 60 and 120 fps lines dashed across it.
 
+What it costs
+-------------
+
+A push into the ring is 2.6 ns and the frame hook's two reads of the thread's
+cpu clock are about 1.15 us together, both from `tests/test_perf.cpp`; the
+hook makes one of those reads a frame (the cpu ms column) and a second on one
+frame in 64 (to measure itself), so the recorder is about 0.6 to 0.7 us of cpu
+a frame. In context - the same offscreen bench run with it off and on, three
+times each, interleaved - the difference was +0.02 ms of cpu a frame on a mean
+of 0.44, which is inside the spread of the same configuration between runs on
+a machine that was busy: it is not a measurement of the recorder, only a bound
+saying the recorder is smaller than the noise. Nothing allocates while a
+recording runs.
+
 Which low is which
 ------------------
 
