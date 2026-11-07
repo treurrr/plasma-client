@@ -30,6 +30,9 @@ enum class Id : uint8_t {
     NoFireOverlay,
     ScoreboardCleanup,
     PlasmaHotbar,
+    // P: the frame recorder. It measures this client; it tells the player
+    // nothing about the server or anyone on it.
+    FrameRecorder,
     Count,
 };
 

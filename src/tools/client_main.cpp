@@ -5,6 +5,7 @@
 #include "client/common.hpp"
 #include "client/entityshot.hpp"
 #include "client/inspect.hpp"
+#include "client/perfreport.hpp"
 #include "client/screenshot.hpp"
 #include "client/hud_shot.hpp"
 #ifdef MCPP_HAVE_WINDOW
@@ -1831,6 +1832,9 @@ int main(int argc, char** argv) {
                                        argc > 4 ? std::stoul(argv[4]) : 600, distances,
                                        argc > 6 ? std::stoll(argv[6]) : 6000);
         }
+        if (command == "perfreport") {
+            return client::perfreport(std::vector<std::string>(argv + 2, argv + argc));
+        }
         if (command == "inspect" && argc > 2) {
             return client::inspect(argv[2], argc > 3 ? argv[3] : "PlasmaShot",
                                    argc > 4 ? std::stod(argv[4]) : 3.0, argc > 5 ? argv[5] : "");
@@ -1954,6 +1958,8 @@ int main(int argc, char** argv) {
             "  play <host:port> [chunks]   open a window and walk through the world\n"
             "  worldshot <host:port> [out.png] [chunks]\n"
             "                      log in, mesh chunks and render the world\n"
+            "  perfreport <file.plperf> [out.png]\n"
+            "                      a session recorded while playing, as a table and a graph\n"
             "  inspect <host:port|replay:file> [name] [seconds] [record.plrc]\n"
             "                      print every registry, slot, entity and data packet\n"
             "  join <host:port> [name] [protocol]\n"

@@ -2,6 +2,7 @@
 // B: breaking blocks in the window: the dig itself (game_mode.hpp), the
 // cracks of everyone breaking something, and the particles. The player area
 // calls these from its own hooks.
+#include <cstddef>
 #include <cstdint>
 
 namespace mcpp {
@@ -27,6 +28,9 @@ void breaking_stop(Game& game);
 // J: a drop the weather let fall, or the smoke it turns into over something
 // hot. Does nothing before the particle engine is open.
 void breaking_spawn_rain(Game& game, bool smoke, double x, double y, double z);
+// P: how many particles are alive, for the frame recorder's context. Zero
+// before the particle engine is open.
+size_t breaking_particles(const Game& game);
 // A level event from the server; 2001 is a block someone else broke.
 void breaking_level_event(Game& game, int32_t type, int32_t x, int32_t y, int32_t z, int32_t data);
 
