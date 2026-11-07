@@ -1,72 +1,49 @@
 #!/usr/bin/env python3
-"""Slot icons for the items the game draws with an entity model.
+"""The items the game draws with a block entity's model, and why they have no
+slot icon yet.
 
 A chest, a bed, a banner, a shulker box, a skull, a shield, a conduit, a
-decorated pot and a copper golem statue have no block model at all: their item
-definition names a `minecraft:special` renderer, and the game renders the same
-model a block entity uses. The geometry comes out of the entity model table
-`tools/export/export_models.py` asks the game for, the texture out of the jar,
-and each renderer's own placement is below, so the icons are the game's rather
-than a drawing of one.
+decorated pot and a copper golem statue have no block model at all: their
+item definition names a `minecraft:special` renderer and the base model it
+names carries only the display transforms. The game renders the same model a
+block entity uses, so an icon needs three things this bake does not have:
+
+  - the geometry, which is in the entity model table
+    `tools/export/export_models.py` already writes beside the item icons;
+  - the texture, which is under `textures/entity/` in the jar rather than
+    `textures/block/`;
+  - each renderer's own placement, which is a handful of lines in its
+    `*SpecialRenderer.submit` and the block entity renderer it delegates to.
+
+None of it is hard and none of it is here. `tools/item_render.py` already
+rasterises boxes with a texture window, which is what a model part is, so
+what is missing is the parsing and the nine placements.
 """
-import math
-import re
 
-import numpy as np
-
-import item_render
-
-# `SpecialModelRenderers.ID_MAPPER`: the renderer each special model names,
-# the model layer it bakes and where it puts it. Translation is in blocks,
-# rotation in degrees about y, scale uniform.
-#
-# The layers come from `ModelLayers`; the placements from each renderer's own
-# `submit`.
+# `SpecialModelRenderers.ID_MAPPER`: the special models the game knows, with
+# the model layer each one bakes, for whoever fills these in.
 RENDERERS = {
-    "minecraft:chest": {"layer": "chest", "parts": ("lid", "bottom", "lock")},
-    "minecraft:shulker_box": {"layer": "shulker_box", "parts": ("lid", "base"),
-                              "translate": (0.5, 0.5, 0.5), "scale": 0.9999},
-    "minecraft:bed": {"layer": "bed_head", "second": "bed_foot"},
-    "minecraft:banner": {"layer": "standing_banner", "parts": ("flag", "pole", "bar")},
-    "minecraft:conduit": {"layer": "conduit_shell", "parts": ("shell",)},
-    "minecraft:decorated_pot": {"layer": "decorated_pot_base"},
-    "minecraft:head": {"layer": None},
-    "minecraft:player_head": {"layer": None},
-    "minecraft:shield": {"layer": "shield"},
-    "minecraft:copper_golem_statue": {"layer": None},
+    "minecraft:chest": "chest",
+    "minecraft:shulker_box": "shulker_box",
+    "minecraft:bed": "bed_head and bed_foot",
+    "minecraft:banner": "standing_banner and standing_banner#flag",
+    "minecraft:conduit": "conduit#shell",
+    "minecraft:decorated_pot": "decorated_pot_base and decorated_pot_sides",
+    "minecraft:head": "the skull of the kind it names",
+    "minecraft:player_head": "player_head",
+    "minecraft:shield": "shield",
+    "minecraft:copper_golem_statue": "copper_golem",
 }
 
 
 def load_models(path):
-    """The entity model table, as a map from layer name to its boxes.
-
-    One layer is a list of parts; a part is a list of boxes in the game's own
-    model space - pixels, y down - with where the part sits and how it turns.
-    """
-    if path is None or not path.is_file():
-        return None
-    layers = {}
-    layer = None
-    part = None
-    for line in path.read_text().splitlines():
-        if not line or line.startswith("#"):
-            continue
-        fields = line.split("\t")
-        if fields[0] == "model":
-            layer = {"name": fields[1], "texture": (64.0, 32.0), "parts": {}}
-            layers[fields[1]] = layer
-        elif fields[0] == "texture" and layer is not None:
-            layer["texture"] = (float(fields[1]), float(fields[2]))
-        elif fields[0] == "part" and layer is not None:
-            part = {"path": fields[1], "pose": [float(v) for v in fields[3:12]],
-                    "boxes": []}
-            layer["parts"][fields[1]] = part
-        elif fields[0] == "box" and part is not None:
-            part["boxes"].append([float(v) for v in fields[1:]])
-    return layers
+    del path
+    return None
 
 
 def icon(item, node, models, textures, tile):
     """One special item's picture, or why there is none yet."""
-    del item, node, models, textures, tile
-    return None, "an entity model the bake does not build yet"
+    del item, models, textures, tile
+    kinds = sorted(k for k in RENDERERS if node is not None and k in str(node))
+    which = kinds[0] if kinds else "a block entity"
+    return None, f"the game draws it with {which}'s model, which this bake does not build"
