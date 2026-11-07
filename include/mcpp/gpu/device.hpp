@@ -19,6 +19,12 @@ struct DeviceCapabilities {
     bool demote_to_helper = false;
     bool sampler_anisotropy = false;
     bool wide_lines = false;
+    // What one indirect draw over a table of sections needs: a non-zero
+    // firstInstance, which is how a section tells the shader which it is.
+    bool draw_indirect_first_instance = false;
+    // Whether the driver will say how much of the device heap is free right
+    // now, rather than only how large it is.
+    bool memory_budget = false;
     float max_anisotropy = 1.0f;
 };
 
@@ -63,6 +69,9 @@ public:
     static std::filesystem::path default_pipeline_cache();
 
     const AdapterInfo& adapter() const { return adapter_; }
+    // Device-local bytes the driver says are still free for this process. The
+    // heap's size when the driver will not say, which is an over-estimate.
+    uint64_t device_local_free() const;
     VkInstance instance() const { return instance_; }
     VkDevice handle() const { return device_; }
     VkPhysicalDevice physical() const { return physical_; }

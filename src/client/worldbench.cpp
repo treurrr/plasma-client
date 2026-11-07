@@ -10,6 +10,8 @@
 // world cannot fill is a render distance this machine never drew.
 #include "client/game.hpp"
 
+#include "client/common.hpp"
+
 #include "mcpp/entity/assets.hpp"
 #include "mcpp/entity/scene.hpp"
 #include "mcpp/gpu/entity_renderer.hpp"
@@ -177,7 +179,7 @@ struct SkyClock {
 } // namespace
 
 int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
-                const std::vector<int32_t>& distances, int64_t day_time) {
+                const std::vector<int32_t>& distances, int64_t day_time, size_t tile_across) {
     mcpp::world::BlockTable table;
     mcpp::world::Atlas atlas;
     const auto protocol = mcpp::protocol::kTargetProtocol;
@@ -442,9 +444,61 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
         }
         double mesh_ms = 0.0;
         double unpack_ms = 0.0;
+        // The room the client reserves for this render distance, from what the
+        // device says it has free, and then the chunks appended into it one at
+        // a time the way a running client appends them. A chunk the room will
+        // not take is a chunk this row never drew.
+        const auto budget = client::geometry_budget(device.device_local_free(), distance);
+        renderer.reserve(budget.vertex_bytes, budget.index_bytes);
+        size_t upload_chunks = 0;
         {
-            auto mesh = mesh_world(std::span(chunks).first(held), table, &mesh_ms, &unpack_ms);
-            renderer.upload(mesh);
+            std::map<ChunkKey, std::vector<mcpp::world::SectionMesh>> by_chunk;
+            for (auto& section :
+                 mesh_world(std::span(chunks).first(held), table, &mesh_ms, &unpack_ms)) {
+                const ChunkKey key{section.origin[0] >> 4, section.origin[2] >> 4};
+                by_chunk[key].push_back(std::move(section));
+            }
+            for (const auto& [key, pieces] : by_chunk) {
+                if (!renderer.append(pieces)) break;
+                ++upload_chunks;
+            }
+            // A square of recorded chunks is smaller than the square a render
+            // distance covers. Filling the rest by repeating the recorded
+            // chunks is not the terrain a server would send, but it is real
+            // geometry in every place the distance holds one, which is what a
+            // row at that distance has to draw to mean anything.
+            if (tile_across > 1 && upload_chunks == by_chunk.size()) {
+                // Every recorded chunk in turn, so the square that gets built
+                // weighs what the recording weighs a chunk rather than what
+                // its heaviest chunk weighs.
+                std::vector<ChunkKey> sources;
+                sources.reserve(by_chunk.size());
+                for (const auto& [key, pieces] : by_chunk) sources.push_back(key);
+                size_t next_source = 0;
+                const auto across = static_cast<int32_t>(tile_across);
+                const int32_t reach = (across - 1) / 2;
+                for (int32_t band = 1; band <= reach; ++band) {
+                    bool room = true;
+                    for (int32_t dx = -band; dx <= band && room; ++dx) {
+                        for (int32_t dz = -band; dz <= band && room; ++dz) {
+                            if (std::max(std::abs(dx), std::abs(dz)) != band) continue;
+                            const int32_t cx = centre_cx + dx;
+                            const int32_t cz = centre_cz + dz;
+                            if (by_chunk.contains({cx, cz})) continue;
+                            const ChunkKey from = sources[next_source % sources.size()];
+                            ++next_source;
+                            const int32_t shift[3] = {(cx - from.first) * 16, 0,
+                                                      (cz - from.second) * 16};
+                            if (!renderer.append(by_chunk[from], shift)) {
+                                room = false;
+                                break;
+                            }
+                            ++upload_chunks;
+                        }
+                    }
+                    if (!room) break;
+                }
+            }
         }
         const double uploaded_mb = static_cast<double>(renderer.uploaded_bytes()) / 1e6;
         const float extent = static_cast<float>(2 * distance + 1) * 16.0f;
@@ -560,6 +614,7 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
             }
             const size_t triangles = renderer.drawn_triangles();
             const size_t drawn = renderer.drawn_sections();
+            const size_t calls = renderer.drawn_calls();
             std::ranges::sort(measured, [](const Frame& a, const Frame& b) { return a.wall < b.wall; });
             const auto walls = [&](size_t from, size_t to) {
                 std::vector<double> out;
@@ -609,17 +664,17 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
             std::cout << std::format(
                 "{:<28} {:>3} {:>7} {:>8} {:>6} {:>7} {:>9.0f} {:>7.0f} {:>9.0f} {:>7.3f} {:>8.3f} "
                 "{:>7.3f}\n",
-                flight.name, distance, held, want, drawn, triangles / 1000,
+                flight.name, distance, upload_chunks, want, drawn, triangles / 1000,
                 1000.0 / mean(walls(0, measured.size())), 1000.0 / slowest(0.01),
                 1000.0 / slowest(0.001), p99, mean(cpu), mean(gpu));
             renderer_rows.push_back(std::format(
                 "{:<28} {:>3} {:>8.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f} "
-                "{:>7.3f} {:>7}",
+                "{:>7.3f} {:>7} {:>7}",
                 flight.name, distance, all.renderer, mean(sorting), mean(sort_upload),
                 mean(geometry), mean(sky_pass), mean(overlay_pass), mean(submit),
                 all.renderer - mean(sorting) - mean(geometry) - mean(sky_pass) -
                     mean(overlay_pass) - mean(submit),
-                drawn));
+                drawn, calls));
             split_rows.push_back(std::format(
                 "{:<28} {:>3} {:>8.3f} {:>7.3f} {:>6.3f} {:>6.3f} {:>6.3f} | {:>8.3f} {:>7.3f} "
                 "{:>6.3f} {:>6.3f} {:>6.3f}",
@@ -631,8 +686,20 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
         std::cout << std::format(
             "  -- render distance {}: {} of the {} chunks a vanilla client holds, meshed in "
             "{:.0f} ms ({:.0f} ms of it unpacking, {:.2f} ms a chunk), {:.0f} MB uploaded\n",
-            distance, held, want, mesh_ms, unpack_ms,
+            distance, upload_chunks, want, mesh_ms, unpack_ms,
             mesh_ms / static_cast<double>(std::max<size_t>(held, 1)), uploaded_mb);
+        std::cout << std::format(
+            "     room reserved {:.0f} MB vertices and {:.0f} MB indices out of {:.0f} MB the "
+            "device has free; {:.0f} kB a chunk, so the room holds {} of them\n",
+            static_cast<double>(budget.vertex_bytes) / 1e6,
+            static_cast<double>(budget.index_bytes) / 1e6,
+            static_cast<double>(budget.device_free) / 1e6,
+            uploaded_mb * 1e3 / static_cast<double>(std::max<size_t>(upload_chunks, 1)),
+            upload_chunks == 0
+                ? 0
+                : static_cast<size_t>(
+                      static_cast<double>(budget.vertex_bytes + budget.index_bytes) /
+                      (uploaded_mb * 1e6 / static_cast<double>(upload_chunks))));
     }
     std::cout << "\nwhere that cpu time went, per frame, all frames then the slowest 1%:\n";
     std::cout << "flight                       rd   cpu ms   world   tick   prep    rend | "
@@ -641,12 +708,12 @@ int world_bench(const std::string& target, size_t chunk_limit, size_t frames,
     std::cout << "world is zero by construction: the bench uploads the world before the flight\n";
     std::cout << "\nand inside the renderer, per frame:\n";
     std::cout << "flight                       rd     rend    sort  of it:    geom     sky  "
-                 "   hud  submit    rest   drawn\n";
+                 "   hud  submit    rest   drawn   calls\n";
     for (const auto& row : renderer_rows) std::cout << row << '\n';
     std::cout << "sort is the translucent quads re-sorted as the camera moves, and of it the\n"
                  "upload into the command buffer; geom the loop that culls the sections and records\n"
                  "a draw for each one; submit the queue submit and the timestamp readback; rest the\n"
-                 "rest of the recording\n";
+                 "rest of the recording; calls the draw calls the world's geometry took\n";
     std::cout << std::format("the sky, fog and lightmap at the camera: {:.4f} ms a frame\n",
                              sky_total / std::max(flights_run, 1));
     std::cout << std::format("resident after the flights: {:.0f} MB\n", resident_mb());
