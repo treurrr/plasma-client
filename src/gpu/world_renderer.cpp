@@ -364,6 +364,7 @@ WorldRenderer::WorldRenderer(Device& device, uint32_t width, uint32_t height,
 void WorldRenderer::create_atlas(const world::Atlas& atlas) {
     atlas_tile_ = atlas.tile_size();
     atlas_layers_ = atlas.layers();
+    atlas_mips_ = atlas.mip_levels();
     animations_ = atlas.animations();
     {
         const uint32_t textures = std::max<uint32_t>(atlas.textures(), 1);
@@ -740,6 +741,96 @@ void WorldRenderer::resize(uint32_t width, uint32_t height) {
     width_ = width;
     height_ = height;
     create_targets();
+}
+
+// A pack's replacement textures, written into the layers they belong to. The
+// whole image goes to TRANSFER_DST and back once, because the submit waits
+// anyway: a pack is applied between frames, not during one.
+double WorldRenderer::patch_atlas(std::span<const AtlasLayerPatch> patches) {
+    if (patches.empty() || atlas_image_ == VK_NULL_HANDLE) return 0.0;
+
+    size_t bytes = 0;
+    for (const AtlasLayerPatch& patch : patches) {
+        for (const auto& level : patch.levels) bytes += level.size();
+    }
+    if (bytes == 0) return 0.0;
+
+    auto staging = make_buffer(device_, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* mapped = nullptr;
+    check(vkMapMemory(device_.handle(), staging.memory, 0, VK_WHOLE_SIZE, 0, &mapped),
+          "vkMapMemory atlas patch");
+
+    std::vector<VkBufferImageCopy> regions;
+    regions.reserve(patches.size() * atlas_mips_);
+    size_t at = 0;
+    for (const AtlasLayerPatch& patch : patches) {
+        if (patch.layer >= atlas_layers_) continue;
+        for (uint32_t mip = 0; mip < patch.levels.size() && mip < atlas_mips_; ++mip) {
+            const auto& level = patch.levels[mip];
+            const uint32_t side = atlas_tile_ >> mip;
+            if (level.size() != static_cast<size_t>(side) * side * 4) continue;
+            std::memcpy(static_cast<uint8_t*>(mapped) + at, level.data(), level.size());
+            VkBufferImageCopy region{};
+            region.bufferOffset = at;
+            region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, patch.layer, 1};
+            region.imageExtent = {side, side, 1};
+            regions.push_back(region);
+            at += level.size();
+        }
+    }
+    vkUnmapMemory(device_.handle(), staging.memory);
+    if (regions.empty()) {
+        vkDestroyBuffer(device_.handle(), staging.buffer, nullptr);
+        vkFreeMemory(device_.handle(), staging.memory, nullptr);
+        return 0.0;
+    }
+
+    VkCommandBufferAllocateInfo command_allocate{};
+    command_allocate.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command_allocate.commandPool = pool_;
+    command_allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_allocate.commandBufferCount = 1;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    check(vkAllocateCommandBuffers(device_.handle(), &command_allocate, &command),
+          "vkAllocateCommandBuffers atlas patch");
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check(vkBeginCommandBuffer(command, &begin), "vkBeginCommandBuffer atlas patch");
+    transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT,
+               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, atlas_mips_,
+               atlas_layers_);
+    vkCmdCopyBufferToImage(command, staging.buffer, atlas_image_,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           static_cast<uint32_t>(regions.size()), regions.data());
+    transition(command, atlas_image_, VK_IMAGE_ASPECT_COLOR_BIT,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+               VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+               atlas_mips_, atlas_layers_);
+    check(vkEndCommandBuffer(command), "vkEndCommandBuffer atlas patch");
+
+    const double start = mark_ms();
+    VkCommandBufferSubmitInfo command_submit{};
+    command_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    command_submit.commandBuffer = command;
+    VkSubmitInfo2 submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &command_submit;
+    check(vkQueueSubmit2(device_.graphics_queue(), 1, &submit, VK_NULL_HANDLE),
+          "vkQueueSubmit2 atlas patch");
+    check(vkQueueWaitIdle(device_.graphics_queue()), "vkQueueWaitIdle atlas patch");
+    const double spent = mark_ms() - start;
+
+    vkFreeCommandBuffers(device_.handle(), pool_, 1, &command);
+    vkDestroyBuffer(device_.handle(), staging.buffer, nullptr);
+    vkFreeMemory(device_.handle(), staging.memory, nullptr);
+    return spent;
 }
 
 void WorldRenderer::create_pipeline() {

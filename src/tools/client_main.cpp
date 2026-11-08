@@ -1,4 +1,5 @@
 #include "client/blockshot.hpp"
+#include "client/packshot.hpp"
 #include "client/outlineshot.hpp"
 #include "client/chattest.hpp"
 #include "client/crafttest.hpp"
@@ -1943,6 +1944,12 @@ int main(int argc, char** argv) {
         if (command == "blockbench") {
             return client::blockbench(std::vector<std::string>(argv + 2, argv + argc));
         }
+        if (command == "packshot") {
+            return client::packshot(std::vector<std::string>(argv + 2, argv + argc));
+        }
+        if (command == "packserve") {
+            return client::packserve(std::vector<std::string>(argv + 2, argv + argc));
+        }
         if (command == "screenshot") {
             return client::screenshot(std::vector<std::string>(argv + 2, argv + argc));
         }
@@ -2046,6 +2053,10 @@ int main(int argc, char** argv) {
             "                      print every registry, slot, entity and data packet\n"
             "  join <host:port> [name] [protocol]\n"
             "                      log in and stay in the play state\n"
+            "  packshot <out-dir> [pack.zip]\n"
+            "                      a scene with and without a server resource pack\n"
+            "  packserve <host:port> <name> <x,y,z> <out-dir> [seconds]\n"
+            "                      the same, with the pack the server pushes\n"
             "\nno window yet: frames are written to PNG.\n",
             argv[0]);
         return command.empty() ? 0 : 2;

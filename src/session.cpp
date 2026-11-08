@@ -310,13 +310,6 @@ bool Session::handle_configuration(PacketConnection::Packet& packet) {
         data_.registries.set(std::move(registry), std::move(entries));
         return true;
     }
-    if (packet.id == cb.resource_pack_push) {
-        ByteBuffer out;
-        out.write_bytes(in.read_bytes(detail::kUuidBytes));
-        out.write_varint(1);   // declined
-        send(ids_->config_sb.resource_pack, out);
-        return true;
-    }
     if (packet.id == cb.code_of_conduct) {
         const auto text = in.read_string();
         status(std::format("server code of conduct:\n{}", text));

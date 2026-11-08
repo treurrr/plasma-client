@@ -1,5 +1,7 @@
 #include "mcpp/session.hpp"
 
+#include "session_detail.hpp"
+
 #include <algorithm>
 #include <format>
 
@@ -139,6 +141,35 @@ bool Session::handle_data_common(PacketConnection::Packet& packet, bool configur
         std::string host = in.read_string();
         const int32_t port = in.read_varint();
         transfer(std::move(host), static_cast<uint16_t>(port));
+        return true;
+    }
+    // R: `ClientboundResourcePackPushPacket` and `ClientboundResourcePackPopPacket`.
+    // Without a handler every pack is declined, which is what this client did
+    // before it could load one at all.
+    if (is(config.resource_pack_push, play.resource_pack_push)) {
+        packs::Push push;
+        const auto pack_id = in.read_bytes(detail::kUuidBytes);
+        std::copy(pack_id.begin(), pack_id.end(), push.id.begin());
+        push.url = in.read_string();
+        push.hash = in.read_string(packs::kMaxHashLength);
+        push.required = in.read_bool();
+        if (in.read_bool()) push.prompt = detail::read_component(in, lookup_);
+        if (events_.packs.on_push) {
+            events_.packs.on_push(push);
+        } else {
+            send_resource_pack(push.id, packs::Action::Declined);
+        }
+        return true;
+    }
+    if (is(config.resource_pack_pop, play.resource_pack_pop)) {
+        packs::Pop pop;
+        if (in.read_bool()) {
+            const auto pack_id = in.read_bytes(detail::kUuidBytes);
+            packs::PackId value{};
+            std::copy(pack_id.begin(), pack_id.end(), value.begin());
+            pop.id = value;
+        }
+        if (events_.packs.on_pop) events_.packs.on_pop(pop);
         return true;
     }
     if (is(config.custom_report_details, play.custom_report_details)) {
@@ -314,6 +345,17 @@ bool Session::handle_data(PacketConnection::Packet& packet) {
         return true;
     }
     return false;
+}
+
+// `ServerboundResourcePackPacket`: the same answer in either state, under the
+// id that state gives it.
+void Session::send_resource_pack(const packs::PackId& id, packs::Action action) {
+    ByteBuffer out;
+    out.write_bytes(id);
+    out.write_varint(static_cast<int32_t>(action));
+    send(state_ == SessionState::Configuration ? ids_->config_sb.resource_pack
+                                               : ids_->play_sb.resource_pack,
+         out);
 }
 
 } // namespace mcpp
