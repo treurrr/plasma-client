@@ -13,6 +13,7 @@
 #include <format>
 #include <iostream>
 #include <iterator>
+#include <numbers>
 
 namespace client {
 namespace {
@@ -79,6 +80,18 @@ float water_vision(int32_t time) {
     const float late = time < 100 ? 0.0f
                                   : std::clamp((static_cast<float>(time) - 100.0f) / 500.0f, 0.0f, 1.0f);
     return early * 0.6f + late * 0.39999998f;
+}
+
+// `GameRenderer.getNightVisionScale`: the whole view brightens while the
+// effect holds, and dips in and out over the last ten seconds of it.
+float night_vision(const mcpp::Session& session, float partial) {
+    constexpr int32_t kNightVision = 15;
+    const auto& effects = session.effects(session.entity_id());
+    const auto found = effects.find(kNightVision);
+    if (found == effects.end()) return 0.0f;
+    const auto duration = static_cast<float>(found->second.duration);
+    if (found->second.duration > 200) return 1.0f;
+    return 0.7f + mcpp::jmath::sin((duration - partial) * std::numbers::pi_v<float> * 0.2f) * 0.3f;
 }
 
 mcpp::world::AtmosphereInputs inputs_for(const mcpp::Session& session, const mcpp::gpu::Camera& camera,
@@ -409,6 +422,7 @@ void advance_sky(Game& game) {
     auto in = inputs_for(session, game.camera, area.render_distance, session.weather());
     in.medium = medium;
     in.water_vision = water_vision(area.water_vision_time);
+    in.night_vision = night_vision(session, area.partial);
     in.block_flicker = area.flicker;
     {
         const int32_t x = static_cast<int32_t>(std::floor(eye[0]));
