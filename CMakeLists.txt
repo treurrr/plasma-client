@@ -141,6 +141,7 @@ add_library(mcpp_net STATIC
     src/ui/screens/container_screen.cpp
     src/ui/screens/registry.cpp
     src/ui/screens/creative_screen.cpp
+    src/ui/screens/container_menus.cpp
     src/ui/screen.cpp
     src/ui/widgets.cpp
     src/ui/server_list.cpp
@@ -167,6 +168,7 @@ add_library(mcpp_net STATIC
     src/entity/mob_animal.cpp
     src/entity/mob_monster.cpp
     src/entity/mob_keyframe.cpp
+    src/entity/mob_armor_stand.cpp
     src/entity/mob_tick.cpp
     src/entity/animation.cpp
     src/entity/dye.cpp
@@ -174,6 +176,7 @@ add_library(mcpp_net STATIC
     src/entity/scene.cpp
     src/entity/block_entities.cpp
     src/entity/held_items.cpp
+    src/entity/objects.cpp
     src/skins.cpp
     src/gpu/entity_renderer.cpp
 )
@@ -242,6 +245,7 @@ mcpp_test(sound)
 mcpp_test(breaking)
 mcpp_test(particles)
 mcpp_test(resolver)
+mcpp_test(objects)
 # M: the headless window, which only exists where glfw does.
 if(glfw3_FOUND)
     mcpp_test(window)

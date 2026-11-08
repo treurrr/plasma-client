@@ -22,6 +22,7 @@ constexpr float kRadians = kPi / 180.0f;
 constexpr uint8_t kSwingMainHand = 0;
 constexpr uint8_t kSwingOffHand = 3;
 constexpr uint8_t kDeathStatus = 3;
+constexpr uint8_t kArmorStandHit = 32;
 constexpr int32_t kSpectator = 3;
 
 // The player's box: standing, and crouched.
@@ -55,6 +56,82 @@ HandModel hand_model_for(std::string_view layer) {
         return HandModel::Skeleton;
     }
     return HandModel::Plain;
+}
+
+// `ArmorStand.isSmall`: the switches byte, with the six poses in
+// the indices after it.
+constexpr uint8_t kArmorStandFlags = 15;
+
+// `ArmorStand.getHeadPose` and the five after it, which is what a stand
+// wears until the server says otherwise.
+constexpr std::array<std::array<float, 3>, 6> kDefaultStandPoses = {{
+    {0.0f, 0.0f, 0.0f},
+    {0.0f, 0.0f, 0.0f},
+    {-10.0f, 0.0f, -10.0f},
+    {-15.0f, 0.0f, 10.0f},
+    {-1.0f, 0.0f, -1.0f},
+    {1.0f, 0.0f, 1.0f},
+}};
+
+// `ExperienceOrb.getIcon`: which of the eleven cells of the sheet an orb of
+// this many points wears.
+int32_t experience_orb_icon(int32_t value) {
+    constexpr std::array<int32_t, 10> kSteps = {2477, 1237, 617, 307, 149, 73, 37, 17, 7, 3};
+    for (size_t at = 0; at < kSteps.size(); ++at) {
+        if (value >= kSteps[at]) return static_cast<int32_t>(10 - at);
+    }
+    return 0;
+}
+
+// `DisplayRenderer.extractRenderState`: the records a vector and a turn arrive as.
+std::array<float, 3> vector3_of(const proto::Value* value) {
+    std::array<float, 3> out{};
+    if (value == nullptr) return out;
+    const std::array<std::string_view, 3> names = {"x", "y", "z"};
+    for (size_t axis = 0; axis < names.size(); ++axis) {
+        if (const proto::Value* field = value->field(names[axis])) {
+            out[axis] = static_cast<float>(field->as_double().value_or(0.0));
+        }
+    }
+    return out;
+}
+
+std::array<float, 4> quaternion_of(const proto::Value* value) {
+    std::array<float, 4> out{0.0f, 0.0f, 0.0f, 1.0f};
+    if (value == nullptr) return out;
+    const std::array<std::string_view, 4> names = {"x", "y", "z", "w"};
+    for (size_t axis = 0; axis < names.size(); ++axis) {
+        if (const proto::Value* field = value->field(names[axis])) {
+            out[axis] = static_cast<float>(field->as_double().value_or(axis == 3 ? 1.0 : 0.0));
+        }
+    }
+    return out;
+}
+
+// `Font.split`: a text display's lines, broken at its own line width. The
+// width is the default font's, which this client measures in whole characters
+// for a name tag too; a line the server already broke stays broken.
+std::vector<std::string> split_display_lines(const std::string& text) {
+    std::vector<std::string> out;
+    size_t at = 0;
+    while (at <= text.size()) {
+        const size_t end = text.find('\n', at);
+        out.push_back(text.substr(at, end == std::string::npos ? std::string::npos : end - at));
+        if (end == std::string::npos) break;
+        at = end + 1;
+    }
+    return out;
+}
+
+// `ArmorStand.getHeadPose`: the three floats, in degrees, a pose is sent as.
+std::array<float, 3> rotations_of(const proto::Value& value) {
+    std::array<float, 3> out{};
+    const std::array<std::string_view, 3> names = {"x", "y", "z"};
+    for (size_t axis = 0; axis < names.size(); ++axis) {
+        const proto::Value* field = value.field(names[axis]);
+        if (field != nullptr) out[axis] = static_cast<float>(field->as_double().value_or(0.0));
+    }
+    return out;
 }
 
 } // namespace
@@ -109,11 +186,22 @@ void Scene::bind(const gpu::EntityRenderer& renderer) { bind(renderer, nullptr);
 void Scene::hold_items_with(gpu::HandRenderer* hand, const world::Atmosphere* atmosphere) {
     hand_ = hand;
     atmosphere_ = atmosphere;
+    // A dropped item, a thrown one and an item display are the same geometry
+    // in a different place, so the object renderers read it from here too.
+    object_assets_.hand = hand;
 }
 
 void Scene::bind(const gpu::EntityRenderer& renderer, const EquipmentAssets* equipment) {
     renderer_ = &renderer;
     equipment_ = equipment;
+    object_assets_.layer = [this](std::string_view name) -> const Model* {
+        if (renderer_ == nullptr) return nullptr;
+        const int32_t found = renderer_->model(name);
+        return found < 0 ? nullptr : renderer_->model_data(found);
+    };
+    object_assets_.text_width = [this](std::string_view text) {
+        return renderer_ != nullptr ? renderer_->text_width(text) : 0.0f;
+    };
     models_.clear();
     for (TypeInfo& info : type_info_) info = {};
     wide_model_ = renderer.model("player");
@@ -236,6 +324,7 @@ void Scene::add(const Entity& entity) {
     tracked.type = entity.type;
     tracked.kind = entity.type == player_type_ ? Kind::Player : Kind::Other;
     tracked.uuid = uuid_string(entity.uuid);
+    tracked.spawn_data = entity.data;
     tracked.living.spawn(entity);
     tracked.state.entity_id = entity.id;
     index_[entity.id] = tracked_.size();
@@ -309,6 +398,8 @@ void Scene::event(int32_t id, uint8_t status) {
     Tracked* tracked = find(id);
     if (tracked == nullptr) return;
     if (status == kDeathStatus && tracked->kind != Kind::Player) tracked->living.dead = true;
+    // `ArmorStand.handleEntityEvent`: event 32 is a hit it wobbles from.
+    if (status == kArmorStandHit) tracked->last_hit = static_cast<int64_t>(ticks_);
     mob_entity_event(type_name(tracked->type), status, tracked->own);
 }
 
@@ -385,6 +476,23 @@ void Scene::metadata(int32_t id, const proto::Metadata& data) {
     }
     // `Mob.getAgeScale`: a baby is half size, and its shadow with it.
     s.age_scale = s.baby ? 0.5f : 1.0f;
+
+    // `ArmorStand.isSmall`, `.showArms`, `.showBasePlate`, `.isMarker`: one
+    // byte of switches, and the six poses after it. A small stand is a model
+    // layer of its own, which the type table holds in its baby slot.
+    if (type == "minecraft:armor_stand") {
+        const auto stand = static_cast<uint8_t>(data.int_at(kArmorStandFlags, 0));
+        s.baby = (stand & 0x01) != 0;
+        s.age_scale = 1.0f;
+        s.show_arms = (stand & 0x04) != 0;
+        s.show_base_plate = (stand & 0x08) == 0;
+        s.marker = (stand & 0x10) != 0;
+        for (size_t pose = 0; pose < s.stand_poses.size(); ++pose) {
+            const auto index = static_cast<uint8_t>(kArmorStandFlags + 1 + pose);
+            const proto::Value* sent = data.get(index);
+            s.stand_poses[pose] = sent != nullptr ? rotations_of(*sent) : kDefaultStandPoses[pose];
+        }
+    }
 
     // `MobRenderer.shouldShowName`: a mob's name is drawn when the server
     // says it should be, and a sheep called "jeb_" wears the rainbow.
@@ -493,6 +601,8 @@ void Scene::fill_shared_state(Tracked& tracked, const View& view) const {
     s.partial = p;
     s.swim_amount = l.swim_at(p);
     s.visually_swimming = l.visually_swimming;
+    // `ArmorStandRenderer.extractRenderState`: ticks since the last hit.
+    s.wiggle = static_cast<float>(static_cast<int64_t>(ticks_) - tracked.last_hit) + p;
     read_mob_counters(type_name(tracked.type), tracked.own, p, s);
 }
 
@@ -593,10 +703,236 @@ uint32_t Scene::dyed_colour(const ItemStack& stack) const {
     return 0;
 }
 
+void Scene::draw_objects_with(const ui::ItemTable* items,
+                              std::function<std::string_view(int32_t)> block_name) {
+    object_assets_.items = items;
+    object_assets_.block_name = std::move(block_name);
+}
+
+// What the renderers in `objects.hpp` read, out of the easing and of whatever
+// `set_entity_data` said about this type.
+ObjectState Scene::object_state(const Tracked& tracked, const ObjectType& row,
+                                const View& view) const {
+    const float p = view.partial;
+    const Living& l = tracked.living;
+    const std::string_view type = type_name(tracked.type);
+    const proto::Metadata& data = tracked.data;
+    ObjectState s;
+    s.entity_id = tracked.id;
+    s.x = static_cast<float>(l.x_at(p) - view.eye[0]);
+    s.y = static_cast<float>(l.y_at(p) - view.eye[1]);
+    s.z = static_cast<float>(l.z_at(p) - view.eye[2]);
+    s.y_rot = l.body_at(p);
+    s.x_rot = l.x_rot_at(p);
+    s.age_in_ticks = static_cast<float>(l.tick_count) + p;
+    s.partial = p;
+    s.invisible = data.flag(proto::Metadata::Invisible);
+    // `DisplayRenderer.extractRenderState`: where the camera looks, which every
+    // billboard here is held against. The view gives a direction, not an
+    // angle, so it is turned back into the two the camera keeps.
+    const float length = std::sqrt(view.forward[0] * view.forward[0] +
+                                   view.forward[1] * view.forward[1] +
+                                   view.forward[2] * view.forward[2]);
+    const float unit = length > 0.0f ? 1.0f / length : 0.0f;
+    s.camera_y_rot =
+        std::atan2(-view.forward[0] * unit, view.forward[2] * unit) / kRadians;
+    s.camera_x_rot = -std::asin(std::clamp(view.forward[1] * unit, -1.0f, 1.0f)) / kRadians;
+
+    const auto field = [&](std::string_view name) {
+        return proto::metadata_index(type, name);
+    };
+    if (const int item = field("item"); item >= 0) {
+        if (const ItemStack* stack = data.stack_at(static_cast<uint8_t>(item))) s.stack = *stack;
+    }
+    if (const int item = field("displayed_item"); item >= 0) {
+        if (const ItemStack* stack = data.stack_at(static_cast<uint8_t>(item))) s.stack = *stack;
+    }
+    // `ItemEntity.getSpin`: the bob offset is a random the client never sees. The entity's own
+    // id stands in for it, so one item bobs the same way every frame.
+    if (row.kind == ObjectKind::Item) {
+        jmath::LegacyRandom random(tracked.id);
+        s.bob_offset = random.next_float() * kPi * 2.0f;
+    }
+    if (const int amount = field("amount_experience_orb_will_reward"); amount >= 0) {
+        s.orb_icon = experience_orb_icon(
+            static_cast<int32_t>(data.int_at(static_cast<uint8_t>(amount), 1)));
+    }
+    if (const int fuse = field("fuse_time"); fuse >= 0) {
+        // `TntRenderer.extractRenderState`: the fuse left, counted off the tick.
+        s.fuse_remaining =
+            static_cast<float>(data.int_at(static_cast<uint8_t>(fuse), 80)) - p + 1.0f;
+    }
+    // `FallingBlockEntity`: the block is on the spawn packet, not in the
+    // entity data, and it is the only thing that puts it there.
+    if (row.kind == ObjectKind::FallingBlock) s.block_state = tracked.spawn_data;
+    if (const int block = field("block_state_id_exploding"); block >= 0) {
+        s.block_state = static_cast<int32_t>(data.int_at(static_cast<uint8_t>(block), 0));
+    }
+    if (const int block = field("displayed_block_state"); block >= 0) {
+        s.block_state = static_cast<int32_t>(data.int_at(static_cast<uint8_t>(block), 0));
+    }
+    if (const int custom = field("custom_block_state"); custom >= 0) {
+        const auto id = static_cast<int32_t>(data.int_at(static_cast<uint8_t>(custom), 0));
+        s.has_display_block = id > 0;
+        s.display_block = id;
+    }
+    if (const int offset = field("custom_block_y_position"); offset >= 0) {
+        s.display_offset = static_cast<int32_t>(data.int_at(static_cast<uint8_t>(offset), 6));
+    }
+    if (const int left = field("is_left_paddle_turning"); left >= 0) {
+        // `AbstractBoat.getRowingTime`: a paddle turning winds on by a
+        // fraction of a turn a tick, which this client counts from the switch
+        // the server sends.
+        s.rowing_left = data.bool_at(static_cast<uint8_t>(left), false)
+                            ? s.age_in_ticks * 0.3926991f
+                            : 0.0f;
+    }
+    if (const int right = field("is_right_paddle_turning"); right >= 0) {
+        s.rowing_right = data.bool_at(static_cast<uint8_t>(right), false)
+                             ? s.age_in_ticks * 0.3926991f
+                             : 0.0f;
+    }
+    // The display entities' transformation, billboard and brightness.
+    if (const int translate = field("translation"); translate >= 0) {
+        s.translation = vector3_of(data.get(static_cast<uint8_t>(translate)));
+    }
+    if (const int scale = field("scale"); scale >= 0) {
+        if (data.get(static_cast<uint8_t>(scale)) != nullptr) {
+            s.display_scale = vector3_of(data.get(static_cast<uint8_t>(scale)));
+        }
+    }
+    if (const int rotate = field("rotation_left"); rotate >= 0) {
+        s.rotation_left = quaternion_of(data.get(static_cast<uint8_t>(rotate)));
+    }
+    if (const int rotate = field("rotation_right"); rotate >= 0) {
+        s.rotation_right = quaternion_of(data.get(static_cast<uint8_t>(rotate)));
+    }
+    if (const int billboard = field("billboard_constraints"); billboard >= 0) {
+        s.billboard =
+            static_cast<Billboard>(data.int_at(static_cast<uint8_t>(billboard), 0) & 3);
+    }
+    if (const int bright = field("brightness_override"); bright >= 0) {
+        s.brightness_override =
+            static_cast<int32_t>(data.int_at(static_cast<uint8_t>(bright), -1));
+    }
+    if (const int text = field("text"); text >= 0) {
+        if (const nbt::Value* line = data.component_at(static_cast<uint8_t>(text))) {
+            s.lines = split_display_lines(nbt::component_to_text(*line));
+        }
+    }
+    if (const int colour = field("background_color"); colour >= 0) {
+        s.background_colour =
+            static_cast<uint32_t>(data.int_at(static_cast<uint8_t>(colour), 0x40000000));
+    }
+    if (const int opacity = field("text_opacity"); opacity >= 0) {
+        s.text_opacity = static_cast<uint8_t>(data.int_at(static_cast<uint8_t>(opacity), -1));
+    }
+    if (const int flags = field("flags_2"); flags >= 0 && row.kind == ObjectKind::TextDisplay) {
+        // `TextDisplay.getAlign`: shadow, see-through, default background, and
+        // the two alignment bits over them.
+        const auto bits = static_cast<uint8_t>(data.int_at(static_cast<uint8_t>(flags), 0));
+        s.text_shadow = (bits & 0x01) != 0;
+        s.text_see_through = (bits & 0x02) != 0;
+        s.default_background = (bits & 0x04) != 0;
+        s.align = (bits & 0x08) != 0   ? TextAlign::Left
+                  : (bits & 0x10) != 0 ? TextAlign::Right
+                                       : TextAlign::Center;
+    }
+    if (const int context = field("display_type"); context >= 0) {
+        s.item_display_context =
+            static_cast<uint8_t>(data.int_at(static_cast<uint8_t>(context), 0));
+    }
+    return s;
+}
+
+bool Scene::draw_object(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
+                        const LightAt& light) {
+    const ObjectType* row = object_type(type_name(tracked.type));
+    if (row == nullptr) return false;
+    ObjectState s = object_state(tracked, *row, view);
+    const float p = view.partial;
+    const auto lit = light(static_cast<int32_t>(std::floor(tracked.living.x_at(p))),
+                           static_cast<int32_t>(std::floor(tracked.living.y_at(p))),
+                           static_cast<int32_t>(std::floor(tracked.living.z_at(p))));
+    s.sky_light = lit[0];
+    s.block_light = lit[1];
+
+    pieces_.clear();
+    build_object(*row, s, object_assets_, pieces_);
+    if (pieces_.empty()) return true;
+    ++stats_.drawn;
+    float item_light[3] = {1.0f, 1.0f, 1.0f};
+    if (atmosphere_ != nullptr) {
+        world::lightmap_texel(*atmosphere_, s.block_light, s.sky_light, item_light);
+    }
+    for (ObjectPiece& piece : pieces_) {
+        switch (piece.what) {
+        case ObjectPiece::What::Model: {
+            if (piece.model == nullptr) break;
+            const int32_t model = renderer.model(piece.model->name);
+            const int32_t texture = renderer.texture(piece.texture);
+            if (model < 0 || texture < 0) break;
+            if (matrices_.size() < piece.model->parts.size()) {
+                matrices_.resize(piece.model->parts.size());
+            }
+            std::span<Matrix> out(matrices_.data(), piece.model->parts.size());
+            pose_matrices(*piece.model, piece.pose, piece.root, out);
+            gpu::EntityRenderer::Instance instance;
+            instance.model = model;
+            instance.type = piece.render;
+            instance.texture = static_cast<uint32_t>(texture);
+            instance.sky_light = piece.sky_light;
+            instance.block_light = piece.block_light;
+            instance.colour = piece.colour;
+            if (renderer.add(instance, out)) {
+                ++stats_.layers;
+                stats_.parts += out.size();
+            }
+            break;
+        }
+        case ObjectPiece::What::Item:
+            if (hand_ != nullptr && piece.item >= 0) {
+                hand_->add_world_item(piece.item, piece.root, item_light);
+            }
+            break;
+        case ObjectPiece::What::Text:
+            renderer.add_tag(piece.text, piece.root, piece.see_through, piece.text_colour,
+                             piece.background, piece.sky_light, piece.block_light);
+            break;
+        case ObjectPiece::What::Quads: {
+            std::vector<gpu::EntityRenderer::QuadCorner> corners(piece.corners.size());
+            for (size_t at = 0; at < piece.corners.size(); ++at) {
+                const ObjectPiece::Corner& from = piece.corners[at];
+                const float in[3] = {from.position[0], from.position[1], from.position[2]};
+                for (int axis = 0; axis < 3; ++axis) {
+                    corners[at].position[axis] = piece.root[axis] * in[0] +
+                                                 piece.root[4 + axis] * in[1] +
+                                                 piece.root[8 + axis] * in[2] +
+                                                 piece.root[12 + axis];
+                }
+                corners[at].uv[0] = from.uv[0];
+                corners[at].uv[1] = from.uv[1];
+                corners[at].colour = from.colour;
+            }
+            renderer.add_quads(corners, piece.texture, piece.sky_light, piece.block_light);
+            break;
+        }
+        }
+    }
+    if (view.name_tags && tracked.show_name) {
+        name_tag(renderer, tracked, view, tracked.custom_name, tracked.living.x_at(p),
+                 tracked.living.y_at(p), tracked.living.z_at(p), false, lit);
+    }
+    return true;
+}
+
 void Scene::draw_one(gpu::EntityRenderer& renderer, Tracked& tracked, const View& view,
                      const LightAt& light) {
     TypeInfo& info = type_info(tracked.type);
-    if (info.row == nullptr) return;
+    if (info.row == nullptr) {
+        draw_object(renderer, tracked, view, light);
+        return;
+    }
     fill_shared_state(tracked, view);
     MobState& s = tracked.state;
     // `Entity.getDimensions`: a baby stands in half the box.

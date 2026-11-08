@@ -2,12 +2,14 @@
 
 #include "vk_util.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 
 #include <mcpp/gpu/shaders/HandFrag.hpp>
 #include <mcpp/gpu/shaders/HandVert.hpp>
@@ -266,6 +268,33 @@ void HandRenderer::destroy() {
 uint32_t HandRenderer::item_quads(int32_t item) const {
     if (item < 0 || static_cast<uint32_t>(item) >= item_count_) return 0;
     return items_[static_cast<size_t>(item)].count[0];
+}
+
+// `ItemStackRenderState.visitExtents`: the corners of an item's own model,
+// before any display transform, which is what a dropped item's lift and its
+// stack offsets are worked out from. Empty when the item has no geometry.
+std::optional<std::array<float, 6>> HandRenderer::item_bounds(int32_t item) const {
+    if (item < 0 || static_cast<uint32_t>(item) >= item_count_) return std::nullopt;
+    const Entry& entry = items_[static_cast<size_t>(item)];
+    if (entry.count[0] == 0) return std::nullopt;
+    std::array<float, 6> box{std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max(),
+                             -std::numeric_limits<float>::max(),
+                             -std::numeric_limits<float>::max(),
+                             -std::numeric_limits<float>::max()};
+    for (uint32_t i = 0; i < entry.count[0]; ++i) {
+        const Quad& quad = quads_[entry.first[0] + i];
+        for (const auto& corner : quad.corners) {
+            for (int axis = 0; axis < 3; ++axis) {
+                box[static_cast<size_t>(axis)] =
+                    std::min(box[static_cast<size_t>(axis)], corner.position[axis]);
+                box[static_cast<size_t>(axis) + 3] =
+                    std::max(box[static_cast<size_t>(axis) + 3], corner.position[axis]);
+            }
+        }
+    }
+    return box;
 }
 
 HandRenderer::Display HandRenderer::item_display(int32_t item, bool left_hand,

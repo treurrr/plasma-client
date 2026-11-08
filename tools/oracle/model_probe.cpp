@@ -179,6 +179,24 @@ void set(MobState& s, const std::string& key, float v) {
     } else if (key == "golem_drop_item") { s.golem_drop_item.start(whole);
     } else if (key == "golem_drop_no_item") { s.golem_drop_no_item.start(whole);
     } else if (key == "facing") { s.facing = static_cast<int8_t>(whole);
+    } else if (key == "wiggle") { s.wiggle = v;
+    } else if (key == "marker") { s.marker = flag;
+    } else if (key == "small") { s.baby = flag;
+    } else if (key == "show_arms") { s.show_arms = flag;
+    } else if (key == "show_base_plate") { s.show_base_plate = flag;
+    } else if (key.starts_with("stand_")) {
+        // `ArmorStandRenderState`'s six `Rotations`, one key per axis:
+        // "stand_<limb>_<axis>".
+        const std::string rest = key.substr(6);
+        const std::string limb = rest.substr(0, rest.rfind('_'));
+        const size_t at = limb == "head"        ? 0
+                          : limb == "body"      ? 1
+                          : limb == "left_arm"  ? 2
+                          : limb == "right_arm" ? 3
+                          : limb == "left_leg"  ? 4
+                                                : 5;
+        const char axis = rest.back();
+        s.stand_poses[at][axis == 'x' ? 0 : axis == 'y' ? 1 : 2] = v;
     } else {
         std::cerr << "MobState has no field for " << key << '\n';
         std::exit(1);

@@ -8,7 +8,9 @@
 #include "mcpp/gpu/device.hpp"
 #include "mcpp/gpu/world_renderer.hpp"
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <filesystem>
 #include <span>
 #include <vector>
@@ -28,6 +30,10 @@ public:
 
     bool has_items() const { return item_count_ > 0; }
     uint32_t item_quads(int32_t item) const;
+    // `ItemStackRenderState.getModelBoundingBox` without a display transform:
+    // min x, y, z then max x, y, z of the item's own model. Nothing for an
+    // item with no geometry.
+    std::optional<std::array<float, 6>> item_bounds(int32_t item) const;
     // The model's own display transform for one hand, as rotation in degrees,
     // translation in blocks, scale, and whether the model names the context.
     struct Display {

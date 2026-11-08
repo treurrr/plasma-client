@@ -75,6 +75,21 @@ public:
                  uint8_t block_light);
     // A flat textured quad, four corners camera-relative, for shadows.
     void add_shadow(const std::array<std::array<float, 5>, 4>& corners, float alpha);
+    // An entity drawn as loose quads rather than a model: an experience orb,
+    // a fishing bobber and its line, a display entity's text background.
+    // Corners are x, y, z then u, v in the texture's own 0..1 space, with an
+    // ARGB colour each; they go down blended, depth-tested and
+    // depth-writing, before the name tags. False when the frame is full.
+    struct QuadCorner {
+        float position[3];
+        float uv[2];
+        uint32_t colour;   // ARGB
+    };
+    bool add_quads(std::span<const QuadCorner> corners, std::string_view texture,
+                   uint8_t sky_light, uint8_t block_light);
+    // How wide a line is in the font the tags are drawn with, in its own
+    // pixels: what a text display lays its lines out against.
+    float text_width(std::string_view text) const;
 
     size_t queued_instances() const { return queued_.size(); }
     size_t queued_parts() const { return matrices_used_; }
@@ -133,8 +148,8 @@ private:
     VkDescriptorSet set_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     std::array<VkPipeline, 3> model_pipelines_{};
-    // See-through tags, normal tags, shadows.
-    std::array<VkPipeline, 3> flat_pipelines_{};
+    // See-through tags, normal tags, shadows, loose entity quads.
+    std::array<VkPipeline, 4> flat_pipelines_{};
 
     std::vector<entity::Model> models_;
     std::map<std::string, int32_t, std::less<>> model_index_;
@@ -169,6 +184,7 @@ private:
     std::vector<FlatVertex> see_through_;
     std::vector<FlatVertex> tags_;
     std::vector<FlatVertex> shadows_;
+    std::vector<FlatVertex> quads_;
 };
 
 } // namespace mcpp::gpu

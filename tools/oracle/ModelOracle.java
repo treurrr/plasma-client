@@ -46,10 +46,13 @@ import net.minecraft.client.model.monster.zombie.DrownedModel;
 import net.minecraft.client.model.monster.zombie.ZombieModel;
 import net.minecraft.client.model.monster.zombie.ZombieVillagerModel;
 import net.minecraft.client.model.npc.VillagerModel;
+import net.minecraft.client.model.object.armorstand.ArmorStandArmorModel;
+import net.minecraft.client.model.object.armorstand.ArmorStandModel;
 import net.minecraft.client.model.object.statue.CopperGolemStatueModel;
 import net.minecraft.client.model.player.PlayerModel;
 import net.minecraft.client.renderer.entity.state.AllayRenderState;
 import net.minecraft.client.renderer.entity.state.ArmadilloRenderState;
+import net.minecraft.client.renderer.entity.state.ArmorStandRenderState;
 import net.minecraft.client.renderer.entity.state.ArmedEntityRenderState;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.client.renderer.entity.state.AxolotlRenderState;
@@ -77,6 +80,7 @@ import net.minecraft.client.renderer.entity.state.WolfRenderState;
 import net.minecraft.client.renderer.entity.state.ZombieRenderState;
 import net.minecraft.client.renderer.entity.state.ZombieVillagerRenderState;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Rotations;
 import net.minecraft.util.Unit;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
@@ -210,6 +214,8 @@ public final class ModelOracle {
             case "breeze" -> new BreezeModel(root);
             case "copper_golem" -> new CopperGolemModel(root);
             case "copper_golem_statue" -> new CopperGolemStatueModel(root);
+            case "armor_stand" -> new ArmorStandModel(root);
+            case "armor_stand_armor" -> new ArmorStandArmorModel(root);
             default -> throw new IllegalArgumentException("no model class for " + kind);
         };
     }
@@ -243,6 +249,7 @@ public final class ModelOracle {
             case "armadillo" -> new ArmadilloRenderState();
             case "breeze" -> new BreezeRenderState();
             case "copper_golem" -> new CopperGolemRenderState();
+            case "armor_stand", "armor_stand_armor" -> new ArmorStandRenderState();
             default -> throw new IllegalArgumentException("no render state for " + kind);
         };
     }
@@ -264,6 +271,47 @@ public final class ModelOracle {
                 case "show_right_pants": s.showRightPants = flag; return;
                 case "fall_flying_ticks": s.fallFlyingTimeInTicks = v; return;
                 default: break;
+            }
+        }
+        // `ArmorStandRenderState.yRot` shadows the living one: the renderer
+        // fills it from the entity's own yaw, which is also its body rot, so
+        // one case value sets both.
+        if (st instanceof ArmorStandRenderState s) {
+            switch (key) {
+                case "body_rot": s.bodyRot = v; s.yRot = v; return;
+                case "wiggle": s.wiggle = v; return;
+                case "marker": s.isMarker = flag; return;
+                case "small": s.isSmall = flag; return;
+                case "show_arms": s.showArms = flag; return;
+                case "show_base_plate": s.showBasePlate = flag; return;
+                default: break;
+            }
+            if (key.startsWith("stand_")) {
+                String rest = key.substring(6);
+                int split = rest.lastIndexOf('_');
+                String limb = rest.substring(0, split);
+                char axis = rest.charAt(rest.length() - 1);
+                Rotations was = switch (limb) {
+                    case "head" -> s.headPose;
+                    case "body" -> s.bodyPose;
+                    case "left_arm" -> s.leftArmPose;
+                    case "right_arm" -> s.rightArmPose;
+                    case "left_leg" -> s.leftLegPose;
+                    case "right_leg" -> s.rightLegPose;
+                    default -> throw new IllegalArgumentException("no stand pose " + limb);
+                };
+                Rotations now = new Rotations(axis == 'x' ? v : was.x(),
+                                              axis == 'y' ? v : was.y(),
+                                              axis == 'z' ? v : was.z());
+                switch (limb) {
+                    case "head": s.headPose = now; return;
+                    case "body": s.bodyPose = now; return;
+                    case "left_arm": s.leftArmPose = now; return;
+                    case "right_arm": s.rightArmPose = now; return;
+                    case "left_leg": s.leftLegPose = now; return;
+                    case "right_leg": s.rightLegPose = now; return;
+                    default: break;
+                }
             }
         }
         if (st instanceof BoggedRenderState s && key.equals("sheared")) {

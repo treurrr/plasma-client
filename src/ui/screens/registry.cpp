@@ -1,5 +1,6 @@
 #include "mcpp/protocol_versions.hpp"
 #include "mcpp/ui/chat_screen.hpp"
+#include "mcpp/ui/container_menus.hpp"
 #include "mcpp/ui/container_screen.hpp"
 #include "mcpp/ui/multiplayer.hpp"
 #include "mcpp/ui/options_ui.hpp"
@@ -112,6 +113,69 @@ private:
     proto::CommandTree tree_;
 };
 
+// F: every menu the server can open, by the short name a shot asks for, and a
+// few stacks in it so the slots, the labels and the properties can be looked
+// at without a server.
+struct ShownMenu {
+    std::string_view name;
+    MenuKind kind;
+    std::string_view title;   // translation key
+};
+constexpr std::array<ShownMenu, 25> kShownMenus = {{
+    {"chest1", MenuKind::Generic9x1, "container.chest"},
+    {"chest2", MenuKind::Generic9x2, "container.chest"},
+    {"chest3", MenuKind::Generic9x3, "container.chest"},
+    {"chest4", MenuKind::Generic9x4, "container.chest"},
+    {"chest5", MenuKind::Generic9x5, "container.chest"},
+    {"chest6", MenuKind::Generic9x6, "container.chestDouble"},
+    {"dispenser", MenuKind::Generic3x3, "container.dispenser"},
+    {"crafter", MenuKind::Crafter3x3, "container.crafter"},
+    {"anvil", MenuKind::Anvil, "container.repair"},
+    {"beacon", MenuKind::Beacon, "container.beacon"},
+    {"blastfurnace", MenuKind::BlastFurnace, "container.blast_furnace"},
+    {"brewingstand", MenuKind::BrewingStand, "container.brewing"},
+    {"craftingtable", MenuKind::Crafting, "container.crafting"},
+    {"enchanting", MenuKind::Enchantment, "container.enchant"},
+    {"furnace", MenuKind::Furnace, "container.furnace"},
+    {"grindstone", MenuKind::Grindstone, "container.grindstone_title"},
+    {"hopper", MenuKind::Hopper, "container.hopper"},
+    {"lectern", MenuKind::Lectern, "container.lectern"},
+    {"loom", MenuKind::Loom, "container.loom"},
+    {"merchant", MenuKind::Merchant, "merchant.title"},
+    {"shulkerbox", MenuKind::ShulkerBox, "container.shulkerBox"},
+    {"smithing", MenuKind::Smithing, "container.upgrade"},
+    {"smoker", MenuKind::Smoker, "container.smoker"},
+    {"cartography", MenuKind::CartographyTable, "container.cartography_table"},
+    {"stonecutter", MenuKind::Stonecutter, "container.stonecutter"},
+}};
+
+// F: one menu object per kind, kept alive for as long as the screen made from
+// it, with a handful of stacks in its own slots and a full hotbar.
+ContainerMenu& shown_menu(MenuKind kind) {
+    static std::map<MenuKind, ContainerMenu> made;
+    const auto found = made.find(kind);
+    if (found != made.end()) return found->second;
+    static const ItemTable& items = [] () -> const ItemTable& {
+        static ItemTable table;
+        table.load(ItemTable::default_path(protocol::kTargetProtocol));
+        return table;
+    }();
+    ContainerMenu menu = make_menu(kind, &items);
+    const int own = menu_container_slots(kind);
+    const std::array<std::string_view, 6> filling = {
+        "diamond_sword", "golden_apple", "iron_ingot", "oak_planks", "redstone", "ender_pearl"};
+    for (int slot = 0; slot < own; ++slot) {
+        const int32_t id = items.find(filling[static_cast<size_t>(slot) % filling.size()]);
+        if (id < 0) continue;
+        menu.slots[static_cast<size_t>(slot)] = {id, 1 + slot % 7, true, {}};
+    }
+    for (size_t slot = menu.size() - 9; slot < menu.size(); ++slot) {
+        const int32_t id = items.find(filling[(slot % filling.size())]);
+        if (id >= 0) menu.slots[slot] = {id, 1 + static_cast<int>(slot % 13), true, {}};
+    }
+    return made.emplace(kind, std::move(menu)).first->second;
+}
+
 } // namespace
 
 const CreativeTabs& creative_tabs() {
@@ -155,10 +219,23 @@ const std::vector<ScreenName>& screen_names() {
         {"chat", true},
         {"death", true},
     };
-    return names;
+    static const std::vector<ScreenName> with_menus = [] {
+        std::vector<ScreenName> out = names;
+        for (const ShownMenu& one : kShownMenus) {
+            if (one.kind == MenuKind::Lectern) continue;
+            out.push_back({one.name, true});
+        }
+        return out;
+    }();
+    return with_menus;
 }
 
 std::shared_ptr<Screen> make_screen(std::string_view name) {
+    for (const ShownMenu& one : kShownMenus) {
+        if (one.name != name) continue;
+        return make_container_screen(one.kind, translatable(std::string(one.title)),
+                                     &shown_menu(one.kind));
+    }
     if (name == "inventory") return std::make_shared<InventoryScreen>();
     if (name == "creative") return std::make_shared<CreativeModeInventoryScreen>(&creative_tabs(), false);
     if (name == "crafting") return std::make_shared<CraftingScreen>(translatable("container.crafting"));

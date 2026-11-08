@@ -17,4 +17,7 @@ std::span<const MobType> monster_mob_types();
 std::unique_ptr<MobModel> make_keyframe_model(std::string_view layer, const Model& model);
 std::span<const MobType> keyframe_mob_types();
 
+std::unique_ptr<MobModel> make_armor_stand_model(std::string_view layer, const Model& model);
+std::span<const MobType> armor_stand_mob_types();
+
 } // namespace mcpp::entity

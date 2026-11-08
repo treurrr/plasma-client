@@ -410,6 +410,7 @@ void EntityRenderer::begin() {
     see_through_.clear();
     tags_.clear();
     shadows_.clear();
+    quads_.clear();
 }
 
 bool EntityRenderer::add(const Instance& instance, std::span<const entity::Matrix> parts) {
@@ -514,6 +515,31 @@ void EntityRenderer::add_shadow(const std::array<std::array<float, 5>, 4>& corne
     quad(c, shadows_);
 }
 
+float EntityRenderer::text_width(std::string_view text) const { return font_.width(text); }
+
+bool EntityRenderer::add_quads(std::span<const QuadCorner> corners, std::string_view texture,
+                               uint8_t sky_light, uint8_t block_light) {
+    const int32_t picture = this->texture(texture);
+    if (picture < 0 || corners.size() < 4) return false;
+    if (quads_.size() + corners.size() / 4 * 6 > kMaxFlat) return false;
+    const auto& r = rects_[static_cast<size_t>(picture)];
+    const uint32_t light = static_cast<uint32_t>(sky_light & 0xF) |
+                           static_cast<uint32_t>(block_light & 0xF) << 4;
+    for (size_t at = 0; at + 4 <= corners.size(); at += 4) {
+        FlatVertex c[4];
+        for (size_t i = 0; i < 4; ++i) {
+            const QuadCorner& from = corners[at + i];
+            for (int axis = 0; axis < 3; ++axis) c[i].position[axis] = from.position[axis];
+            c[i].uv[0] = r[0] + from.uv[0] * r[2];
+            c[i].uv[1] = r[1] + from.uv[1] * r[3];
+            c[i].colour = abgr(from.colour);
+            c[i].light = light;
+        }
+        quad(c, quads_);
+    }
+    return true;
+}
+
 void EntityRenderer::record(VkCommandBuffer command, const float view_projection[16],
                             const double eye[3], uint32_t width, uint32_t height,
                             const float fog[3], float fog_start, float fog_end) {
@@ -582,17 +608,22 @@ void EntityRenderer::record(VkCommandBuffer command, const float view_projection
         }
     }
 
-    // Shadows, then see-through tags, then normal ones, from one ring.
+    // Shadows, then the loose entity quads, then see-through tags, then
+    // normal ones, from one ring.
     auto* flat = static_cast<FlatVertex*>(flat_.mapped) + ring * kMaxFlat;
     uint32_t used = 0;
     const VkBuffer flat_buffer = flat_.buffer;
-    for (size_t pass = 0; pass < 3; ++pass) {
-        const std::vector<FlatVertex>& list = pass == 0 ? shadows_ : pass == 1 ? see_through_ : tags_;
+    for (size_t pass = 0; pass < 4; ++pass) {
+        const std::vector<FlatVertex>& list = pass == 0   ? shadows_
+                                              : pass == 1 ? quads_
+                                              : pass == 2 ? see_through_
+                                                          : tags_;
         const auto count = static_cast<uint32_t>(std::min<size_t>(list.size(), kMaxFlat - used));
         if (count == 0) continue;
         std::memcpy(flat + used, list.data(), count * sizeof(FlatVertex));
-        const VkPipeline pipeline = pass == 0 ? flat_pipelines_[2]
-                                    : pass == 1 ? flat_pipelines_[0]
+        const VkPipeline pipeline = pass == 0   ? flat_pipelines_[2]
+                                    : pass == 1 ? flat_pipelines_[3]
+                                    : pass == 2 ? flat_pipelines_[0]
                                                 : flat_pipelines_[1];
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         const VkDeviceSize offset = (ring * kMaxFlat + used) * sizeof(FlatVertex);
@@ -793,6 +824,9 @@ void EntityRenderer::create_pipelines(VkFormat colour_format, VkFormat depth_for
               flat_pipelines_[1]);
         build(flat_vertex, flat_fragment, flat_input, {false, true, true, false},
               flat_pipelines_[2]);
+        // Loose entity quads stand in the world, so they write depth.
+        build(flat_vertex, flat_fragment, flat_input, {false, true, true, true},
+              flat_pipelines_[3]);
     } catch (...) {
         vkDestroyShaderModule(device_.handle(), model_vertex, nullptr);
         vkDestroyShaderModule(device_.handle(), model_fragment, nullptr);

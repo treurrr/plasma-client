@@ -148,6 +148,7 @@ std::unique_ptr<MobModel> make_mob_model(std::string_view layer, const Model& mo
     if (auto found = make_animal_model(layer, model)) return found;
     if (auto found = make_monster_model(layer, model)) return found;
     if (auto found = make_keyframe_model(layer, model)) return found;
+    if (auto found = make_armor_stand_model(layer, model)) return found;
     return nullptr;
 }
 
@@ -155,7 +156,7 @@ std::span<const MobType> mob_types() {
     static const std::vector<MobType> all = [] {
         std::vector<MobType> out;
         for (const auto family : {humanoid_mob_types(), animal_mob_types(), monster_mob_types(),
-                                  keyframe_mob_types()}) {
+                                  keyframe_mob_types(), armor_stand_mob_types()}) {
             out.insert(out.end(), family.begin(), family.end());
         }
         std::ranges::sort(out, {}, &MobType::type);

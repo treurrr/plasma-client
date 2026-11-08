@@ -44,6 +44,11 @@ struct World {
     // shown a recipe it highlighted.
     std::function<void(int32_t container, int32_t recipe, bool use_max)> place_recipe;
     std::function<void(int32_t recipe)> recipe_seen;
+    // `container_set_data`: an open menu's own properties by index - a
+    // furnace's progress, an enchanting table's three offers, an anvil's cost,
+    // a beacon's payment. Empty until the session area fills it in, and then
+    // every screen that reads one sees zero.
+    std::function<int32_t(int index)> container_property;
     // The translated name an item shows, with its rarity colour.
     std::string item_name(const GuiGraphics& gfx, int32_t id) const;
 };
