@@ -310,8 +310,11 @@ void ItemCombinerScreen::render_error(GuiGraphics& gfx) {
     gfx.blit_sprite(look_.error_sprite, left_pos + look_.error_x, top_pos + look_.error_y, 28, 21);
 }
 
+// `AnvilScreen.renderErrorIcon`: the cross at 99, 45 when something went in and
+// nothing came out.
 AnvilScreen::AnvilScreen(Component title, ContainerMenu* menu)
-    : ItemCombinerScreen(std::move(title), {"container/anvil", 176, 166}, menu) {
+    : ItemCombinerScreen(std::move(title),
+                         {"container/anvil", 176, 166, "container/anvil/error", 99, 45, 2}, menu) {
     title_label_x = 60;
     slots.push_back({0, 27, 47, {}});
     slots.push_back({1, 76, 47, {}});
