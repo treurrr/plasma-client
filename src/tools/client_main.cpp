@@ -1700,7 +1700,8 @@ int do_blocks(const std::string& query) {
     return 0;
 }
 
-int do_join(const std::string& target, const std::string& username, int32_t protocol) {
+int do_join(const std::string& target, const std::string& username, bool username_given,
+            int32_t protocol) {
     const auto address = parse_address(target);
 
     std::mutex out_mutex;
@@ -1712,7 +1713,12 @@ int do_join(const std::string& target, const std::string& username, int32_t prot
     mcpp::SessionOptions options;
     options.host = address.host;
     options.port = address.port;
-    options.username = username;
+    // Without a profile every join failed the ownership check, however the
+    // player had signed in. A name given on the command line still wins, so a
+    // test against an offline server can pick its own.
+    std::string signed_in = username;
+    options.profile = signed_in_profile(signed_in);
+    options.username = username_given ? username : signed_in;
     options.protocol = protocol;
     options.debug_packets = std::getenv("PLASMA_DEBUG") != nullptr;
     if (const char* dump = std::getenv("PLASMA_CHUNK_DUMP")) options.chunk_dump = dump;
@@ -2037,10 +2043,11 @@ int main(int argc, char** argv) {
             return do_blocks(argc > 2 ? argv[2] : "");
         }
         if (command == "join" && argc > 2) {
-            const std::string username = argc > 3 ? argv[3] : "PlasmaDev";
+            const bool username_given = argc > 3;
+            const std::string username = username_given ? argv[3] : "PlasmaDev";
             const int32_t protocol = argc > 4 ? std::stoi(argv[4])
                                               : mcpp::protocol::kTargetProtocol;
-            return do_join(argv[2], username, protocol);
+            return do_join(argv[2], username, username_given, protocol);
         }
 
         print_banner();
