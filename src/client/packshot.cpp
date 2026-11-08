@@ -451,6 +451,7 @@ int packshot(const std::vector<std::string>& args) {
         system.last_revert().gui_sprites, system.last_revert().total_ms, pop_ms);
 
     int wrong = 0;
+    size_t scenes_changed = 0;
     for (const auto& [what, pixels] : before) {
         const size_t changed = pixels_differing(pixels, after.at(what));
         const size_t back = pixels_differing(pixels, restored.at(what));
@@ -458,14 +459,17 @@ int packshot(const std::vector<std::string>& args) {
                              static_cast<double>(kWidth * kHeight);
         std::cout << std::format("{:>8}: {} pixels changed ({:.1f}%), {} still differ after the "
                                  "pop\n", what, changed, share, back);
-        if (changed == 0) {
-            std::cerr << std::format("FAIL: {} looks the same with the pack on\n", what);
-            ++wrong;
-        }
+        if (changed > 0) ++scenes_changed;
+        // A scene the pack has nothing for is right to be unchanged; a scene
+        // that did not go back to the baked look never is.
         if (back != 0) {
             std::cerr << std::format("FAIL: {} did not go back to the baked look\n", what);
             ++wrong;
         }
+    }
+    if (scenes_changed == 0) {
+        std::cerr << "FAIL: the pack changed nothing anywhere\n";
+        ++wrong;
     }
 
     // What a frame costs with the pack on, so the cost of having one is in the
@@ -687,14 +691,16 @@ int packserve(const std::vector<std::string>& args) {
     const auto without = shoot("without-pack");
 
     int wrong = 0;
+    size_t scenes_changed = 0;
     for (const auto& [what, pixels] : with_pack) {
         const size_t changed = pixels_differing(pixels, without.at(what));
         std::cout << std::format("{:>8}: {} pixels differ between the pack and the baked look\n",
                                  what, changed);
-        if (changed == 0) {
-            std::cerr << std::format("FAIL: {} looks the same either way\n", what);
-            ++wrong;
-        }
+        if (changed > 0) ++scenes_changed;
+    }
+    if (scenes_changed == 0) {
+        std::cerr << "FAIL: the pack changed nothing anywhere\n";
+        ++wrong;
     }
     device.save_pipeline_cache();
     return wrong == 0 ? 0 : 1;

@@ -196,6 +196,31 @@ Said plainly, because the brief asked for it:
   calls it off the render thread. Vanilla does the download on an io pool and
   the reload on the main thread.
 
+## What it costs
+
+Measured on this machine (Release, offscreen, `plasma-client packshot`), a pack
+that replaces **every one of the 1071 block textures the baked table names**,
+0.99 MB zipped:
+
+| step | ms |
+| --- | --- |
+| read and inflate 1071 pngs out of the zip | 7.7 |
+| build 1629 mip chains (every texture plus every animation frame) | 2.9 |
+| upload 1629 layers x 6 levels, one staging buffer, one submit | 53.7 |
+| **apply, end to end** | **79.8** |
+| pop: the baked pixels back over the same layers | 70.0 |
+
+Frame time is **unchanged** at 0.113 ms gpu either way, because nothing about
+the geometry changed: the same meshes sample the same layers.
+
+A small pack - ten block textures, two item icons, one interface sprite - takes
+12 ms, of which about 9 is reading the baked `.plit` and `.plgu` pixel blocks
+once so they can be put back later; the pack itself costs 0.05 ms to read, 0.06
+to mip and 2.3 to upload.
+
+From a server over http on the same machine: 2.9 ms to fetch a 4.5 KB pack, and
+0.9 ms to hash it out of the cache on the next join.
+
 ## Proof
 
 ```
