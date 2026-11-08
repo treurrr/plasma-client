@@ -1140,10 +1140,12 @@ int entityobjects(int argc, char** argv) {
     };
     // The front, its own right and straight down: the three sides that show a
     // placement's mistakes.
+    // Looking straight down has no up of its own, so the top view is steep
+    // rather than vertical.
     const std::array<std::array<float, 6>, 3> sides = {{
         {0.0f, 1.0f, 3.0f, 0.0f, -0.2f, -1.0f},
         {3.0f, 1.0f, 0.0f, -1.0f, -0.2f, 0.0f},
-        {0.0f, 3.0f, 0.01f, 0.0f, -1.0f, 0.0f},
+        {0.0f, 3.4f, 1.3f, 0.0f, -1.0f, -0.45f},
     }};
 
     int passed = 0;
