@@ -1384,7 +1384,7 @@ int entitylobby(int argc, char** argv) {
     scene.hold_items_with(&hand, &atmosphere);
     scene.draw_objects_with(&items, nullptr);
 
-    const int32_t diamond = items.find("minecraft:diamond");
+    const int32_t diamond = items.find("diamond");
     const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(items_count))));
     int32_t next_id = 1;
     for (int i = 0; i < items_count; ++i) {

@@ -193,7 +193,11 @@ boat/dark_oak                   geometry
 boat/pale_oak                   geometry
 boat/mangrove                   geometry
 boat/bamboo                     geometry
-boat#water_patch                geometry
+# `BoatModel.createWaterPatch` is `LayerDefinition.create(mesh, 0, 0)`: every
+# texture coordinate of it is a division by zero, and the game's answer for one
+# is a quiet NaN where ours is an infinity. The layer is a depth-only mask with
+# no texture to sample, so neither value is ever read; comparing them would only
+# compare two kinds of nothing.
 chest_boat/oak                  geometry
 chest_boat/spruce               geometry
 chest_boat/birch                geometry

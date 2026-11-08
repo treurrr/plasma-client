@@ -103,13 +103,12 @@ public:
         std::string_view texture;
         int image_width = 176;
         int image_height = 166;
-        // Where the "no recipe" cross sits, and the texture's own uv for it.
+        // The "no recipe" cross, and where it sits; empty for a combiner that
+        // has none. `result_slot` is the slot it watches.
+        std::string_view error_sprite;
         int error_x = 0;
         int error_y = 0;
-        int error_u = 0;
-        int error_v = 0;
-        int error_w = 0;
-        int error_h = 0;
+        int result_slot = 2;
     };
 
     ItemCombinerScreen(Component title, Look look, ContainerMenu* menu);
@@ -138,6 +137,7 @@ public:
 
 protected:
     void render_labels(GuiGraphics& gfx) override;
+    void render_bg(GuiGraphics& gfx, double mx, double my) override;
     void render_error(GuiGraphics& gfx) override;
 
 private:

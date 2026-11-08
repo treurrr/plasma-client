@@ -62,18 +62,18 @@ void test_spin() {
 // The two ground transforms vanilla's whole model tree comes down to, and the
 // handful of models that name their own.
 void test_ground_display() {
-    const auto flat = ground_display("minecraft:diamond_sword", true);
+    const auto flat = ground_display("diamond_sword", true);
     close(flat.translation[1], 2.0f / 16.0f, "a sprite's ground transform lifts two pixels");
     close(flat.scale[0], 0.5f, "and is half size");
-    const auto block = ground_display("minecraft:stone", false);
+    const auto block = ground_display("stone", false);
     close(block.translation[1], 3.0f / 16.0f, "a block's lifts three pixels");
     close(block.scale[0], 0.25f, "and is a quarter size");
-    const auto shield = ground_display("minecraft:shield", false);
+    const auto shield = ground_display("shield", false);
     close(shield.translation[0], 2.0f / 16.0f, "the shield names its own");
     close(shield.translation[1], 4.0f / 16.0f, "the shield's own lift");
-    const auto bed = ground_display("minecraft:red_bed", false);
+    const auto bed = ground_display("red_bed", false);
     close(bed.translation[2], 2.0f / 16.0f, "a bed is pushed back two pixels");
-    const auto skull = ground_display("minecraft:zombie_head", false);
+    const auto skull = ground_display("zombie_head", false);
     close(skull.scale[0], 0.5f, "a head is half size on the ground");
 }
 

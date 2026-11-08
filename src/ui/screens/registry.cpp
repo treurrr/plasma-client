@@ -163,8 +163,7 @@ ContainerMenu& shown_menu(MenuKind kind) {
     ContainerMenu menu = make_menu(kind, &items);
     const int own = menu_container_slots(kind);
     const std::array<std::string_view, 6> filling = {
-        "minecraft:diamond_sword", "minecraft:golden_apple", "minecraft:iron_ingot",
-        "minecraft:oak_planks",    "minecraft:redstone",     "minecraft:ender_pearl"};
+        "diamond_sword", "golden_apple", "iron_ingot", "oak_planks", "redstone", "ender_pearl"};
     for (int slot = 0; slot < own; ++slot) {
         const int32_t id = items.find(filling[static_cast<size_t>(slot) % filling.size()]);
         if (id < 0) continue;

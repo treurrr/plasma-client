@@ -294,19 +294,22 @@ void ItemCombinerScreen::render_bg(GuiGraphics& gfx, double, double) {
 }
 
 // `ItemCombinerScreen.renderErrorIcon`: the cross over the result when the
-// two inputs are there and the recipe is not.
+// inputs are there and the recipe is not. The combiners that have no such
+// icon - the grindstone, the cartography table - name no sprite.
 void ItemCombinerScreen::render_error(GuiGraphics& gfx) {
-    if (look_.error_w <= 0) return;
+    if (look_.error_sprite.empty()) return;
     ContainerMenu* m = menu();
-    if (m == nullptr || m->size() <= static_cast<size_t>(look_.error_v)) return;
-    gfx.blit(look_.texture, left_pos + look_.error_x, top_pos + look_.error_y,
-             static_cast<float>(look_.error_u), static_cast<float>(look_.error_v), look_.error_w,
-             look_.error_h, 256, 256);
+    if (m == nullptr || static_cast<size_t>(look_.result_slot) >= m->size()) return;
+    bool any_input = false;
+    for (int slot = 0; slot < look_.result_slot; ++slot) {
+        any_input = any_input || m->slots[static_cast<size_t>(slot)].count > 0;
+    }
+    if (!any_input || m->slots[static_cast<size_t>(look_.result_slot)].count > 0) return;
+    gfx.blit_sprite(look_.error_sprite, left_pos + look_.error_x, top_pos + look_.error_y, 28, 21);
 }
 
 AnvilScreen::AnvilScreen(Component title, ContainerMenu* menu)
-    : ItemCombinerScreen(std::move(title),
-                         {"container/anvil", 176, 166, 99, 45, 176, 0, 28, 21}, menu) {
+    : ItemCombinerScreen(std::move(title), {"container/anvil", 176, 166}, menu) {
     title_label_x = 60;
     slots.push_back({0, 27, 47, {}});
     slots.push_back({1, 76, 47, {}});
@@ -343,29 +346,45 @@ bool AnvilScreen::char_typed(uint32_t code, int mods) {
     return ItemCombinerScreen::char_typed(code, mods);
 }
 
-// `AnvilScreen.renderLabels`: the level cost under the result, red when the
-// player cannot pay it.
+// `AnvilScreen.renderLabels`: the level cost under the result, in green, or
+// in red when it is forty or more and the player cannot pay it.
 void AnvilScreen::render_labels(GuiGraphics& gfx) {
     AbstractContainerScreen::render_labels(gfx);
+    ContainerMenu* m = menu();
     const int32_t cost = property_of(world(), 0);
-    if (cost <= 0) return;
-    const std::string text = gfx.tr("container.repair.cost");
-    const std::string line = text + " " + std::to_string(cost);
+    if (cost <= 0 || m == nullptr || m->size() < 3) return;
+    uint32_t colour = 0xFF80FF20u;
+    Component line;
+    if (cost >= 40) {
+        line = translatable("container.repair.expensive");
+        colour = 0xFFFF6060u;
+    } else if (m->slots[2].count <= 0) {
+        return;
+    } else {
+        line = translatable("container.repair.cost", {literal(std::to_string(cost))});
+    }
     const int at = image_width - 8 - gfx.font.width(line) - 2;
     gfx.fill(at - 2, 67, image_width - 8, 79, 0x4F000000u);
-    gfx.draw_string(line, at, 69, 0xFF8040u);
+    gfx.draw_string(line, at, 69, colour);
 }
 
-// `AnvilScreen.renderErrorIcon`: the cross is only drawn with both inputs in
-// and no result.
+// `AnvilScreen.renderBg`: the name field's own box over the picture's red
+// placeholder, greyed out until there is something to rename.
+void AnvilScreen::render_bg(GuiGraphics& gfx, double mx, double my) {
+    ItemCombinerScreen::render_bg(gfx, mx, my);
+    ContainerMenu* m = menu();
+    const bool renaming = m != nullptr && !m->slots.empty() && m->slots[0].count > 0;
+    gfx.blit_sprite(renaming ? "container/anvil/text_field" : "container/anvil/text_field_disabled",
+                    left_pos + 59, top_pos + 20, 110, 16);
+}
+
+// `AnvilScreen.renderErrorIcon`: the cross with either input in and no result.
 void AnvilScreen::render_error(GuiGraphics& gfx) {
     ContainerMenu* m = menu();
     if (m == nullptr || m->size() < 3) return;
-    const bool inputs = m->slots[0].count > 0 && m->slots[1].count > 0;
+    const bool inputs = m->slots[0].count > 0 || m->slots[1].count > 0;
     if (!inputs || m->slots[2].count > 0) return;
-    gfx.blit(look_.texture, left_pos + look_.error_x, top_pos + look_.error_y,
-             static_cast<float>(look_.error_u), static_cast<float>(look_.error_v), look_.error_w,
-             look_.error_h, 256, 256);
+    gfx.blit_sprite("container/anvil/error", left_pos + 99, top_pos + 45, 28, 21);
 }
 
 EnchantmentScreen::EnchantmentScreen(Component title, ContainerMenu* menu)
@@ -406,9 +425,13 @@ void EnchantmentScreen::render_bg(GuiGraphics& gfx, double mx, double my) {
         gfx.blit_sprite(sprite, x, y, 108, 19);
         // `EnchantmentScreen.renderBg`: the level in the corner, greyed out
         // when it cannot be paid for.
+        // `EnchantmentScreen.renderBg`: the level in the corner, greyed out
+        // when the player cannot pay for it. The enchantment's own name, in
+        // the galactic font, needs the clue's registry entry, which this
+        // client does not decode into the screen yet.
         const std::string level_text = std::to_string(offer + 1);
         gfx.draw_string(level_text, x + 108 - 2 - gfx.font.width(level_text), y + 7,
-                        payable ? 0x80FF20u : 0x6E6E6Eu);
+                        payable ? 0xFF80FF20u : 0xFF6E6E6Eu);
         (void)clue;
     }
 }
@@ -559,8 +582,8 @@ ContainerMenu* MerchantScreen::menu() const {
 }
 
 void MerchantScreen::render_bg(GuiGraphics& gfx, double, double) {
-    gfx.blit("container/villager2", left_pos, top_pos, 0.0f, 0.0f, image_width, image_height,
-             512, 256);
+    gfx.blit("container/villager", left_pos, top_pos, 0.0f, 0.0f, image_width, image_height, 512,
+             256);
 }
 
 // `MerchantScreen.render`: seven trade buttons down the left, scrolled by the
@@ -720,7 +743,8 @@ std::shared_ptr<Screen> make_container_screen(MenuKind kind, Component title,
     case MenuKind::Smithing: {
         auto screen = std::make_shared<ItemCombinerScreen>(
             std::move(title),
-            ItemCombinerScreen::Look{"container/smithing", 176, 166, 65, 46, 176, 0, 28, 21},
+            ItemCombinerScreen::Look{"container/smithing", 176, 166, "container/smithing/error",
+                                     65, 46, 3},
             menu);
         screen->slots.push_back({0, 8, 48, "container/slot/smithing_template"});
         screen->slots.push_back({1, 26, 48, {}});

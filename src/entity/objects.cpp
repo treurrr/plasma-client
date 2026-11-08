@@ -96,15 +96,15 @@ struct GroundOverride {
     float z_rotation;
 };
 constexpr std::array<GroundOverride, 9> kGroundOverrides = {{
-    {"minecraft:conduit", {0.0f, 3.0f, 0.0f}, 0.5f, 0.0f},
-    {"minecraft:heavy_core", {0.0f, 3.0f, 0.0f}, 0.5f, 0.0f},
-    {"minecraft:decorated_pot", {0.0f, 1.0f, 0.0f}, 0.25f, 0.0f},
-    {"minecraft:shield", {2.0f, 4.0f, 2.0f}, 0.25f, 0.0f},
-    {"minecraft:trident", {4.0f, 4.0f, 2.0f}, 0.25f, 0.0f},
-    {"minecraft:copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
-    {"minecraft:weathered_copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
-    {"minecraft:exposed_copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
-    {"minecraft:oxidized_copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
+    {"conduit", {0.0f, 3.0f, 0.0f}, 0.5f, 0.0f},
+    {"heavy_core", {0.0f, 3.0f, 0.0f}, 0.5f, 0.0f},
+    {"decorated_pot", {0.0f, 1.0f, 0.0f}, 0.25f, 0.0f},
+    {"shield", {2.0f, 4.0f, 2.0f}, 0.25f, 0.0f},
+    {"trident", {4.0f, 4.0f, 2.0f}, 0.25f, 0.0f},
+    {"copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
+    {"weathered_copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
+    {"exposed_copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
+    {"oxidized_copper_golem_statue", {0.0f, 0.0f, 0.0f}, 0.35f, 180.0f},
 }};
 
 // The suffixes vanilla's `template_*` models cover, each of which puts the
@@ -115,6 +115,13 @@ bool ends_with(std::string_view name, std::string_view suffix) {
 
 // `Mth.equal`.
 bool mth_equal(float a, float b) { return std::fabs(b - a) < 1.0e-5f; }
+
+// The item table and the block table write registry names without the default
+// namespace; a renderer's own table names them with it.
+std::string_view bare(std::string_view name) {
+    const size_t colon = name.find(':');
+    return colon == std::string_view::npos ? name : name.substr(colon + 1);
+}
 
 Matrix placed(const Placement& place) { return place.matrix; }
 
@@ -166,7 +173,7 @@ std::array<float, 6> transformed_bounds(const std::array<float, 6>& box,
 int32_t item_of(const ObjectType& row, const ObjectState& state, const ObjectAssets& assets) {
     if (state.stack.count > 0) return state.stack.id;
     if (row.default_item.empty() || assets.items == nullptr) return -1;
-    return assets.items->find(row.default_item);
+    return assets.items->find(bare(row.default_item));
 }
 
 // `ItemEntityRenderer.submitMultipleFromCount`: the stack's copies, each with
@@ -279,7 +286,7 @@ void build_item(const ObjectType& row, const ObjectState& state, const ObjectAss
     if (!raw) return;
     const bool flat = (*raw)[5] - (*raw)[2] <= 0.0626f;
     const gpu::HandRenderer::Display display =
-        ground_display(assets.items->name(item), flat);
+        ground_display(bare(assets.items->name(item)), flat);
     const std::array<float, 6> box = transformed_bounds(*raw, display);
     const float lift = -box[1] + 0.0625f;
     const float bob = jmath::sin(state.age_in_ticks / 10.0f + state.bob_offset) * 0.1f + 0.1f;
@@ -298,7 +305,7 @@ void build_thrown_item(const ObjectType& row, const ObjectState& state,
     place.scale(row.scale, row.scale, row.scale);
     place.rotate(camera_orientation(state));
     const bool flat = (*raw)[5] - (*raw)[2] <= 0.0626f;
-    apply_display(place, ground_display(assets.items->name(item), flat), false);
+    apply_display(place, ground_display(bare(assets.items->name(item)), flat), false);
     ObjectPiece piece;
     piece.what = ObjectPiece::What::Item;
     piece.item = item;
@@ -377,7 +384,7 @@ void build_minecart(const ObjectType& row, const ObjectState& state, const Objec
     if (state.has_display_block && assets.block_name != nullptr && assets.items != nullptr &&
         assets.hand != nullptr) {
         const std::string_view block = assets.block_name(state.display_block);
-        const int32_t item = block.empty() ? -1 : assets.items->find(block);
+        const int32_t item = block.empty() ? -1 : assets.items->find(bare(block));
         if (item >= 0 && assets.hand->item_bounds(item)) {
             Placement inside = place;
             inside.scale(0.75f, 0.75f, 0.75f);
@@ -492,7 +499,7 @@ int32_t block_as_item(const ObjectAssets& assets, int32_t state) {
     }
     const std::string_view block = assets.block_name(state);
     if (block.empty()) return -1;
-    const int32_t item = assets.items->find(block);
+    const int32_t item = assets.items->find(bare(block));
     if (item < 0 || !assets.hand->item_bounds(item)) return -1;
     return item;
 }
@@ -587,8 +594,8 @@ void build_item_display(const ObjectState& state, const ObjectAssets& assets, Pl
     gpu::HandRenderer::Display display =
         state.item_display_context >= 1 && state.item_display_context <= 4
             ? assets.hand->item_display(item, left_hand, third_person)
-            : ground_display(assets.items->name(item), flat);
-    if (!display.present) display = ground_display(assets.items->name(item), flat);
+            : ground_display(bare(assets.items->name(item)), flat);
+    if (!display.present) display = ground_display(bare(assets.items->name(item)), flat);
     apply_display(place, display, left_hand);
     ObjectPiece piece;
     piece.what = ObjectPiece::What::Item;
