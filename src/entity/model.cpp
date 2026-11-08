@@ -413,7 +413,7 @@ std::array<float, 4> quaternion_xyz(float x, float y, float z) {
             cx * cycz - sx * sysz};
 }
 
-// `Quaternionf.rotationYXZ`: the camera's turn, and a display entity's.
+// `Camera.setRotation`: the turn `Quaternionf.rotationYXZ` builds, which the camera keeps and a display entity's billboard is held against.
 std::array<float, 4> quaternion_yxz(float y, float x, float z) {
     const float hx = x * 0.5f, hy = y * 0.5f, hz = z * 0.5f;
     const float sx = std::sin(hx), sy = std::sin(hy), sz = std::sin(hz);

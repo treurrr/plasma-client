@@ -228,7 +228,7 @@ struct MobState {
     bool marker = false;
     bool show_arms = false;
     bool show_base_plate = true;
-    // `ArmorStandRenderState.wiggle`: ticks since the stand was last hit.
+    // `ArmorStandRenderer.extractRenderState`: ticks since the stand was last hit.
     float wiggle = 1000.0f;
     // The six `Rotations` the server sends, in degrees, in `ArmorStand`'s own
     // order: head, body, left arm, right arm, left leg, right leg.

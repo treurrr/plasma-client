@@ -53,11 +53,11 @@ enum class ObjectKind : uint8_t {
     Tnt,
     // `FallingBlockRenderer`.
     FallingBlock,
-    // `DisplayRenderer.BlockDisplayRenderer`.
+    // `BlockDisplayRenderer.submitInner`.
     BlockDisplay,
-    // `DisplayRenderer.ItemDisplayRenderer`.
+    // `ItemDisplayRenderer.submitInner`.
     ItemDisplay,
-    // `DisplayRenderer.TextDisplayRenderer`.
+    // `TextDisplayRenderer.submitInner`.
     TextDisplay,
 };
 
@@ -83,10 +83,10 @@ struct ObjectType {
 const ObjectType* object_type(std::string_view type);
 std::span<const ObjectType> object_types();
 
-// `Display.BillboardConstraints`.
+// `DisplayRenderer.calculateOrientation`: the billboard a display is held to.
 enum class Billboard : uint8_t { Fixed, Vertical, Horizontal, Center };
 
-// `Display.TextDisplay.Align`.
+// `TextDisplay.getAlign`: how a hologram's lines are lined up.
 enum class TextAlign : uint8_t { Center, Left, Right };
 
 // Everything the renderers here read, flattened the way `MobState` flattens
@@ -126,10 +126,10 @@ struct ObjectState {
     float fuse_remaining = 80.0f;
     int32_t block_state = 0;
 
-    // `ExperienceOrbRenderState.icon`.
+    // `ExperienceOrb.getIcon`: which cell of the sheet an orb wears.
     int32_t orb_icon = 0;
 
-    // `FishingHookRenderState.lineOriginOffset`: the rod's tip relative to
+    // `FishingHookRenderer.submit`: the rod's tip relative to
     // the hook, in blocks.
     std::array<float, 3> line_origin{};
 
@@ -141,7 +141,7 @@ struct ObjectState {
     std::array<float, 4> rotation_right{0.0f, 0.0f, 0.0f, 1.0f};
     Billboard billboard = Billboard::Fixed;
     int32_t brightness_override = -1;
-    // `Display.TextDisplay`: the lines, already split to `line_width`.
+    // `TextDisplay.getAlign`: the lines, already split to `line_width`.
     std::vector<std::string> lines;
     uint32_t background_colour = 0x40000000u;
     uint8_t text_opacity = 255;
@@ -149,7 +149,7 @@ struct ObjectState {
     bool text_see_through = false;
     bool text_shadow = false;
     bool default_background = false;
-    // `Display.ItemDisplay`: the context its own transform comes from, as
+    // `ItemDisplayRenderer.extractRenderState`: the context its transform comes from, as
     // `ItemDisplayContext`'s own id.
     uint8_t item_display_context = 0;
 };

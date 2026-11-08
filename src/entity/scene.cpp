@@ -58,11 +58,11 @@ HandModel hand_model_for(std::string_view layer) {
     return HandModel::Plain;
 }
 
-// `ArmorStand.DATA_CLIENT_FLAGS`: the switches byte, with the six poses in
+// `ArmorStand.isSmall`: the switches byte, with the six poses in
 // the indices after it.
 constexpr uint8_t kArmorStandFlags = 15;
 
-// `ArmorStand.DEFAULT_HEAD_POSE` and the five after it, which is what a stand
+// `ArmorStand.getHeadPose` and the five after it, which is what a stand
 // wears until the server says otherwise.
 constexpr std::array<std::array<float, 3>, 6> kDefaultStandPoses = {{
     {0.0f, 0.0f, 0.0f},
@@ -83,7 +83,7 @@ int32_t experience_orb_icon(int32_t value) {
     return 0;
 }
 
-// `EntityDataSerializers.VECTOR3`, `.QUATERNION`.
+// `DisplayRenderer.extractRenderState`: the records a vector and a turn arrive as.
 std::array<float, 3> vector3_of(const proto::Value* value) {
     std::array<float, 3> out{};
     if (value == nullptr) return out;
@@ -123,7 +123,7 @@ std::vector<std::string> split_display_lines(const std::string& text) {
     return out;
 }
 
-// `EntityDataSerializers.ROTATIONS`: three floats in degrees.
+// `ArmorStand.getHeadPose`: the three floats, in degrees, a pose is sent as.
 std::array<float, 3> rotations_of(const proto::Value& value) {
     std::array<float, 3> out{};
     const std::array<std::string_view, 3> names = {"x", "y", "z"};
@@ -727,7 +727,7 @@ ObjectState Scene::object_state(const Tracked& tracked, const ObjectType& row,
     s.age_in_ticks = static_cast<float>(l.tick_count) + p;
     s.partial = p;
     s.invisible = data.flag(proto::Metadata::Invisible);
-    // `EntityRenderDispatcher.camera`: where the camera looks, which every
+    // `DisplayRenderer.extractRenderState`: where the camera looks, which every
     // billboard here is held against. The view gives a direction, not an
     // angle, so it is turned back into the two the camera keeps.
     const float length = std::sqrt(view.forward[0] * view.forward[0] +
@@ -747,7 +747,7 @@ ObjectState Scene::object_state(const Tracked& tracked, const ObjectType& row,
     if (const int item = field("displayed_item"); item >= 0) {
         if (const ItemStack* stack = data.stack_at(static_cast<uint8_t>(item))) s.stack = *stack;
     }
-    // `ItemEntity.bobOffs`: a random the client never sees. The entity's own
+    // `ItemEntity.getSpin`: the bob offset is a random the client never sees. The entity's own
     // id stands in for it, so one item bobs the same way every frame.
     if (row.kind == ObjectKind::Item) {
         jmath::LegacyRandom random(tracked.id);
@@ -758,7 +758,7 @@ ObjectState Scene::object_state(const Tracked& tracked, const ObjectType& row,
             static_cast<int32_t>(data.int_at(static_cast<uint8_t>(amount), 1)));
     }
     if (const int fuse = field("fuse_time"); fuse >= 0) {
-        // `TntRenderState.fuseRemainingInTicks`.
+        // `TntRenderer.extractRenderState`: the fuse left, counted off the tick.
         s.fuse_remaining =
             static_cast<float>(data.int_at(static_cast<uint8_t>(fuse), 80)) - p + 1.0f;
     }
@@ -828,7 +828,7 @@ ObjectState Scene::object_state(const Tracked& tracked, const ObjectType& row,
         s.text_opacity = static_cast<uint8_t>(data.int_at(static_cast<uint8_t>(opacity), -1));
     }
     if (const int flags = field("flags_2"); flags >= 0 && row.kind == ObjectKind::TextDisplay) {
-        // `Display.TextDisplay`: shadow, see-through, default background, and
+        // `TextDisplay.getAlign`: shadow, see-through, default background, and
         // the two alignment bits over them.
         const auto bits = static_cast<uint8_t>(data.int_at(static_cast<uint8_t>(flags), 0));
         s.text_shadow = (bits & 0x01) != 0;

@@ -222,14 +222,14 @@ void item_cluster(const ObjectState& state, int32_t item,
     }
 }
 
-// `CameraRenderState.orientation`: the camera's own turn, which every
+// `ThrownItemRenderer.submit`: the camera's own turn, which every
 // billboard is mulPose'd by.
 std::array<float, 4> camera_orientation(const ObjectState& state) {
     return quaternion_yxz(kPi - to_radians(state.camera_y_rot), -to_radians(state.camera_x_rot),
                           0.0f);
 }
 
-// `Display.RenderState.transformation`: the server's left rotation, scale and
+// `Transformation.getMatrix`: the server's left rotation, scale and
 // right rotation around its translation, as `Transformation.getMatrix` builds
 // it.
 void display_transformation(const ObjectState& state, Placement& place) {
@@ -350,7 +350,7 @@ void build_boat(const ObjectType& row, const ObjectState& state, const ObjectAss
                                              static_cast<float>(state.hurt_dir))));
     }
     if (!state.under_water && !mth_equal(state.bubble_angle, 0.0f)) {
-        // `Quaternionf.setAngleAxis` about (1, 0, 1), which is not a unit axis
+        // `AbstractBoatRenderer.submit`: a turn about (1, 0, 1), which is not a unit axis
         // and is not normalised there either.
         const float half = to_radians(state.bubble_angle) * 0.5f;
         const float s = std::sin(half);
@@ -508,7 +508,7 @@ int32_t block_as_item(const ObjectAssets& assets, int32_t state) {
 // flashing white every five.
 void build_tnt(const ObjectState& state, const ObjectAssets& assets, Placement place,
                std::vector<ObjectPiece>& out) {
-    // `PrimedTnt.blockState` defaults to the tnt block, which the server does
+    // `PrimedTnt.getBlockState` defaults to the tnt block, which the server does
     // not send: entity data carries only what differs from the default.
     int32_t item = block_as_item(assets, state.block_state);
     if (item < 0 && assets.items != nullptr && assets.hand != nullptr) {
@@ -622,7 +622,7 @@ void build_text_display(const ObjectState& state, const ObjectAssets& assets, Pl
     place.rotate(quaternion_y(kPi));
     place.scale(-0.025f, -0.025f, -0.025f);
     constexpr int kLineHeight = 9 + 1;
-    // `Display.TextDisplay.CachedInfo.width`: the widest line, measured in
+    // `TextDisplayRenderer.splitLines`: the widest line, measured in
     // the font the lines are drawn in.
     std::vector<float> widths;
     widths.reserve(state.lines.size());

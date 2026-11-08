@@ -215,7 +215,7 @@ void FurnaceScreen::render_bg(GuiGraphics& gfx, double, double) {
     const int32_t cook_time = property_of(w, 2);
     const int32_t cook_total = property_of(w, 3);
     if (lit_time > 0 && lit_duration > 0) {
-        // `AbstractFurnaceScreen.isLit`, `.litProgress`: thirteen pixels of
+        // `AbstractFurnaceScreen.renderBg`: thirteen pixels of
         // flame, counted from its bottom.
         const int burn = static_cast<int>(
             std::lround(static_cast<double>(lit_time) / lit_duration * 13.0));
@@ -249,7 +249,7 @@ ContainerMenu* BrewingStandScreen::menu() const {
 // `BrewingStandScreen.renderBg`: the fuel bar, then the bubbles that rise out
 // of eight frames, then the arrow that falls as the brew finishes.
 void BrewingStandScreen::render_bg(GuiGraphics& gfx, double, double) {
-    // `BrewingStandScreen.BUBBLELENGTHS`.
+    // `BrewingStandScreen.renderBg`: the eight stages the bubbles rise in.
     static constexpr std::array<int, 8> kBubbleLengths = {29, 24, 20, 16, 11, 6, 0, 0};
     const int x = left_pos;
     const int y = top_pos;
@@ -288,6 +288,8 @@ ContainerMenu* ItemCombinerScreen::menu() const {
     return menu_ != nullptr ? menu_ : AbstractContainerScreen::menu();
 }
 
+// `ItemCombinerScreen.renderBg`: the window, then whatever the combiner puts
+// over it when its recipe does not work.
 void ItemCombinerScreen::render_bg(GuiGraphics& gfx, double, double) {
     gfx.blit(look_.texture, left_pos, top_pos, 0.0f, 0.0f, image_width, image_height, 256, 256);
     render_error(gfx);
@@ -336,6 +338,7 @@ void AnvilScreen::render(GuiGraphics& gfx, double mx, double my) {
     if (name_ != nullptr) name_->render(gfx, mx, my);
 }
 
+// `AnvilScreen.keyPressed`: the name field takes the key first.
 bool AnvilScreen::key_pressed(const KeyEvent& event) {
     if (name_ != nullptr && name_->key_pressed(event)) return true;
     return ItemCombinerScreen::key_pressed(event);
@@ -436,15 +439,13 @@ void EnchantmentScreen::render_bg(GuiGraphics& gfx, double mx, double my) {
     }
 }
 
+// `EnchantmentScreen.mouseClicked`: an offer is a button press on the menu,
+// which the session sends as container_button.
 bool EnchantmentScreen::mouse_clicked(double mx, double my, int button) {
     for (int offer = 0; offer < 3; ++offer) {
         const int x = left_pos + 60;
         const int y = top_pos + 14 + 19 * offer;
-        if (mx >= x && mx < x + 108 && my >= y && my < y + 19) {
-            // `EnchantmentScreen.mouseClicked`: an offer is a button press on
-            // the menu, which the session sends as `container_button`.
-            return true;
-        }
+        if (mx >= x && mx < x + 108 && my >= y && my < y + 19) return true;
     }
     return AbstractContainerScreen::mouse_clicked(mx, my, button);
 }
@@ -463,8 +464,8 @@ ContainerMenu* BeaconScreen::menu() const {
     return menu_ != nullptr ? menu_ : AbstractContainerScreen::menu();
 }
 
+// `BeaconScreen.renderLabels`: the beacon has no labels of its own.
 void BeaconScreen::render_labels(GuiGraphics& gfx) {
-    // `BeaconScreen.renderLabels`: the beacon has no labels of its own.
     (void)gfx;
 }
 
@@ -495,7 +496,7 @@ void RecipeListScreen::render_bg(GuiGraphics& gfx, double, double) {
     gfx.blit(look_.texture, left_pos, top_pos, 0.0f, 0.0f, image_width, image_height, 256, 256);
 }
 
-// `StonecutterScreen.renderScroller`, `.renderButtons`: the scroll bar, then
+// `StonecutterScreen.renderButtons`: the scroll bar, then
 // one button per visible entry.
 void RecipeListScreen::render(GuiGraphics& gfx, double mx, double my) {
     AbstractContainerScreen::render(gfx, mx, my);
