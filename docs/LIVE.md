@@ -38,6 +38,15 @@ Two things about the harness are worth knowing before trusting a frame.
   pause screen up from `chest-close` onwards and six phases were shot behind
   the Game Menu; the close phases now press Escape only when there is a screen
   to close.
+- The site is roofed: the `site` phase clears ten blocks of air above the floor
+  and whatever terrain was above that stays, so no sky light reaches it. That
+  is why night vision matters here and why the `rain` phase shows no rain worth
+  trusting - nothing about the weather has been settled yet.
+- The `chest` phase still does not open the chest. Looking at it from
+  thirty-five degrees passed over a block fourteen sixteenths tall; at
+  forty-five it should land, and the phase now ends with no screen rather than
+  with a pause screen, so whatever is wrong is in the aim or the use, not in
+  the screen stack.
 
 ## Fixed in this wave
 
@@ -86,15 +95,43 @@ Two things about the harness are worth knowing before trusting a frame.
   ticks two frames in three carry no tick at all, so reading the edge inside
   the tick would have thrown most taps away.
 
-  **The second run that would show this working has not happened.** It builds
-  and the twenty tests pass, but the test server at 127.0.0.1:25601 stopped
-  after the first run and starting it is not this agent's to do, so the `drop`
-  phase has not been looked at with the fix in. What it should say is
-  `held 36x60`, a ladder in the offhand, and three item entities on the floor.
+  Proved on the second run, by the server: the `place` phase ends
+  `held 36x63 offhand 0x0 entities 131` and the `drop` phase ends
+  `held 0x0 offhand 36x60 entities 134`. Three Q taps threw three planks, which
+  are the three new entities, and the F tap put what was left in the offhand.
+  Pick-block is wired and sends, but the phase aims at the horizon with no
+  block in reach, so it has not been seen landing.
+- **The chat key never opened the real screen.** Seen working on the second
+  run: `live/chat-030.png` has `hello world` on the chat screen's own input
+  line, and `live/chat-045.png` has `<PlasmaM2> hello world` back from the
+  server in the hud's log.
+- **The night vision effect did nothing.** `AtmosphereInputs::night_vision` was
+  read by the light texture and written by nobody. Seen, at a site that is
+  roofed over and has no sky light at all: `live/run2/drop-070.png` against
+  `live/drop-070.png`, where the stone floor goes from 37,15,12 to 140,98,63
+  and the whole site becomes readable. `world_tick` now fills it the way
+  `GameRenderer.getNightVisionScale` does.
 
 ## Seen, and still open
 
-### 1. The inventory screen's player panel is a black rectangle
+### 1. Entities and block entities are lit by a frozen curve, not the lightmap
+
+**Seen**: `live/drop-070.png`, and every frame of the third run. The world is
+lit - stone floor, planks, sky - and the horse, the cow, the pigs, the second
+player, the dropped items and the chests in the prop row are flat black
+silhouettes, around 5 to 10 out of 255. `shaders/world.vert` samples the real
+lightmap (`set 0, binding 3`), which `fill_lightmap` builds out of the
+atmosphere; `shaders/entity.vert` does not sample it at all. It recomputes the
+light from the entity's packed sky and block levels with its own curve, under a
+comment saying it is "the same curve the world's blocks are lit by" - which it
+no longer is, because the real lightmap also carries the time of day, gamma,
+darkness and night vision. Binding the lightmap to the entity pipeline and
+sampling it the way the world does is the whole fix.
+
+This one blocks others: no mob's texture, no armour trim and no variant can be
+judged while every mob is a black cut-out.
+
+### 2. The inventory screen's player panel is a black rectangle
 
 **Seen**: `live/run1/inventory-040.png`, and the same in `inventory-010` and
 every `inv-click` frame. Where vanilla draws the player turning to follow the
@@ -104,7 +141,7 @@ offhand slot, the 2x2 grid, the recipe book button, the item icons and their
 counts. Nothing in the tree renders an entity into a gui panel, so the panel
 is drawn and then nothing is put in it.
 
-### 2. The held item takes no fog
+### 3. The held item takes no fog
 
 **Seen**: `live/run1/swim-070.png` against `live/run1/walk-020.png`. The same
 oak-planks block is in hand in both, and it has exactly the same shading in
@@ -114,7 +151,7 @@ atlas and the skin and writes the colour straight out; there is no fog uniform
 in it at all, while `entity.frag` and `world.frag` both mix towards
 `fog.colour`. `ItemInHandRenderer` draws under the same fog as everything else.
 
-### 3. The chat log is drawn straight through the keystroke display
+### 4. The chat log is drawn straight through the keystroke display
 
 **Seen**: `live/run1/stand-020.png`, bottom left. The Plasma keystroke overlay
 puts W, A, S, D and SPACE exactly where vanilla puts the chat log, and the
@@ -125,7 +162,7 @@ over the held item with its descenders clipped by the bottom of the screen.
 Both are `draw_hud` in `src/ui/menu.cpp`, which is laid out as if the vanilla
 hud were not there.
 
-### 4. Armour trims are baked and never drawn
+### 5. Armour trims are baked and never drawn
 
 **Seen**: `live/run1/site-030.png`, the second player's head at the right of
 the frame. He is wearing an iron helmet with a redstone ward trim and it draws
@@ -137,7 +174,7 @@ file outside `src/entity/equipment.cpp` mentions the class: nothing opens it,
 
 ## Inferred, and what would settle it
 
-### 5. Item particles never exist
+### 6. Item particles never exist
 
 **Inferred.** `ParticleOptions::has_texture` is set in exactly one place in the
 tree, `tests/test_particles.cpp`. `make_particle` opens the four breaking-item
@@ -152,12 +189,17 @@ things are missing:
   atlas needs that atlas bound, so the pipeline needs a second sampler and the
   shader a branch on the layer.
 
-To settle it: the `eat` phase holds use on a golden apple for four seconds with
-hunger on, which in vanilla throws a steady stream of item chips. It has not
-yet produced a usable frame - in the first run it was shot behind the pause
-screen.
+Still inferred after three runs, and the `eat` phase cannot settle it, because
+something earlier in the chain is missing: **holding use on food does not eat
+it.** The phase picks the golden apples with hotbar 6 and holds the use button
+from frame 50 to frame 140, which is four and a half seconds, and the phase
+ends `held 986x8` with `food 20` - not one apple was consumed. There is no
+use-item-with-no-block path: `interact` sends `use_item_on` when a block is
+aimed at and nothing at all when there is not, so `ServerboundUseItemPacket`,
+the using-item pose, the eat timer and the sounds are all missing too. Eating
+has to work before the particles it throws can be looked for.
 
-### 6. One texture per mob type
+### 7. One texture per mob type
 
 **Inferred.** `MobType` holds a single `texture`, so every pig is temperate,
 every cat a tabby, every llama creamy, every axolotl lucy. Vanilla picks the
@@ -166,44 +208,76 @@ texture from the entity's variant: `PigRenderer` through `PigVariants`,
 rabbits, parrots, pandas, mooshrooms and wolves. `MobType` needs a variant
 table and `Scene` needs to read the variant off the metadata.
 
-To settle it: the `build` phase summons a temperate pig next to a
-`{variant:"minecraft:cold"}` pig and a siamese cat, and the `mobs` phase looks
-at them. The first run only ever had one pig in frame at a time.
+Still inferred, and it cannot be settled before entry 1 is. The `build` phase
+does summon a temperate pig beside a `{variant:"minecraft:cold"}` pig and a
+siamese cat, and the `mobs` phase does look at all three - but every one of
+them draws as a flat black cut-out, so no texture can be compared with
+another. `live/mobs-040.png` and `live/build-050.png` show exactly that.
 
-### 7. Block entities that draw nothing
+### 8. Block entities that draw nothing
 
-**Inferred from the renderer list.** `BlockEntityKind` covers 13 kinds.
-Vanilla's `BlockEntityRenderers` registers these as well, and each of them
-draws nothing here:
+The `props` phase sets eighteen of these two blocks apart and teleports the
+player in front of each one in turn, keeping one frame per prop in the order
+the row was built. Nothing is missing from the row: all eighteen draw their
+block. What the walk settled, and what it could not:
 
-| vanilla renderer | what is missing |
+**Drawn after all - these two lines were wrong and are gone.**
+
+- The lectern's book is on the stand: `live/props-038.png`, the open book with
+  its pages and gold spine, and `live/run2/props-038.png` before the lighting
+  changed.
+- An extended piston's head and arm are drawn: the plate on its shaft is in
+  the same frame, left of the lectern. That is a plain block model rather than
+  a renderer, which is why it works - `PistonHeadRenderer` in vanilla is for
+  the two ticks a piston is moving, which this never tested.
+
+**Seen missing.**
+
+- `TrialSpawnerRenderer`: `live/run2/props-178.png` is a bare cage with the
+  bars and nothing inside it. A trial spawner set with `/setblock` carries a
+  default mob, so vanilla turns one in there.
+
+**The row cannot settle these, because vanilla draws nothing for them in this
+state either.** Naming what each one actually needs, so the next pass does not
+repeat the mistake:
+
+| vanilla renderer | what the test has to set up |
 | --- | --- |
-| `SpawnerRenderer` | the miniature mob turning inside the cage |
-| `BeaconRenderer` | the beam, which is visible across a world |
-| `PistonHeadRenderer` | an extended piston's head and arm |
-| `CampfireRenderer` | the food lying on it |
-| `LecternRenderer` | the book on the stand |
-| `VaultRenderer` | the item turning above it |
-| `TheEndPortalRenderer`, `TheEndGatewayRenderer` | the portal surface |
-| `TrialSpawnerRenderer` | its mob and its light |
-| `BrushableBlockRenderer` | the item being brushed out |
-| `ShelfRenderer` | what is on the shelf |
-| `ConduitRenderer` (active) | the cage, the wind and the eye |
+| `SpawnerRenderer` | a spawner with `SpawnData`; a bare `/setblock` has none |
+| `BeaconRenderer` | a pyramid under it, or there is no beam in vanilla either |
+| `CampfireRenderer` | food in `container.0` |
+| `VaultRenderer` | a vault that has chosen its display item |
+| `TheEndPortalRenderer` | a `minecraft:end_portal`, not an `end_portal_frame` |
+| `ConduitRenderer` | the prismarine frame and water that make it active |
+| `BrushableBlockRenderer` | suspicious sand with an item, mid-brush |
+| `ShelfRenderer` | a shelf with something on it |
 
 `ChestRenderer`'s lid, which the owner found missing, is drawn: the chest and
-its latch are there in `live/run1/drop-070.png`.
+its latch are there in `live/run1/drop-070.png`. The enchanting table's book is
+drawn too, in `live/props-158.png`.
 
-To settle it: the `props` phase now sets eighteen of these two blocks apart and
-teleports the player in front of each one in turn, keeping one frame per prop
-in the order the row was built, so a frame with nothing in it but floor names
-the renderer that draws nothing. The first run had them one block apart in a
-single wide shot and they hid each other.
+### 9. The server list is unreachable, and `ConnectScreen` never says anything
 
-### 8. The server list is unreachable, and `ConnectScreen` never says anything
+**Measured, and narrower than it looked.** The screen itself is right and the
+ping works; only the door to it is missing.
 
-**Inferred, from reading the whole title flow, and `livetest` cannot see it:**
-the harness is handed an address and joins it, which is the same shortcut the
-real client takes. `title_screen` wires `manager.host.multiplayer` to a bool
+- The list draws like vanilla: `live/serverlist/multiplayer-s2.png`
+  (`plasma-client screenshot multiplayer`) has the name, two wrapped lines of
+  motd, the icon slot, the player counts, the green five-bar ping meter on the
+  reachable row, the red version and crossed-out bars on the incompatible and
+  unreachable ones, the "Scanning for games on your local network" line with
+  its animated dots, and all seven buttons with the right ones greyed out.
+- The ping is real, not canned. `ServerPinger::ping` runs `status::query` off
+  the main thread and `take` copies latency, version, protocol, online, max,
+  motd, the player sample and the favicon onto the row, then sets Successful or
+  Incompatible by protocol. The same `status::query` against the test server
+  answers `1.21.11 (protocol 774), 0/20, "Plasma vanilla test server", 0.6 ms`.
+- Not seen: a real server icon, because neither the test server nor the canned
+  rows send a favicon, so every row falls back to `misc/unknown_server`. The
+  decode and upload path is there (`base64_decode` into `set_dynamic`) and has
+  not been exercised against a server that sends one.
+
+**Where it stops:** `title_screen` wires `manager.host.multiplayer` to a bool
 and leaves its loop the moment Multiplayer is pressed; `play.cpp` then connects
 to whatever was on the command line. So `JoinMultiplayerScreen` - the list, the
 pings, the icons, the Add/Edit/Delete flow, all built and tested - is reachable
@@ -219,7 +293,7 @@ status lines go to `ConnectScreen::status`, a failure puts up
 `DisconnectedScreen`, and `play.cpp`'s address argument becomes a shortcut that
 presses Join for you.
 
-### 9. The Christmas chest
+### 10. The Christmas chest
 
 **Inferred.** `tools/bake_block_entities.py` bakes one texture per chest state
 and nothing in the tree mentions `christmas`. Vanilla's `ChestRenderer` swaps
@@ -237,6 +311,13 @@ his name tag and his helmet, the chest and its latch, the pause screen over a
 blurred world, the inventory and crafting screens with their item icons and
 counts, and five mob types (pig, cow, cat, horse, zombie) with their models,
 their legs moving and their shadows.
+
+The third run added: the chat screen taking a typed line and the server
+sending it back, the crafting table and the inventory opening and closing on
+their own keys without a screen ever being left behind, all eighteen
+block-entity props drawing their block, the whole site readable under night
+vision, and the prop row's campfire, beacon, lectern book, enchanting table
+book and conduit shell.
 
 Two of those were suspected first and cleared afterwards, which is the only
 reason they are worth writing down:
