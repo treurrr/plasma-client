@@ -87,6 +87,9 @@ public:
     };
     bool add_quads(std::span<const QuadCorner> corners, std::string_view texture,
                    uint8_t sky_light, uint8_t block_light);
+    // How wide a line is in the font the tags are drawn with, in its own
+    // pixels: what a text display lays its lines out against.
+    float text_width(std::string_view text) const;
 
     size_t queued_instances() const { return queued_.size(); }
     size_t queued_parts() const { return matrices_used_; }

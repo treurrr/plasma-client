@@ -186,6 +186,9 @@ void Scene::bind(const gpu::EntityRenderer& renderer) { bind(renderer, nullptr);
 void Scene::hold_items_with(gpu::HandRenderer* hand, const world::Atmosphere* atmosphere) {
     hand_ = hand;
     atmosphere_ = atmosphere;
+    // A dropped item, a thrown one and an item display are the same geometry
+    // in a different place, so the object renderers read it from here too.
+    object_assets_.hand = hand;
 }
 
 void Scene::bind(const gpu::EntityRenderer& renderer, const EquipmentAssets* equipment) {
@@ -195,6 +198,9 @@ void Scene::bind(const gpu::EntityRenderer& renderer, const EquipmentAssets* equ
         if (renderer_ == nullptr) return nullptr;
         const int32_t found = renderer_->model(name);
         return found < 0 ? nullptr : renderer_->model_data(found);
+    };
+    object_assets_.text_width = [this](std::string_view text) {
+        return renderer_ != nullptr ? renderer_->text_width(text) : 0.0f;
     };
     models_.clear();
     for (TypeInfo& info : type_info_) info = {};
@@ -318,6 +324,7 @@ void Scene::add(const Entity& entity) {
     tracked.type = entity.type;
     tracked.kind = entity.type == player_type_ ? Kind::Player : Kind::Other;
     tracked.uuid = uuid_string(entity.uuid);
+    tracked.spawn_data = entity.data;
     tracked.living.spawn(entity);
     tracked.state.entity_id = entity.id;
     index_[entity.id] = tracked_.size();
@@ -755,6 +762,9 @@ ObjectState Scene::object_state(const Tracked& tracked, const ObjectType& row,
         s.fuse_remaining =
             static_cast<float>(data.int_at(static_cast<uint8_t>(fuse), 80)) - p + 1.0f;
     }
+    // `FallingBlockEntity`: the block is on the spawn packet, not in the
+    // entity data, and it is the only thing that puts it there.
+    if (row.kind == ObjectKind::FallingBlock) s.block_state = tracked.spawn_data;
     if (const int block = field("block_state_id_exploding"); block >= 0) {
         s.block_state = static_cast<int32_t>(data.int_at(static_cast<uint8_t>(block), 0));
     }

@@ -508,7 +508,13 @@ int32_t block_as_item(const ObjectAssets& assets, int32_t state) {
 // flashing white every five.
 void build_tnt(const ObjectState& state, const ObjectAssets& assets, Placement place,
                std::vector<ObjectPiece>& out) {
-    const int32_t item = block_as_item(assets, state.block_state);
+    // `PrimedTnt.blockState` defaults to the tnt block, which the server does
+    // not send: entity data carries only what differs from the default.
+    int32_t item = block_as_item(assets, state.block_state);
+    if (item < 0 && assets.items != nullptr && assets.hand != nullptr) {
+        const int32_t tnt = assets.items->find("tnt");
+        if (tnt >= 0 && assets.hand->item_bounds(tnt)) item = tnt;
+    }
     if (item < 0) return;
     place.translate(0.0f, 0.5f, 0.0f);
     if (state.fuse_remaining < 10.0f) {
@@ -608,19 +614,22 @@ void build_item_display(const ObjectState& state, const ObjectAssets& assets, Pl
 // `DisplayRenderer.TextDisplayRenderer.submitInner`: the background behind
 // every line, then one line at a time, nine pixels apart, aligned in the
 // widest line's box.
-void build_text_display(const ObjectState& state, const ObjectAssets&, Placement place,
+void build_text_display(const ObjectState& state, const ObjectAssets& assets, Placement place,
                         std::vector<ObjectPiece>& out) {
-    if (state.lines.empty()) return;
+    if (state.lines.empty() || assets.text_width == nullptr) return;
     place.rotate(display_orientation(state));
     display_transformation(state, place);
     place.rotate(quaternion_y(kPi));
     place.scale(-0.025f, -0.025f, -0.025f);
     constexpr int kLineHeight = 9 + 1;
-    // Widths are the default font's, which `ObjectState.lines` was already
-    // split by; the caller measured them.
+    // `Display.TextDisplay.CachedInfo.width`: the widest line, measured in
+    // the font the lines are drawn in.
+    std::vector<float> widths;
+    widths.reserve(state.lines.size());
     float width = 0.0f;
     for (const std::string& line : state.lines) {
-        width = std::max(width, static_cast<float>(line.size()) * 6.0f);
+        widths.push_back(assets.text_width(line));
+        width = std::max(width, widths.back());
     }
     const auto height =
         static_cast<float>(static_cast<int>(state.lines.size()) * kLineHeight - 1);
@@ -641,8 +650,9 @@ void build_text_display(const ObjectState& state, const ObjectAssets&, Placement
         out.push_back(std::move(panel));
     }
     float y = 0.0f;
-    for (const std::string& line : state.lines) {
-        const auto line_width = static_cast<float>(line.size()) * 6.0f;
+    for (size_t at_line = 0; at_line < state.lines.size(); ++at_line) {
+        const std::string& line = state.lines[at_line];
+        const float line_width = widths[at_line];
         const float x = state.align == TextAlign::Left    ? 0.0f
                         : state.align == TextAlign::Right ? width - line_width
                                                           : width / 2.0f - line_width / 2.0f;
@@ -654,6 +664,10 @@ void build_text_display(const ObjectState& state, const ObjectAssets&, Placement
         piece.text_colour =
             (static_cast<uint32_t>(state.text_opacity) << 24) | 0x00FFFFFFu;
         piece.see_through = state.text_see_through;
+        // The tag pass centres a line on its own origin; a display has
+        // already placed the line's left edge, so the origin moves to its
+        // middle.
+        at.translate(line_width / 2.0f, 0.0f, 0.0f);
         piece.root = placed(at);
         display_light(state, piece);
         out.push_back(std::move(piece));

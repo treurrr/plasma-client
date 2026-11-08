@@ -202,6 +202,9 @@ struct ObjectAssets {
     std::function<const Model*(std::string_view)> layer;
     const gpu::HandRenderer* hand = nullptr;
     const ui::ItemTable* items = nullptr;
+    // How wide a line is in the font a name tag is drawn with, which is what
+    // a text display lays its lines out against.
+    std::function<float(std::string_view)> text_width;
     // Block state -> the block's registry name, as the baked states table
     // gives it; empty when there is none.
     std::function<std::string_view(int32_t)> block_name;

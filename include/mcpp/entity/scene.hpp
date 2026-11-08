@@ -151,6 +151,10 @@ private:
         // `Entity.getCustomName`, and whether the server wants it shown.
         std::string custom_name;
         bool show_name = false;
+        // `ClientboundAddEntityPacket.getData`: what add_entity's own data
+        // field said, which is a falling block's block state and a painting's
+        // variant. Nothing else carries it.
+        int32_t spawn_data = 0;
         // `ArmorStand.lastHit`: the tick entity event 32 last arrived on, for
         // the wobble a hit knocks a stand into. The client has no game time of
         // its own, so this counts the scene's own ticks.

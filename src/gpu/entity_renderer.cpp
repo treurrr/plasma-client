@@ -515,6 +515,8 @@ void EntityRenderer::add_shadow(const std::array<std::array<float, 5>, 4>& corne
     quad(c, shadows_);
 }
 
+float EntityRenderer::text_width(std::string_view text) const { return font_.width(text); }
+
 bool EntityRenderer::add_quads(std::span<const QuadCorner> corners, std::string_view texture,
                                uint8_t sky_light, uint8_t block_light) {
     const int32_t picture = this->texture(texture);

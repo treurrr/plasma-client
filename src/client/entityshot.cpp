@@ -993,7 +993,7 @@ std::string object_nbt(std::string_view type, std::string_view tag) {
     if (type == "minecraft:tnt") return with("fuse:60s,block_state:{Name:\"minecraft:tnt\"}");
     if (type == "minecraft:experience_orb") return with("Value:42s,Age:0s");
     if (type == "minecraft:text_display") {
-        return with("text:'{\"text\":\"Plasma lobby\"}',billboard:\"center\"");
+        return with("text:\"Plasma lobby\",billboard:\"center\"");
     }
     if (type == "minecraft:item_display") {
         return with("item:{id:\"minecraft:diamond_sword\",count:1},item_display:\"ground\"");
@@ -1063,7 +1063,13 @@ int entityobjects(int argc, char** argv) {
         return have_blocks ? blocks.block_name(state) : std::string_view{};
     });
 
-    auto options = options_for(argv[2], argv[3]);
+    // The test server is offline; joining as the name this test was given
+    // keeps it off whatever account happens to be signed in on this machine.
+    const auto address = parse_address(argv[2]);
+    mcpp::SessionOptions options;
+    options.host = address.host;
+    options.port = address.port;
+    options.username = argv[3];
     bool placed = false;
     double me_at[3] = {0.0, 0.0, 0.0};
     std::vector<int32_t> alive;
@@ -1085,13 +1091,20 @@ int entityobjects(int argc, char** argv) {
         scene.remove(id);
         std::erase(alive, id);
     };
-    mcpp::Session session(options, events);
+    // `Session` takes its events by value, so every handler has to be in
+    // place before it is built; one assigned afterwards is assigned to a copy
+    // nothing reads. The session itself is only known after that, hence the
+    // pointer the handler reads through.
+    mcpp::Session* connected = nullptr;
     events.data.on_entity_data = [&](int32_t id) {
-        const auto& all = session.entities();
+        if (connected == nullptr) return;
+        const auto& all = connected->entities();
         if (const auto found = all.find(id); found != all.end()) {
             scene.metadata(id, found->second.metadata);
         }
     };
+    mcpp::Session session(options, events);
+    connected = &session;
     session.connect();
     const auto joined = Clock::now();
     while (!placed && Clock::now() - joined < std::chrono::seconds(20)) {
@@ -1135,6 +1148,7 @@ int entityobjects(int argc, char** argv) {
 
     int passed = 0;
     int failed = 0;
+    int gone = 0;
     for (const mcpp::entity::ObjectType& row : mcpp::entity::object_types()) {
         if (row.type.empty()) continue;
         const std::string name(row.type);
@@ -1147,6 +1161,24 @@ int entityobjects(int argc, char** argv) {
             std::cout << std::format("skip {:<28} the server has no such type\n", short_name);
             continue;
         }
+        // The last one's removal has to have landed before the baseline is
+        // taken, or its leaving cancels this one's arriving.
+        for (int i = 0; i < 12; ++i) {
+            drain(session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        // What one frame costs with nothing of ours in it: the spot has its
+        // own mobs and items, and only the rise over them is this entity.
+        mcpp::entity::View baseline;
+        baseline.eye[0] = at_x;
+        baseline.eye[1] = at_y + 1.0;
+        baseline.eye[2] = at_z + 3.0;
+        baseline.forward[2] = -1.0f;
+        baseline.partial = 0.5f;
+        renderer.begin();
+        hand.begin();
+        scene.draw(renderer, baseline, light);
+        const size_t drawn_before = scene.stats().drawn;
         say(std::format("summon {} {} {} {} {}", name, at_x, at_y + 1.0, at_z,
                         object_nbt(row.type, tag)));
         const size_t before = alive.size();
@@ -1197,11 +1229,24 @@ int entityobjects(int argc, char** argv) {
                 (out_dir / std::format("object-{}-{}.png", short_name, kSideNames[side])).string(),
                 kSide, kSide, world.render(camera));
         }
-        const bool ok = drawn >= 1 || items_queued > 0;
+        // What the server told us about it, so a type that draws nothing can
+        // be told from one the server took away again.
+        size_t fields = 0;
+        bool present = false;
+        for (const int32_t id : alive) {
+            const auto& all = session.entities();
+            if (const auto found = all.find(id); found != all.end()) {
+                present = true;
+                fields = std::max(fields, found->second.metadata.size());
+            }
+        }
+        const bool ok = drawn > drawn_before || items_queued > 0;
         if (ok) ++passed;
+        else if (!present) ++gone;
         else ++failed;
-        std::cout << std::format("{} {:<28} drawn {} item vertices {}\n", ok ? "ok  " : "FAIL",
-                                 short_name, drawn, items_queued);
+        std::cout << std::format("{} {:<28} drawn {} of {} item vertices {} data {}\n",
+                                 ok ? "ok  " : (present ? "FAIL" : "gone"), short_name,
+                                 drawn - drawn_before, drawn, items_queued, fields);
         say(std::format("kill @e[tag={}]", tag));
         for (int i = 0; i < 20 && !alive.empty(); ++i) {
             drain(session);
@@ -1214,8 +1259,8 @@ int entityobjects(int argc, char** argv) {
         drain(session);
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
-    std::cout << std::format("- {} drawn, {} not, {} left behind\n", passed, failed,
-                             alive.size());
+    std::cout << std::format("- {} drawn, {} not, {} gone before the frame, {} left behind\n",
+                             passed, failed, gone, alive.size());
     return failed == 0 && alive.empty() ? 0 : 1;
 }
 
