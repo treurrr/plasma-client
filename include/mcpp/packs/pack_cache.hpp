@@ -17,7 +17,7 @@ namespace mcpp::packs {
 std::string sha1_hex(std::span<const uint8_t> bytes);
 
 struct DownloadLimits {
-    // `DownloadedPackSource.PackDownloader.MAX_PACK_SIZE_BYTES`.
+    // `DownloadedPackSource.createDownloader`: the game's own cap.
     size_t max_bytes = 262144000;
     // Vanilla leaves the timeout to the JDK's default, which is none at all on
     // a stalled socket; a client that hangs forever on a dead host is not
@@ -45,7 +45,7 @@ public:
 
     explicit PackCache(std::filesystem::path directory, DownloadLimits limits = DownloadLimits{});
 
-    // `DownloadQueue.MAX_KEPT_PACKS`: the oldest beyond this many are deleted.
+    // `DownloadCacheCleaner.vacuumCacheDir`: the oldest beyond this many go.
     static constexpr size_t kMaxKeptPacks = 20;
 
     const std::filesystem::path& directory() const { return directory_; }

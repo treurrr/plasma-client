@@ -130,8 +130,8 @@ void PackSystem::pop(const Pop& request) {
     manager_.run_updates();
 }
 
-// `ClientCommonPacketListenerImpl.PackConfirmScreen`: yes remembers always for
-// this server and pushes everything that was waiting.
+// `ClientCommonPacketListenerImpl.addOrUpdatePackPrompt`: yes remembers always
+// for this server and pushes everything that was waiting.
 void PackSystem::allow() {
     const Prompt prompt = prompt_;
     prompt_ = Prompt{};

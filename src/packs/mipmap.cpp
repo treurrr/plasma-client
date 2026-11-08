@@ -9,9 +9,9 @@
 namespace mcpp::packs {
 namespace {
 
-// `ARGB.SRGB_TO_LINEAR`, `ARGB.LINEAR_TO_SRGB`: the game averages texels in
-// linear light through two small tables, so their rounding is part of the
-// answer and a float pipeline does not reproduce it.
+// `ARGB.srgbToLinearChannel`, `ARGB.linearToSrgbChannel`: the game averages
+// texels in linear light through two small tables, so their rounding is part
+// of the answer and a float pipeline does not reproduce it.
 struct Tables {
     std::array<int32_t, 256> to_linear{};
     std::array<uint8_t, 1024> to_srgb{};

@@ -103,7 +103,8 @@ std::optional<std::string> parse_sha1(std::string_view hash) {
 ServerPackManager::ServerPackManager(Hooks hooks, PromptStatus status)
     : hooks_(std::move(hooks)), prompt_status_(status) {}
 
-// `ServerPackManager.RemovalReason`: two of the six are the server's own doing
+// `ServerPackManager.cleanupRemovedPacks`: two of the six reasons are the
+// server's own doing
 // and need no answer, because the server already knows.
 std::optional<FinalResult> ServerPackManager::server_response(RemovalReason reason) {
     switch (reason) {
@@ -128,7 +129,8 @@ void ServerPackManager::report_final_result(const PackId& id, FinalResult result
 // `ServerPackManager.registerForUpdate`.
 void ServerPackManager::register_for_update() { has_updates_ = true; }
 
-// `DownloadedPackSource.createUpdateScheduler.runAllUpdates`.
+// `DownloadedPackSource.createUpdateScheduler`: a change asks for a tick, and
+// a tick may ask for another; this runs them until they settle.
 void ServerPackManager::run_updates() {
     if (running_updates_) return;
     running_updates_ = true;

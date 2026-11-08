@@ -47,7 +47,7 @@ public:
     struct Options {
         // `DownloadedPackSource`'s own directory under the game folder.
         std::filesystem::path cache;
-        // `Options.serverResourcePacks`.
+        // `ServerData.getResourcePackStatus`.
         PromptStatus prompt = PromptStatus::Pending;
         int32_t protocol = 774;
         PackCache::Identity identity;

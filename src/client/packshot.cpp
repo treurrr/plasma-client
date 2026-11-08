@@ -537,7 +537,7 @@ int packserve(const std::vector<std::string>& args) {
     mcpp::packs::GpuPackTarget target(&world, &quads);
     mcpp::packs::PackSystem::Options options;
     options.protocol = kProtocol;
-    // `Options.serverResourcePacks` set to always: the proof accepts.
+    // `ServerData.setResourcePackStatus` set to always: the proof accepts.
     options.prompt = mcpp::packs::PromptStatus::Allowed;
     options.identity.username = username;
     mcpp::packs::PackSystem system(std::move(options), target);

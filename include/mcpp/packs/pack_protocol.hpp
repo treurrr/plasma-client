@@ -19,7 +19,8 @@ using PackId = std::array<uint8_t, 16>;
 
 std::string id_to_string(const PackId& id);
 
-// `ServerboundResourcePackPacket.Action`: everything the player can answer.
+// `ServerboundResourcePackPacket.Action.isTerminal`: everything the player can
+// answer.
 // The two that are not terminal are progress, not an answer: the server keeps
 // waiting after them.
 enum class Action : int32_t {
@@ -50,7 +51,7 @@ struct Push {
     bool required = false;
     std::optional<std::string> prompt;
 };
-// `ClientboundResourcePackPushPacket.MAX_HASH_LENGTH`.
+// `ClientboundResourcePackPushPacket.handle`: the cap on the hash it carries.
 constexpr size_t kMaxHashLength = 40;
 
 // `ClientboundResourcePackPopPacket`: one pack, or every pack when the
@@ -59,17 +60,17 @@ struct Pop {
     std::optional<PackId> id;
 };
 
-// `ServerData.ServerPackStatus` as the option file spells it: what the player
-// has already decided for this server, before any prompt.
+// `ServerData.getResourcePackStatus`: what the player has already decided for
+// this server, before any prompt.
 enum class PromptStatus { Pending, Allowed, Declined };
 
-// `Options.serverResourcePacks`: prompt, always or never, the three the
-// vanilla options screen offers.
+// `ServerData.setResourcePackStatus`: prompt, always or never, the three the
+// options screen offers under serverResourcePacks.
 PromptStatus prompt_status_from_option(std::string_view value);
 std::string_view prompt_status_option(PromptStatus status);
 
-// `PackLoadFeedback.Update` and `.FinalResult`: progress, then the one answer
-// that ends the exchange.
+// `PackLoadFeedback.reportUpdate` and `.reportFinalResult`: progress, then the
+// one answer that ends the exchange.
 enum class Update { Accepted, Downloaded };
 enum class FinalResult { Declined, Applied, Discarded, DownloadFailed, ActivationFailed };
 
@@ -91,18 +92,18 @@ std::optional<std::string> parse_sha1(std::string_view hash);
 // states can be tested on its own.
 class ServerPackManager {
 public:
-    // `DownloadQueue.DownloadRequest`.
+    // `DownloadQueue.downloadBatch`: one pack to fetch.
     struct DownloadRequest {
         PackId id{};
         std::string url;
         std::optional<std::string> hash;
     };
-    // `DownloadQueue.BatchResult`.
+    // `DownloadQueue.downloadBatch`: what came back.
     struct BatchResult {
         std::vector<std::pair<PackId, std::filesystem::path>> downloaded;
         std::vector<PackId> failed;
     };
-    // `PackReloadConfig.IdAndPath`, bottom pack first.
+    // `PackReloadConfig.Callbacks.packsToLoad`, bottom pack first.
     struct IdAndPath {
         PackId id{};
         std::filesystem::path path;
@@ -164,17 +165,18 @@ public:
     bool reload_pending() const { return reload_pending_; }
 
 private:
-    // `ServerPackManager.PackDownloadStatus` and `.ActivationStatus`.
+    // `ServerPackManager.updateDownloads` and `.triggerReloadIfNeeded`: how far
+    // a pack has got.
     enum class DownloadStatus { Requested, Pending, Done };
     enum class ActivationStatus { Inactive, Pending, Active };
-    // `ServerPackManager.RemovalReason`: why a pack is going, and what the
+    // `ServerPackManager.cleanupRemovedPacks`: why a pack is going, and what the
     // server is told about it, if anything.
     enum class RemovalReason {
         DownloadFailed, ActivationFailed, Declined, Discarded, ServerRemoved, ServerReplaced
     };
     static std::optional<FinalResult> server_response(RemovalReason reason);
 
-    // `ServerPackManager.ServerPackData`.
+    // `ServerPackManager.ServerPackData.setRemovalReasonIfNotSet`: one pack.
     struct PackData {
         PackId id{};
         std::string url;

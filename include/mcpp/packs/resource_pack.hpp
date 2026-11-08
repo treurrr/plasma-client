@@ -16,7 +16,7 @@
 // first, newest declared last, and the pack root behind them.
 namespace mcpp::packs {
 
-// `SharedConstants.RESOURCE_PACK_FORMAT_MAJOR` and `_MINOR`.
+// `SharedConstants.getCurrentVersion`: the pack format this client is.
 constexpr int kPackFormatMajor = 75;
 constexpr int kPackFormatMinor = 0;
 // `PackFormat.lastPreMinorVersion(CLIENT_RESOURCES)`: up to here a pack says
@@ -77,7 +77,7 @@ private:
 class PackStack {
 public:
     void clear() { packs_.clear(); }
-    // Pushed bottom first, the way `ServerPackManager.packs_to_load` lists them.
+    // Pushed bottom first, the way `PackReloadConfig.Callbacks.packsToLoad` lists them.
     bool add(const std::filesystem::path& path, const ZipLimits& limits = ZipLimits{});
     bool add_bytes(std::vector<uint8_t> bytes, const ZipLimits& limits = ZipLimits{});
     size_t size() const { return packs_.size(); }
@@ -93,7 +93,7 @@ private:
     std::string error_;
 };
 
-// `OverlayMetadataSection.DIR_VALIDATOR`.
+// `OverlayMetadataSection.validateOverlayDir`.
 bool overlay_dir_valid(std::string_view name);
 
 } // namespace mcpp::packs

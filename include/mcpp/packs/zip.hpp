@@ -15,8 +15,8 @@ namespace mcpp::packs {
 
 // What a pack may claim about itself before the claim is refused.
 struct ZipLimits {
-    // `DownloadedPackSource.PackDownloader.MAX_PACK_SIZE_BYTES`: the cap the
-    // game puts on the file it fetches.
+    // `DownloadedPackSource.createDownloader`: the cap the game puts on the
+    // file it fetches.
     size_t archive_bytes = 262144000;
     // What one entry may inflate to, and what the whole archive may, so a
     // pack cannot hand us a gigabyte from a kilobyte.

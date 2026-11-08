@@ -26,7 +26,7 @@ struct Bitmap {
     }
 };
 
-// `TextureMetadataSection.mipmapStrategy`.
+// `MipmapStrategy.getSerializedName`.
 enum class MipStrategy { Auto, Mean, Cutout, StrictCutout, DarkCutout };
 MipStrategy mip_strategy_from_name(std::string_view name);
 
