@@ -1,4 +1,7 @@
 #include "mcpp/auth.hpp"
+#include "../src/modrinth_store.hpp"
+
+#include <fstream>
 
 #include <chrono>
 #include <iostream>
@@ -235,7 +238,28 @@ void instants_in_other_shapes() {
 
 } // namespace
 
+
+// A Modrinth store that is not there, or is not a database, must come back
+// empty rather than throw or report a missing sqlite.
+void test_modrinth_store_is_robust() {
+    bool missing = true;
+    const auto none = mcpp::auth::read_modrinth_accounts("/nonexistent/app.db", &missing);
+    check(none.empty(), "a database that is not there yields no accounts");
+    check(!missing, "sqlite is present on this machine");
+
+    const auto path = std::filesystem::temp_directory_path() / "plasma-not-a-database.db";
+    {
+        std::ofstream out(path);
+        out << "this is not a database";
+    }
+    const auto garbage = mcpp::auth::read_modrinth_accounts(path);
+    check(garbage.empty(), "a file that is not a database yields no accounts");
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 int main() {
+    test_modrinth_store_is_robust();
     vanilla_picks_the_active_account();
     vanilla_picks_by_name();
     vanilla_without_an_active_account_needs_a_name();

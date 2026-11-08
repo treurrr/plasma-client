@@ -93,8 +93,9 @@ int do_login_from_launcher(std::string_view wanted_name) {
             for (const auto& store : mcpp::auth::launcher_stores()) {
                 std::cerr << std::format("  {}\n", store.path.string());
             }
-            std::cerr << "supported: the Minecraft launcher (launcher_accounts.json), Prism "
-                         "Launcher and MultiMC (accounts.json)\n";
+            std::cerr << "supported: the Modrinth app (app.db), Prism Launcher and MultiMC "
+                         "(accounts.json), the Minecraft launcher (launcher_accounts.json, "
+                         "which no longer keeps a token on disk)\n";
             break;
         case mcpp::auth::Handover::Result::NoAccount:
             if (handover.names.empty()) {

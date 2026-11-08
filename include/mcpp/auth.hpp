@@ -60,6 +60,7 @@ struct LauncherStore {
     enum class Kind {
         Vanilla,     // .minecraft/launcher_accounts.json
         PrismLike,   // Prism Launcher / MultiMC accounts.json
+        ModrinthApp, // the Modrinth app's app.db
     };
     Kind kind = Kind::Vanilla;
     std::string launcher;

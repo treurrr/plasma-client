@@ -1,5 +1,7 @@
 #include "mcpp/auth.hpp"
 
+#include "modrinth_store.hpp"
+
 #include "auth_detail.hpp"
 #include "mcpp/json.hpp"
 
@@ -259,6 +261,25 @@ std::vector<Candidate> prism_candidates(const json::Value& root) {
     return candidates;
 }
 
+// The Modrinth app keeps a Minecraft token and its expiry per account, so a row
+// maps straight onto a candidate.
+std::vector<Candidate> modrinth_candidates(const std::vector<ModrinthAccount>& accounts) {
+    std::vector<Candidate> candidates;
+    for (const auto& account : accounts) {
+        Candidate candidate;
+        candidate.name = account.username;
+        candidate.uuid = account.uuid;
+        candidate.token = account.token;
+        candidate.active = account.active;
+        if (account.expires > 0) {
+            candidate.expires =
+                std::chrono::system_clock::from_time_t(static_cast<std::time_t>(account.expires));
+        }
+        candidates.push_back(std::move(candidate));
+    }
+    return candidates;
+}
+
 void add_store(std::vector<LauncherStore>& stores, LauncherStore::Kind kind,
                std::string launcher, const std::filesystem::path& path) {
     if (path.empty()) return;
@@ -310,6 +331,10 @@ std::vector<LauncherStore> launcher_stores() {
                   base / ".var/app/com.mojang.Minecraft/.minecraft/launcher_accounts.json");
         add_store(stores, LauncherStore::Kind::Vanilla, "the Minecraft launcher (snap)",
                   base / "snap/mc-installer/common/.minecraft/launcher_accounts.json");
+        add_store(stores, LauncherStore::Kind::ModrinthApp, "the Modrinth app",
+                  base / ".var/app/com.modrinth.ModrinthApp/data/ModrinthApp/app.db");
+        add_store(stores, LauncherStore::Kind::ModrinthApp, "the Modrinth app",
+                  base / ".local/share/ModrinthApp/app.db");
         add_store(stores, LauncherStore::Kind::PrismLike, "Prism Launcher",
                   base / ".local/share/PrismLauncher/accounts.json");
         add_store(stores, LauncherStore::Kind::PrismLike, "Prism Launcher (flatpak)",
@@ -360,6 +385,21 @@ Handover read_launcher_store(const LauncherStore& store, std::string_view wanted
     handover.launcher = store.launcher;
     handover.path = store.path;
 
+    // The Modrinth app keeps its accounts in a database rather than a file of
+    // text, so that one is read through sqlite instead of parsed as json.
+    if (store.kind == LauncherStore::Kind::ModrinthApp) {
+        bool sqlite_missing = false;
+        const auto accounts = read_modrinth_accounts(store.path, &sqlite_missing);
+        if (sqlite_missing) {
+            handover.result = Handover::Result::Unreadable;
+            return handover;
+        }
+        auto chosen = choose(modrinth_candidates(accounts), wanted_name, now);
+        chosen.launcher = store.launcher;
+        chosen.path = store.path;
+        return chosen;
+    }
+
     std::ifstream file(store.path);
     if (!file) {
         handover.result = Handover::Result::NoStore;
@@ -376,11 +416,26 @@ Handover read_launcher_store(const LauncherStore& store, std::string_view wanted
 Handover take_from_launcher(std::string_view wanted_name,
                             std::chrono::system_clock::time_point now) {
     Handover best;
+    // Several launchers can hold accounts at once, and the one that answers
+    // first is not the one with the names worth offering. So when no session can
+    // be taken, every name found anywhere is offered rather than one store's.
+    std::vector<std::string> every_name;
+    int stores_with_names = 0;
     for (const auto& store : launcher_stores()) {
         auto handover = read_launcher_store(store, wanted_name, now);
         if (handover.result == Handover::Result::Found) return handover;
+        if (!handover.names.empty()) ++stores_with_names;
+        for (const auto& name : handover.names) {
+            bool seen = false;
+            for (const auto& known : every_name) {
+                if (same_name(known, name)) seen = true;
+            }
+            if (!seen) every_name.push_back(name);
+        }
         if (rank(handover.result) > rank(best.result)) best = std::move(handover);
     }
+    best.names = std::move(every_name);
+    if (stores_with_names > 1) best.launcher = "the launchers on this machine";
     return best;
 }
 
