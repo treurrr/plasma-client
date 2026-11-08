@@ -192,6 +192,7 @@ mcpp_defaults(mcpp_net)
 if(glfw3_FOUND)
     set(MCPP_PLAY_SOURCES
         src/client/play.cpp
+        src/client/livetest.cpp
         src/client/world.cpp
         src/client/worldbench.cpp
         src/client/entities.cpp
@@ -241,6 +242,10 @@ mcpp_test(sound)
 mcpp_test(breaking)
 mcpp_test(particles)
 mcpp_test(resolver)
+# M: the headless window, which only exists where glfw does.
+if(glfw3_FOUND)
+    mcpp_test(window)
+endif()
 add_subdirectory(src/audio)
 
 # The C++ half of an oracle in tools/oracle: tools/oracle/run.py compares it

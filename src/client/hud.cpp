@@ -6,6 +6,7 @@
 #include "mcpp/translations.hpp"
 #include "mcpp/ui/hud/hud.hpp"
 #include "mcpp/ui/items.hpp"
+#include "mcpp/ui/chat_screen.hpp"
 #include "mcpp/ui/screen.hpp"
 
 #include <GLFW/glfw3.h>
@@ -39,6 +40,11 @@ struct HudArea {
 };
 
 namespace {
+
+// The chat screen, when it is the one that has the keyboard.
+mcpp::ui::ChatScreen* chat_screen(Game& game) {
+    return dynamic_cast<mcpp::ui::ChatScreen*>(game.screens.manager.current());
+}
 
 int64_t millis_now() {
     using namespace std::chrono;
@@ -201,11 +207,12 @@ void hud_render(Game& game) {
     auto& hud = *game.hud;
     auto& window = *game.window;
     auto& session = *game.session;
+    const bool chatting = chat_screen(game) != nullptr;
     fill_player(game, hud);
     if (!hud.pending_chat.empty()) {
         const mcpp::ui::Font font(*game.screens.quads, &game.screens.lang);
         for (const auto& [line, tag] : hud.pending_chat) {
-            hud.gui.chat().add(line, tag, hud.gui.ticks(), font, game.screens.options, window.typing());
+            hud.gui.chat().add(line, tag, hud.gui.ticks(), font, game.screens.options, chatting);
         }
         hud.pending_chat.clear();
     }
@@ -227,29 +234,28 @@ void hud_render(Game& game) {
 
     mcpp::ui::hud::Frame frame;
     frame.millis = millis_now();
-    frame.chat_focused = window.typing();
+    frame.chat_focused = chatting;
     frame.own_name = session.profile_name();
     frame.scoreboard = &session.scoreboard();
     frame.players = &hud.players;
     const auto* list_key = game.screens.keybinds.find("key.playerlist");
-    frame.player_list_down = !window.typing() && list_key != nullptr &&
+    frame.player_list_down = !chatting && list_key != nullptr &&
                              list_key->current.type == mcpp::InputKey::Type::Keyboard &&
                              window.key_down(list_key->current.code);
     frame.screen_shows_effects = game.screens.inventory_open;
     hud.gui.render(gfx, hud.player, game.screens.options, frame);
-
-    if (window.typing()) {
-        // The chat screen's input line until the screens area draws its own.
-        hud.gui.chat().render(gfx, game.screens.options, hud.gui.ticks(), true, -1, -1);
-        gfx.fill(2, gh - 14, gw - 2, gh - 2, 0x80000000u);
-        gfx.draw_string(window.typed() + "_", 4, gh - 12, 0xFFE0E0E0u, true);
-    }
 
     hud.cpu_ms_total +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
             .count();
     ++hud.frames;
 }
+
+mcpp::ui::hud::Chat* hud_chat(Game& game) {
+    return game.hud ? &game.hud->gui.chat() : nullptr;
+}
+
+int32_t hud_ticks(const Game& game) { return game.hud ? game.hud->gui.ticks() : 0; }
 
 void hud_stop(Game& game) {
     if (!game.hud || game.hud->frames == 0) return;

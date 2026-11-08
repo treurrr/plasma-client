@@ -16,6 +16,7 @@
 #include "client/breakshot.hpp"
 #include "client/handshot.hpp"
 #include "client/itemshot.hpp"
+#include "client/livetest.hpp"
 #endif
 
 #include "mcpp/auth.hpp"
@@ -1987,6 +1988,15 @@ int main(int argc, char** argv) {
         }
         if (command == "digtest2" && argc > 2) {
             return client::digtest2(argv[2]);
+        }
+        // M: one scripted session against a real server, offscreen.
+        if (command == "livetest") {
+#ifdef MCPP_HAVE_WINDOW
+            return client::livetest(std::vector<std::string>(argv + 2, argv + argc));
+#else
+            std::cerr << "this build has no window path\n";
+            return 1;
+#endif
         }
         if (command == "movetest" && argc > 2) {
             return client::movetest(argv[2]);

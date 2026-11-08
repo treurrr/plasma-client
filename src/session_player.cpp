@@ -414,6 +414,28 @@ void Session::send_dig_action(int32_t action, int32_t x, int32_t y, int32_t z, i
     send(ids_->play_sb.player_action, out);
 }
 
+// `Minecraft.handleKeybinds`, `LocalPlayer.drop`: dropping and swapping hands
+// carry no block, so vanilla sends the origin, down, and sequence 0 rather
+// than a number the server would then acknowledge block predictions up to.
+void Session::send_player_action(int32_t action) {
+    ByteBuffer out;
+    out.write_varint(action);
+    out.write_i64(pack_position(0, 0, 0));
+    out.write_u8(0);
+    out.write_varint(0);
+    send(ids_->play_sb.player_action, out);
+}
+
+// `MultiPlayerGameMode.handlePickItemFromBlock`: the server moves the block's
+// item into the hotbar, so the client only says which block and whether its
+// data comes with it.
+void Session::send_pick_item_from_block(int32_t x, int32_t y, int32_t z, bool include_data) {
+    ByteBuffer out;
+    out.write_i64(pack_position(x, y, z));
+    out.write_bool(include_data);
+    send(ids_->play_sb.pick_item_from_block, out);
+}
+
 void Session::send_place(int32_t x, int32_t y, int32_t z, int32_t face, float cursor_x,
                          float cursor_y, float cursor_z) {
     ByteBuffer out;

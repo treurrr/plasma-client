@@ -667,6 +667,13 @@ public:
     // Start (0), abort (1) or finish (2) breaking a block, on a face from 0
     // (down) to 5 (east). Start and finish are predicted and numbered.
     void send_dig_action(int32_t action, int32_t x, int32_t y, int32_t z, int32_t face);
+    // M: the player actions that are about no block: drop the whole stack (3),
+    // drop one (4), release the item being used (5), swap hands (6). Vanilla
+    // sends them at the origin, facing down, under sequence 0.
+    void send_player_action(int32_t action);
+    // M: `MultiPlayerGameMode.handlePickItemFromBlock`: put the block being
+    // looked at into the hotbar, with its block entity data when asked.
+    void send_pick_item_from_block(int32_t x, int32_t y, int32_t z, bool include_data);
     // B: the sequence number the last predicted action went out under.
     int32_t sequence() const { return player_.sequence; }
     void send_place(int32_t x, int32_t y, int32_t z, int32_t face, float cursor_x,

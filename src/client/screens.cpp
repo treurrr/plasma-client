@@ -159,6 +159,9 @@ void screens_start(Game& game) {
         if (const auto vanilla = mcpp::Options::vanilla_path()) screens.options.load(*vanilla);
     }
     screens.keybinds.load(screens.options);
+    // M: so every key the game reads means its binding and not the key the
+    // game ships that binding on. Without this, rebinding changes nothing.
+    window.set_keybinds(&screens.keybinds);
     screens.items.load(mcpp::ui::ItemTable::default_path(mcpp::protocol::kTargetProtocol));
 
     screens.font.emplace(*screens.quads, &screens.lang);
@@ -310,21 +313,16 @@ void screens_input(Game& game) {
         // Escape belongs to the game menu; only M toggles the feature menu.
         if (input.toggle_menu && plasma && !escape) screens.menu_open = !screens.menu_open;
         if (input.quit) screens.menu_open = false;
-        if (input.start_typing && !screens.menu_open) window.begin_typing();
-    }
-    if (window.typing()) {
-        if (input.submit_text) {
-            const auto line = window.typed();
-            if (!line.empty()) {
-                try {
-                    game.session->send_chat(line);
-                } catch (const std::exception& error) {
-                    std::cerr << std::format("chat failed: {}\n", error.what());
-                }
-            }
-            window.end_typing();
-        } else if (input.cancel_text) {
-            window.end_typing();
+        // `Minecraft.handleKeybinds`: the chat key opens the chat screen. The
+        // line, its caret, its history and the completions off the server's
+        // command tree all belong to that screen; the window's own typing
+        // path was a stand-in and is gone.
+        if (input.start_typing && !screens.menu_open) {
+            auto chat = std::make_shared<mcpp::ui::ChatScreen>("", false);
+            chat->chat = hud_chat(game);
+            chat->commands = &game.session->commands();
+            chat->gui_ticks = hud_ticks(game);
+            open_screen(game, std::move(chat));
         }
     }
 }
@@ -336,6 +334,11 @@ void screens_tick(Game& game) {
     const auto& input = game.input;
 
     if (game.tick_due) screens.manager.tick();
+
+    // The chat screen fades its lines on the hud's own clock.
+    if (auto* chat = dynamic_cast<mcpp::ui::ChatScreen*>(screens.manager.current())) {
+        chat->gui_ticks = hud_ticks(game);
+    }
 
     if (!window.typing() && screens.manager.current() == nullptr) {
         if (input.pick_slot >= 0) {
